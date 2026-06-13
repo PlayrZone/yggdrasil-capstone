@@ -205,6 +205,7 @@ export type SimEventType =
   | 'FoughtPredator'
   | 'KilledPredator'
   | 'Crafted'
+  | 'ChildBorn'
   | 'AgentDied'
   | 'WitnessedDeath'
   | 'SeedDeposited'

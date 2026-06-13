@@ -10,8 +10,10 @@ import {
   WildlifeSystem,
   YggdrasilSystem,
   createResourceNode,
+  createGahallianBody,
   spawnGahallians,
   TICKS_PER_DAY,
+  TICKS_PER_SEASON,
 } from '../body/index.js';
 import type { Animal } from '../body/index.js';
 import type { ResourceNode } from '../body/index.js';
@@ -26,8 +28,8 @@ import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
-import type { Intent, MindOutput, ResourceNodeKind, SimEvent } from '../contract/types.js';
-import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS, isDeepWater } from '../world/regions.js';
+import type { Intent, MindOutput, ResourceNodeKind, SimEvent, Traits } from '../contract/types.js';
+import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS, isDeepWater, clampToWorld } from '../world/regions.js';
 import type { Region } from '../world/regions.js';
 
 export interface AgentInfo {
@@ -49,6 +51,22 @@ export interface ExperimentOptions {
 
 const EVENT_LOG_CAP = 400;
 
+// ── Generations ──────────────────────────────────────────────────────────────
+const ADULT_AGE = TICKS_PER_SEASON; // ~4 days to mature
+const REPRO_COOLDOWN = TICKS_PER_SEASON; // a season between births
+const REPRO_INTERVAL = 300; // how often the population is checked for births
+const REPRO_RANGE = 14; // two adults must be this close
+const MAX_POP = 320; // population ceiling (perf + a carrying capacity)
+
+/** Cognition parameters derived from a being's personality (inherited by kids). */
+function mindOptions(tr: Traits): { thinkInterval: number; consolidateInterval: number; memoryHotCapacity: number } {
+  return {
+    thinkInterval: Math.round(180 - tr.curiosity * 1.1), // 70 (curious) … 180 (incurious)
+    consolidateInterval: Math.round(420 - (tr.curiosity * 0.6 + tr.ambition * 0.4) * 2.2),
+    memoryHotCapacity: Math.round(256 + ((tr.curiosity + tr.ambition) / 2) * 5),
+  };
+}
+
 /**
  * The headless experiment host: composes the Body (world physics + bodies)
  * with the Minds (memory · learning · knowledge · consciousness) in one
@@ -69,6 +87,8 @@ export class Experiment {
   private readonly resources = new ResourceNodeSystem();
   private readonly regularities = new WorldRegularitiesSystem();
   private wildlife!: WildlifeSystem;
+  private reproRng!: () => number;
+  birthCount = 0;
   readonly body = new YggdrasilSystem(this.perception);
   readonly minds = new Map<number, AgentMind>();
   readonly agentIds: number[] = [];
@@ -260,26 +280,21 @@ export class Experiment {
       agentCount,
       this.seed,
       { x: WORLD * 0.14, y: WORLD * 0.2, width: WORLD * 0.5, height: WORLD * 0.6 },
-      0,
+      -ADULT_AGE, // the founders are already adults (able to reproduce)
       isDeepWater, // never born in the sea or a lake
     );
     // Cognition VARIES by personality, so no two minds are equal: the curious
     // think and act more often, the curious+ambitious learn faster and remember
     // more. Nothing assigns a role — but these differences let some become
-    // knowledge-rich innovators/teachers while others stay foragers. (Research:
-    // a uniform mind produced no ability-driven divergence.)
+    // knowledge-rich innovators/teachers while others stay foragers. Children
+    // INHERIT these tendencies (blended from parents), so cognitive lineages
+    // can form.
     for (const agent of agents) {
       this.agentIds.push(agent.id);
       const tr = (agent.components['GahallianBody'] as GahallianBody).traits;
-      this.minds.set(
-        agent.id,
-        new AgentMind(agent.id, {
-          thinkInterval: Math.round(180 - tr.curiosity * 1.1), // 70 (curious) … 180 (incurious)
-          consolidateInterval: Math.round(420 - (tr.curiosity * 0.6 + tr.ambition * 0.4) * 2.2), // faster learners form knowledge sooner
-          memoryHotCapacity: Math.round(256 + ((tr.curiosity + tr.ambition) / 2) * 5), // 256 … ~756 memories
-        }),
-      );
+      this.minds.set(agent.id, new AgentMind(agent.id, mindOptions(tr)));
     }
+    this.reproRng = mulberry32(hashSeed(`${this.seed}:repro`));
 
     // Wild animals roam the lowlands — mobile food, and a reason to range.
     this.wildlife = new WildlifeSystem(this.seed, Math.max(40, Math.round(agentCount * 0.6)));
@@ -293,6 +308,7 @@ export class Experiment {
       this.wildlife.step(this.world, tick, this.bus);
       this.regularities.step(this.world, tick, this.bus);
       this.body.step(this.world, tick, this.bus);
+      if (tick % REPRO_INTERVAL === 0 && tick > 0) this.reproduce(tick);
 
       for (const [agentId, mind] of this.minds) {
         const entity = this.world.getEntity(agentId);
@@ -341,6 +357,80 @@ export class Experiment {
       ...output.plan,
     ];
     this.body.setPlan(body, plan);
+  }
+
+  /**
+   * Generations: well-fed adults who are together may have a child — born
+   * unnamed, age 0, with traits BLENDED from its parents (+ mutation) and a
+   * mind whose cognition is derived from those inherited traits, so lineages of
+   * the curious or the cautious can form. Nothing assigns family; birth is
+   * simply possible when conditions are met. Born among knowledgeable elders, a
+   * child learns by observation + testimony (existing channels) — the vertical
+   * transmission civilization needs.
+   */
+  private reproduce(tick: number): void {
+    if (this.aliveCount() >= MAX_POP) return;
+    const eligible: { id: number; body: GahallianBody; x: number; y: number }[] = [];
+    for (const id of this.agentIds) {
+      const body = this.agentBody(id);
+      if (!body?.alive) continue;
+      if (tick - body.birthTick < ADULT_AGE) continue; // must be an adult
+      if (tick < body.reproCooldownUntil) continue; // not too soon after a birth
+      if (body.needs.hunger > 45 || body.health < 65) continue; // well-fed + healthy
+      const t = this.agentEntity(id)!.components['Transform2D'] as { x: number; y: number };
+      eligible.push({ id, body, x: t.x, y: t.y });
+    }
+    const used = new Set<number>();
+    for (let i = 0; i < eligible.length; i++) {
+      const A = eligible[i]!;
+      if (used.has(A.id)) continue;
+      for (let j = i + 1; j < eligible.length; j++) {
+        const B = eligible[j]!;
+        if (used.has(B.id)) continue;
+        if ((A.x - B.x) ** 2 + (A.y - B.y) ** 2 > REPRO_RANGE * REPRO_RANGE) continue;
+        if (this.reproRng() > 0.5) continue; // togetherness doesn't always make a child
+        this.bearChild(A, B, tick);
+        used.add(A.id);
+        used.add(B.id);
+        if (this.aliveCount() >= MAX_POP) return;
+        break;
+      }
+    }
+  }
+
+  private bearChild(
+    a: { id: number; body: GahallianBody; x: number; y: number },
+    b: { id: number; body: GahallianBody; x: number; y: number },
+    tick: number,
+  ): void {
+    const blend = (k: keyof Traits): number => {
+      const base = (a.body.traits[k] + b.body.traits[k]) / 2;
+      return Math.max(0, Math.min(100, Math.round(base + (this.reproRng() - 0.5) * 16))); // ±8 mutation
+    };
+    const traits: Traits = {
+      curiosity: blend('curiosity'),
+      aggression: blend('aggression'),
+      compassion: blend('compassion'),
+      ambition: blend('ambition'),
+      loyalty: blend('loyalty'),
+      riskTolerance: blend('riskTolerance'),
+    };
+    const pos = { x: (a.x + b.x) / 2 + (this.reproRng() - 0.5) * 6, y: (a.y + b.y) / 2 + (this.reproRng() - 0.5) * 6 };
+    clampToWorld(pos);
+    if (isDeepWater(pos.x, pos.y)) {
+      pos.x = a.x;
+      pos.y = a.y;
+    }
+    const child = this.world.createEntity({
+      Transform2D: { x: pos.x, y: pos.y },
+      GahallianBody: createGahallianBody('', traits, tick), // unnamed, age 0
+    });
+    this.agentIds.push(child.id);
+    this.minds.set(child.id, new AgentMind(child.id, mindOptions(traits)));
+    this.birthCount++;
+    a.body.reproCooldownUntil = tick + REPRO_COOLDOWN;
+    b.body.reproCooldownUntil = tick + REPRO_COOLDOWN;
+    this.bus.emit({ tick, type: 'ChildBorn', actorId: child.id, targetIds: [a.id, b.id], x: pos.x, y: pos.y, payload: { parents: [a.id, b.id] } });
   }
 
   cognitionPending(): number {

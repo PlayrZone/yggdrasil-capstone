@@ -48,6 +48,19 @@ describe('Experiment (headless host)', () => {
     expect(result === null || typeof result.archetype === 'string').toBe(true);
   });
 
+  it('generations: a child is born with traits blended from its parents', () => {
+    const exp = new Experiment({ seed: 'gen-test', agentCount: 100 });
+    const founders = new Set(exp.agentIds);
+    exp.advance(20000); // long enough for adults to cluster and reproduce
+    expect(exp.birthCount).toBeGreaterThan(0);
+    const child = exp.agentIds.find((id) => !founders.has(id));
+    expect(child).toBeDefined();
+    const body = exp.agentBody(child!)!;
+    expect(body.name).toBe(''); // born unnamed — it will name itself once conscious
+    // Born after the start, so younger than a founder.
+    expect(body.birthTick).toBeGreaterThan(0);
+  }, 30000);
+
   it('crafts a spear from wood + stone — a discoverable tool, not a recipe menu', () => {
     const exp = new Experiment({ seed: 'craft', agentCount: 4 });
     const id = exp.agentIds[0]!;

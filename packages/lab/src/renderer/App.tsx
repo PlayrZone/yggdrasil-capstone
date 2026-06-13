@@ -54,6 +54,7 @@ function eventPhrase(type: string, payload: Record<string, unknown>): string {
     case 'FoughtPredator': return `fought off a ${payload['predator'] ?? 'predator'}`;
     case 'KilledPredator': return `KILLED a ${payload['predator'] ?? 'predator'}!`;
     case 'Crafted': return `crafted a ${payload['made'] ?? 'tool'}`;
+    case 'ChildBorn': return 'a child was born';
     case 'SleptInShelter': case 'Slept': return 'slept';
     // "IntentRejected" = a plan step the world wouldn't allow (e.g. out of range,
     // no wood) — the agent just tries something else. Normal, not an error.
@@ -136,7 +137,7 @@ export function App(): React.ReactElement {
         setSelected(id !== null && clockRef.current ? clockRef.current.exp.agentDetail(id) : null);
       });
       const exp = clockRef.current?.exp;
-      world.setPopulation(exp?.agentIds.length ?? 80);
+      world.setPopulation(360); // capacity headroom — the population grows as children are born
       if (exp) {
         world.setResources(exp.resourceNodes());
         world.setAnimals(300);
@@ -152,7 +153,7 @@ export function App(): React.ReactElement {
     const mindBackend = llm.hasKey ? new BridgeBackend(llm.model) : undefined;
     const exp = new Experiment({ seed, agentCount, mindBackend });
     clockRef.current = new SimClock(exp, () => performance.now());
-    world3dRef.current?.setPopulation(exp.agentIds.length);
+    world3dRef.current?.setPopulation(360); // headroom for newborns
     world3dRef.current?.setResources(exp.resourceNodes());
     world3dRef.current?.setAnimals(300);
     world3dRef.current?.setSelected(null);

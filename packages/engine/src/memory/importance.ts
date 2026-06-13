@@ -24,6 +24,7 @@ const BASE: Record<SimEventType, number> = {
   FoughtPredator: 0.8,
   KilledPredator: 0.88,
   Crafted: 0.78,
+  ChildBorn: 0.9,
   AgentDied: 0.95,
   WitnessedDeath: 0.9,
   SeedDeposited: 0.2,

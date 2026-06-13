@@ -33,6 +33,8 @@ export interface GahallianBody {
   intentTicks: number;
   /** True if violence landed this tick (death-cause attribution). */
   hitThisTick: boolean;
+  /** Tick before which this Gahallian cannot reproduce again; 0 = ready. */
+  reproCooldownUntil: number;
 }
 
 export function createGahallianBody(name: string, traits: Traits, birthTick: number): GahallianBody {
@@ -53,5 +55,6 @@ export function createGahallianBody(name: string, traits: Traits, birthTick: num
     sleepStartRest: 0,
     intentTicks: 0,
     hitThisTick: false,
+    reproCooldownUntil: 0,
   };
 }
