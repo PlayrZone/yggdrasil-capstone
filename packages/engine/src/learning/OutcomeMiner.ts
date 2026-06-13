@@ -29,7 +29,11 @@ export class OutcomeMiner implements ILearner {
   >();
 
   observe(memory: MemoryRecord): void {
-    if (memory.origin !== 'experience') return;
+    // First-hand experience teaches fully; WATCHING someone else (demonstration)
+    // teaches at a discount — you didn't feel it, you inferred it. Testimony is
+    // handled separately (KnowledgeStore), so it is ignored here.
+    const weight = memory.origin === 'experience' ? 1 : memory.origin === 'observation' ? 0.4 : 0;
+    if (weight === 0) return;
     for (const [need, delta] of Object.entries(memory.needDeltas) as [NeedKey, number][]) {
       if (delta === 0) continue;
       const conditions: (ContextFeatureKey | null)[] = [
@@ -44,8 +48,8 @@ export class OutcomeMiner implements ILearner {
           this.cells.set(key, cell);
           this.keyParts.set(key, { actionType: memory.type, feature, need });
         }
-        if (delta < 0) cell.relieves++;
-        else cell.worsens++;
+        if (delta < 0) cell.relieves += weight;
+        else cell.worsens += weight;
         cell.provenance.add(memory.id);
       }
     }

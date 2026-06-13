@@ -60,6 +60,15 @@ export function memoryFromEvent(
     // the demonstration/observation channel of knowledge transfer.
     origin = 'observation';
     subjects = [event.actorId, ...event.targetIds].filter((id) => id !== selfId && id > 0);
+    // You can roughly SEE the actor's outcome — they eat and look relieved, or
+    // sicken — a DISCOUNTED read of their need-change. This is what lets
+    // watching an elder actually teach you (demonstration learning).
+    const actorDeltas = event.payload['needDeltas'] as Partial<Needs> | undefined;
+    if (actorDeltas) {
+      const seen: Partial<Needs> = {};
+      for (const [k, v] of Object.entries(actorDeltas) as [keyof Needs, number][]) seen[k] = v * 0.5;
+      deltas = seen;
+    }
     switch (event.type) {
       case 'AgentDied':
         type = 'WitnessedDeath';

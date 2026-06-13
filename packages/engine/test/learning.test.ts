@@ -177,13 +177,25 @@ describe('OutcomeMiner', () => {
     expect(rule!.confidence).toBeCloseTo(5 / 6, 5);
   });
 
-  it('only learns from first-hand experience', () => {
+  it('learns from observation (demonstration) too, but discounted vs first-hand', () => {
     resetIds();
     const miner = new OutcomeMiner();
+    // A few glimpses of an elder eating are not enough to cross the threshold
+    // (observation is weighted 0.4, so 4 watches ≈ 1.6 evidence < 3).
     for (let i = 0; i < 4; i++) {
       miner.observe(mem(i * 100, 'AteFood', { origin: 'observation', needDeltas: { hunger: -40 } }));
     }
     expect(miner.consolidate()).toHaveLength(0);
+    // But repeatedly WATCHING the demonstration does teach — vertical/community
+    // knowledge transfer (12 watches ≈ 4.8 evidence ≥ 3).
+    for (let i = 0; i < 8; i++) {
+      miner.observe(mem(1000 + i * 100, 'AteFood', { origin: 'observation', needDeltas: { hunger: -40 } }));
+    }
+    const learned = miner
+      .consolidate()
+      .find((r) => r.rule.kind === 'outcome-association' && r.rule.actionType === 'AteFood' && r.rule.need === 'hunger');
+    expect(learned).toBeDefined();
+    expect(learned!.rule.kind === 'outcome-association' && learned!.rule.direction).toBe('relieves');
   });
 });
 
