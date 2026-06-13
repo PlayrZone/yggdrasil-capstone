@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "yggdrasil-lab": {
+      "command": "node",
+      "args": ["--import", "tsx", "packages/mcp/src/index.ts"],
+      "env": {
+        "YGG_DB": ".yggdrasil/research.db"
+      }
+    }
+  }
+}

@@ -7,3 +7,10 @@ out/
 tools/_*.jsonl
 tools/_*.png
 .DS_Store
+
+# research DB + local artifacts
+.yggdrasil/
+**/.smoke/
+*.db
+*.db-wal
+*.db-shm

@@ -1,0 +1,29 @@
+{
+  "name": "@yggdrasil/mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Yggdrasil Lab MCP server: run, watch, query, and steer artificial-life experiments. Read-first; mutations allowlisted + logged.",
+  "bin": {
+    "yggdrasil-mcp": "./src/index.ts"
+  },
+  "main": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@yggdrasil/db": "workspace:*",
+    "@yggdrasil/engine": "workspace:*",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
