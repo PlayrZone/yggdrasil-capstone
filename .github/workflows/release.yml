@@ -1,0 +1,46 @@
+name: Release lab
+
+# Builds and publishes the Yggdrasil Lab installer to GitHub Releases.
+# Installed apps auto-update from this feed (electron-updater checks on launch),
+# so you never hand-build an installer again: cut a release and every install
+# updates itself on next quit.
+#
+# Trigger a release by pushing a version tag, e.g.:
+#   cd packages/lab && npm version patch --no-git-tag-version   # 0.1.0 -> 0.1.1
+#   git commit -am "chore(lab): v0.1.1" && git tag v0.1.1 && git push --tags
+# …or run this workflow manually from the Actions tab (workflow_dispatch).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # electron-vite build + electron-builder --win --publish always.
+      # Publishes to the PUBLIC PlayrZone/yggdrasil-lab-releases repo, so
+      # RELEASES_TOKEN must be a PAT with contents:write on THAT repo (the
+      # built-in GITHUB_TOKEN only has rights on this private repo). Add it under
+      # Settings → Secrets and variables → Actions → New repository secret.
+      - run: pnpm --filter @yggdrasil/lab release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}

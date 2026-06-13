@@ -1,0 +1,45 @@
+appId: com.playrzone.yggdrasil-lab
+productName: Yggdrasil Lab
+copyright: Copyright (c) 2026 PlayrZone
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - "out/**/*"
+  - "package.json"
+  - "!node_modules/**/{CHANGELOG.md,README.md,readme.md,*.markdown,*.map,LICENSE,LICENSE.txt,license,license.txt}"
+  - "!**/*.{ts,tsx,jsx}"
+  - "!**/.gitignore"
+
+asarUnpack:
+  - "**/node_modules/electron-updater/**"
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "YggdrasilLab-Setup-${version}.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Yggdrasil Lab
+  uninstallDisplayName: "Yggdrasil Lab ${version}"
+
+# Updates publish to a SEPARATE PUBLIC repo so the engine source stays private
+# while installed apps read the public release feed. Create PlayrZone/
+# yggdrasil-lab-releases (public, empty) and a PAT with contents:write on it
+# stored as the RELEASES_TOKEN secret (see .github/workflows/release.yml).
+publish:
+  - provider: github
+    owner: PlayrZone
+    repo: yggdrasil-lab-releases
+    releaseType: release
