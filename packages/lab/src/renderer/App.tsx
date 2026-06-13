@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Experiment, regionAt, WORLD } from '@yggdrasil/engine';
+import { Experiment, regionAt, TICKS_PER_DAY, WORLD } from '@yggdrasil/engine';
 import type { Region } from '@yggdrasil/engine';
+import { SimClock, SPEED_PRESETS } from './sim.js';
 
 const CANVAS = 640;
 const SCALE = CANVAS / WORLD;
@@ -13,6 +14,13 @@ const REGION_COLOR: Record<Region, string> = {
   hills: '#34301f',
   plains: '#23301c',
 };
+
+interface FeedItem {
+  tick: number;
+  kind: 'speech' | 'event';
+  who: string;
+  text: string;
+}
 
 interface Stats {
   day: number;
@@ -28,8 +36,8 @@ interface Stats {
   sprouts: number;
   builds: number;
   backend: string;
-  deaths: Record<string, number>;
-  events: { tick: number; type: string; actor: string }[];
+  deaths: number;
+  feed: FeedItem[];
 }
 
 function buildBackground(): HTMLCanvasElement {
@@ -37,7 +45,7 @@ function buildBackground(): HTMLCanvasElement {
   c.width = CANVAS;
   c.height = CANVAS;
   const ctx = c.getContext('2d')!;
-  const step = 4; // world units per sampled cell
+  const step = 4;
   for (let wy = 0; wy < WORLD; wy += step) {
     for (let wx = 0; wx < WORLD; wx += step) {
       ctx.fillStyle = REGION_COLOR[regionAt(wx + step / 2, wy + step / 2)];
@@ -47,15 +55,20 @@ function buildBackground(): HTMLCanvasElement {
   return c;
 }
 
+const dayOf = (tick: number): number => Math.floor(tick / TICKS_PER_DAY) + 1;
+
 export function App(): React.ReactElement {
-  const expRef = useRef<Experiment | null>(null);
+  const clockRef = useRef<SimClock | null>(null);
   const bgRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number>(0);
+  const lastFrameRef = useRef<number>(0);
+  const runningRef = useRef(false);
+  const speedRef = useRef(1);
 
   const [seed, setSeed] = useState('genesis-01');
   const [agentCount, setAgentCount] = useState(120);
-  const [speed, setSpeed] = useState(12); // ticks per animation frame
+  const [speedIdx, setSpeedIdx] = useState(0);
   const [running, setRunning] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [idea, setIdea] = useState('');
@@ -63,6 +76,13 @@ export function App(): React.ReactElement {
   const [updateMsg, setUpdateMsg] = useState('');
 
   const sampleStats = useCallback((exp: Experiment): Stats => {
+    const feed: FeedItem[] = exp.recentEvents(40).map((e) => {
+      const utt = e.payload['utterance'] as { text?: string; speechAct?: string } | undefined;
+      if (e.type === 'UtteranceSpoken' && utt?.text) {
+        return { tick: e.tick, kind: 'speech', who: exp.nameOf(e.actorId), text: utt.text };
+      }
+      return { tick: e.tick, kind: 'event', who: exp.nameOf(e.actorId), text: e.type };
+    });
     return {
       day: exp.day(),
       tick: exp.tick,
@@ -77,64 +97,69 @@ export function App(): React.ReactElement {
       sprouts: exp.sproutCount,
       builds: exp.buildCount,
       backend: exp.backendLabel,
-      deaths: { ...exp.deathsByCause },
-      events: exp.recentEvents(14).map((e) => ({ tick: e.tick, type: e.type, actor: exp.nameOf(e.actorId) })),
+      deaths: Object.values(exp.deathsByCause).reduce((a, b) => a + b, 0),
+      feed,
     };
   }, []);
 
-  const draw = useCallback((exp: Experiment) => {
+  const draw = useCallback((clock: SimClock) => {
     const canvas = canvasRef.current;
     const bg = bgRef.current;
     if (!canvas || !bg) return;
     const ctx = canvas.getContext('2d')!;
     ctx.drawImage(bg, 0, 0);
-    for (const a of exp.agentInfos()) {
-      if (!a.alive) continue;
-      ctx.fillStyle = a.sick
-        ? '#e0524d'
-        : a.sleeping
-          ? '#5b8bd0'
-          : a.hungerCritical
-            ? '#e09a3a'
-            : '#43d18a';
+    const state = new Map(clock.exp.agentInfos().map((a) => [a.id, a]));
+    for (const p of clock.interpolated()) {
+      const a = state.get(p.id);
+      if (!a) continue;
+      ctx.fillStyle = a.sick ? '#e0524d' : a.sleeping ? '#5b8bd0' : a.hungerCritical ? '#e09a3a' : '#43d18a';
       ctx.beginPath();
-      ctx.arc(a.x * SCALE, a.y * SCALE, 2.4, 0, Math.PI * 2);
+      ctx.arc(p.x * SCALE, p.y * SCALE, 2.4, 0, Math.PI * 2);
       ctx.fill();
     }
   }, []);
 
   const newExperiment = useCallback(() => {
-    expRef.current = new Experiment({ seed, agentCount });
+    const exp = new Experiment({ seed, agentCount });
+    clockRef.current = new SimClock(exp, () => performance.now());
     bgRef.current = buildBackground();
-    setStats(sampleStats(expRef.current));
-    draw(expRef.current);
+    setStats(sampleStats(exp));
+    draw(clockRef.current);
   }, [seed, agentCount, sampleStats, draw]);
 
-  // Boot one experiment on mount.
   useEffect(() => {
     newExperiment();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The run loop.
+  // One persistent rAF loop; reads running/speed from refs so changing them
+  // never tears down the loop.
   useEffect(() => {
-    if (!running) return;
-    let frame = 0;
-    const loop = (): void => {
-      const exp = expRef.current;
-      if (exp) {
-        exp.advance(speed);
-        draw(exp);
-        if (frame % 4 === 0) setStats(sampleStats(exp)); // throttle React updates
-        frame++;
+    let statTick = 0;
+    const loop = (now: number): void => {
+      const clock = clockRef.current;
+      if (clock) {
+        const dt = lastFrameRef.current ? now - lastFrameRef.current : 16;
+        lastFrameRef.current = now;
+        if (runningRef.current) {
+          clock.tickFrame(dt, SPEED_PRESETS[speedRef.current]!.mult);
+          if (statTick++ % 8 === 0) setStats(sampleStats(clock.exp));
+        }
+        draw(clock); // always redraw for smooth interpolation
       }
       rafRef.current = requestAnimationFrame(loop);
     };
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [running, speed, draw, sampleStats]);
+  }, [draw, sampleStats]);
 
-  // App version + auto-update notifications (Electron only).
+  useEffect(() => {
+    runningRef.current = running;
+  }, [running]);
+  useEffect(() => {
+    speedRef.current = speedIdx;
+  }, [speedIdx]);
+
   useEffect(() => {
     const lab = window.lab;
     if (!lab) return;
@@ -150,12 +175,14 @@ export function App(): React.ReactElement {
   }, []);
 
   const sendIdea = useCallback(() => {
-    const exp = expRef.current;
+    const clock = clockRef.current;
     const clean = idea.trim();
-    if (!exp || !clean) return;
-    exp.giveIdea(clean, 'all');
+    if (!clock || !clean) return;
+    clock.exp.giveIdea(clean, 'all');
     setIdea('');
   }, [idea]);
+
+  const preset = SPEED_PRESETS[speedIdx]!;
 
   return (
     <div className="lab">
@@ -184,14 +211,7 @@ export function App(): React.ReactElement {
               <button className={running ? 'danger' : 'go'} onClick={() => setRunning((r) => !r)}>
                 {running ? 'Pause' : 'Run'}
               </button>
-              <button
-                onClick={() => {
-                  setRunning(false);
-                  newExperiment();
-                }}
-              >
-                New world
-              </button>
+              <button onClick={() => { setRunning(false); newExperiment(); }}>New world</button>
             </div>
             <label>
               Seed
@@ -199,12 +219,16 @@ export function App(): React.ReactElement {
             </label>
             <label>
               Population: {agentCount}
-              <input type="range" min={20} max={300} step={10} value={agentCount} disabled={running} onChange={(e) => setAgentCount(Number(e.target.value))} />
+              <input type="range" min={20} max={256} step={4} value={agentCount} disabled={running} onChange={(e) => setAgentCount(Number(e.target.value))} />
             </label>
-            <label>
-              Speed: {speed} ticks/frame
-              <input type="range" min={1} max={48} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} />
-            </label>
+            <label>Speed — {preset.rate}</label>
+            <div className="speeds">
+              {SPEED_PRESETS.map((p, i) => (
+                <button key={p.mult} className={i === speedIdx ? 'sel' : ''} onClick={() => setSpeedIdx(i)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </section>
 
           {stats && (
@@ -219,7 +243,7 @@ export function App(): React.ReactElement {
                   <tr><td>Exchanges</td><td>{stats.exchanges}</td><td>Conflicts</td><td>{stats.conflicts}</td></tr>
                   <tr><td>Sickness</td><td>{stats.sickness}</td><td>Shares</td><td>{stats.shares}</td></tr>
                   <tr><td>Seeds sown</td><td>{stats.seedPlants}</td><td>Sprouts</td><td>{stats.sprouts}</td></tr>
-                  <tr><td>Builds</td><td>{stats.builds}</td><td>Deaths</td><td>{Object.values(stats.deaths).reduce((a, b) => a + b, 0)}</td></tr>
+                  <tr><td>Builds</td><td>{stats.builds}</td><td>Deaths</td><td>{stats.deaths}</td></tr>
                 </tbody>
               </table>
             </section>
@@ -228,26 +252,26 @@ export function App(): React.ReactElement {
           <section className="idea">
             <label>Give them an idea (only you can)</label>
             <div className="row">
-              <input
-                value={idea}
-                placeholder="e.g. water is by the river"
-                onChange={(e) => setIdea(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendIdea()}
-              />
+              <input value={idea} placeholder="e.g. water is by the river" onChange={(e) => setIdea(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendIdea()} />
               <button className="go" onClick={sendIdea}>Send</button>
             </div>
           </section>
 
           {stats && (
             <section className="feed">
-              <label>Recent events</label>
+              <label>What they're doing & saying</label>
               <ul>
-                {stats.events
+                {stats.feed
                   .slice()
                   .reverse()
                   .map((e, i) => (
-                    <li key={i}>
-                      <span className="t">d{Math.floor(e.tick / 96) + 1}</span> {e.actor} · {e.type}
+                    <li key={i} className={e.kind}>
+                      <span className="t">d{dayOf(e.tick)}</span>{' '}
+                      {e.kind === 'speech' ? (
+                        <span><b>{e.who}</b>: “{e.text}”</span>
+                      ) : (
+                        <span className="ev">{e.who} · {e.text}</span>
+                      )}
                     </li>
                   ))}
               </ul>

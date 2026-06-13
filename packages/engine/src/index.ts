@@ -41,6 +41,8 @@ export { PerceptionSystem } from './body/PerceptionSystem.js';
 export { YggdrasilSystem } from './body/YggdrasilSystem.js';
 export { spawnGahallians } from './body/genesis.js';
 export type { GenesisArea } from './body/genesis.js';
+export { CANONICAL_IDENTITIES, identityAt } from './body/identities.js';
+export type { Identity } from './body/identities.js';
 export type { Weather } from './body/Climate.js';
 export {
   seasonAt,

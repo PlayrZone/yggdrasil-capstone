@@ -60,6 +60,13 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 .stats td:nth-child(3) { padding-left: 14px; color: var(--muted); }
 .stats td:nth-child(1) { color: var(--muted); }
 
-.feed ul { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; }
+.feed ul { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
 .feed li { padding: 3px 0; border-bottom: 1px solid #161d23; font-size: 12px; color: #b7c2c9; }
+.feed li.speech { color: #e7eef2; }
+.feed li.speech b { color: var(--green); }
+.feed li .ev { color: #8a97a0; }
 .feed .t { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+
+.speeds { display: flex; flex-wrap: wrap; gap: 5px; }
+.speeds button { flex: 1 0 28%; padding: 5px 4px; font-size: 11px; }
+.speeds button.sel { background: var(--accent); border-color: var(--accent); color: #04150d; font-weight: 600; }

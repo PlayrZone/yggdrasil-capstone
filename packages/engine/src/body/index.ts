@@ -72,3 +72,6 @@ export { YggdrasilSystem } from './YggdrasilSystem.js';
 
 export { spawnGahallians } from './genesis.js';
 export type { GenesisArea } from './genesis.js';
+
+export { CANONICAL_IDENTITIES, identityAt } from './identities.js';
+export type { Identity } from './identities.js';
