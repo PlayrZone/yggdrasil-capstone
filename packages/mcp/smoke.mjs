@@ -54,5 +54,18 @@ const desc = await send(3, 'tools/call', { name: 'describe_lab', arguments: {} }
 if (!desc.result?.content?.[0]?.text?.includes('YGGDRASIL LAB')) fail('describe_lab content unexpected');
 console.log('OK — describe_lab responded');
 
+// Exercise the shared-file pipeline the lab tails: run a tiny batch + write a report.
+const run = await send(4, 'tools/call', { name: 'run_experiment', arguments: { seed: 'smoke', ticks: 300, agentCount: 20 } });
+if (!run.result) fail('run_experiment failed');
+console.log('OK — run_experiment recorded');
+
+const rep = await send(5, 'tools/call', { name: 'write_report', arguments: { title: 'Smoke note', body: 'hello from smoke' } });
+if (!rep.result) fail('write_report failed');
+
+const reps = await send(6, 'tools/call', { name: 'list_reports', arguments: {} });
+const txt = reps.result?.content?.[0]?.text ?? '';
+if (!txt.includes('Smoke note')) fail('list_reports missing the written report');
+console.log('OK — write_report + list_reports round-trip');
+
 child.kill();
 process.exit(0);
