@@ -14,3 +14,6 @@ tools/_*.png
 *.db
 *.db-wal
 *.db-shm
+
+# scratch / engineer session scripts
+packages/*/_*.mjs

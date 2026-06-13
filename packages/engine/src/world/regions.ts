@@ -97,8 +97,11 @@ export function heightAt(x: number, y: number): number {
   if (inRiver(x, y)) return 1.1 + ripple * 0.3; // fertile valley floor
   if (coastalWetland(x, y)) return 1.0 + ripple * 0.2;
   if (x > MTN_X) {
-    const m = (x - MTN_X) / (WORLD - MTN_X); // 0..1
-    return 3 + m * 15 + Math.sin(x * 0.09) * Math.cos(y * 0.08) * 3 + ripple;
+    // A ridged range with peaks and passes, not a wall ramping to the edge.
+    const m = (x - MTN_X) / (WORLD - MTN_X); // 0..1 inland
+    const ridge = Math.abs(Math.sin(x * 0.055) * Math.cos(y * 0.05));
+    const ridge2 = Math.abs(Math.sin(x * 0.12 + y * 0.09));
+    return 5 + m * 4 + ridge * 5.5 + ridge2 * 2.5 + ripple * 0.5;
   }
   if (x > HILLS_X) return 2.5 + ((x - HILLS_X) / (MTN_X - HILLS_X)) * 3.5 + ripple; // foothills
   return 2.4 + ripple; // plains / forest
