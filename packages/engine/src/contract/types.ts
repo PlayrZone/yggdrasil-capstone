@@ -1,0 +1,407 @@
+/**
+ * Body⇄Yggdrasil contract types.
+ *
+ * The Gahalla Engine keeps a structurally-identical copy of the boundary
+ * subset in `engine/src/yggdrasil/contract.ts` — neither side imports the
+ * other (repo rule: engine and packages never cross-import; same precedent
+ * as worldgen). Drift between the two copies is caught by the assignability
+ * test in `test/contract-compat.test.ts`.
+ *
+ * Doctrine reminders enforced by these shapes (yggdrasil_civilization_design V2):
+ * - No role/job/class/faction/rank field exists anywhere. Ever.
+ * - Genesis carries zero social identity and zero knowledge.
+ * - MindOutput carries ONLY goals, plan, utterances — no belief updates,
+ *   no relationship deltas, no reflections. Knowledge formation is the
+ *   learning system's job.
+ */
+
+// ─── Needs & traits ──────────────────────────────────────────────────────────
+
+/**
+ * Needs are PRESSURE values in [0, 100]: 0 = fully satisfied, rising over
+ * time; "hunger = 95" means nearly starving. Thresholds: pressing ≥ 60,
+ * critical ≥ 85.
+ */
+export type NeedKey = 'hunger' | 'rest' | 'safety' | 'socialConnection';
+
+export type Needs = Record<NeedKey, number>;
+
+export const NEED_PRESSING = 60;
+export const NEED_CRITICAL = 85;
+
+/** Six fixed traits, 0–100, rolled at genesis, immutable for life. */
+export interface Traits {
+  curiosity: number;
+  aggression: number;
+  compassion: number;
+  ambition: number;
+  loyalty: number;
+  riskTolerance: number;
+}
+
+// ─── World vocabulary ────────────────────────────────────────────────────────
+
+/**
+ * Kinds of physical stuff — materials with PROPERTIES, never recipes
+ * (see world/materials.ts). Purely physical, no social meaning. Tiers per
+ * yggdrasil_world_design.md: basic → intermediate → advanced → rare. The
+ * intermediate/metal kinds exist as data now; their discovery mechanics
+ * (fire/smelting) arrive in world Slice 2.
+ */
+export type ObjectKind =
+  // basic
+  | 'water'
+  | 'wood'
+  | 'stone'
+  | 'clay'
+  | 'fiber'
+  | 'berry' // edible forage
+  | 'tuber' // edible root
+  | 'seed'
+  | 'mushroomRed' // poisonous
+  | 'nightshade' // poisonous plant
+  | 'meat' // from animals (Slice 2)
+  | 'hide' // from animals (Slice 2)
+  // intermediate (outcomes of applying properties under heat/force/time — Slice 2)
+  | 'charcoal'
+  | 'leather'
+  | 'rope'
+  | 'brick'
+  | 'copper'
+  | 'tin'
+  | 'iron'
+  | 'bronze'
+  // advanced (ores + fuels + salt)
+  | 'copperOre'
+  | 'tinOre'
+  | 'ironOre'
+  | 'coal'
+  | 'salt'
+  // rare
+  | 'silver'
+  | 'gold'
+  | 'gemstone'
+  // built structures / world objects
+  | 'shelter'
+  | 'wall'
+  | 'container'
+  | 'corpse';
+
+export type ResourceNodeKind =
+  | 'berryBush'
+  | 'tree'
+  | 'stoneDeposit'
+  | 'waterSource'
+  | 'river'
+  | 'foodPlant'
+  | 'mushroomPatch'
+  | 'tuberPlant'
+  | 'nightshadePlant'
+  | 'clayDeposit'
+  | 'fiberPlant'
+  | 'copperVein'
+  | 'tinVein'
+  | 'ironVein'
+  | 'coalSeam'
+  | 'saltFlat'
+  | 'silverVein'
+  | 'goldVein'
+  | 'gemVein';
+
+/**
+ * Context features captured AT THE MOMENT a memory forms — the learning
+ * system's feature space. Extending this vocabulary widens what is
+ * discoverable; it must only ever grow (old runs stay minable).
+ */
+export interface ContextFeatures {
+  nearWater: boolean;
+  night: boolean;
+  inShelter: boolean;
+  /** Coarse terrain elevation band: 0 lowland · 1 midland · 2 highland. */
+  elevationBand: number;
+}
+
+export type ContextFeatureKey = 'nearWater' | 'night' | 'inShelter' | 'highland';
+
+// ─── Intents (closed vocabulary, body-validated) ─────────────────────────────
+
+export type IntentKind =
+  | 'MoveTo'
+  | 'Gather'
+  | 'Dig'
+  | 'Eat'
+  | 'Drink'
+  | 'Sleep'
+  | 'Build'
+  | 'Deposit'
+  | 'Withdraw'
+  | 'Give'
+  | 'Attack'
+  | 'Speak'
+  | 'Follow'
+  | 'Flee'
+  | 'Idle';
+
+export type BuildKind = 'shelter' | 'wall' | 'container';
+
+export interface Intent {
+  kind: IntentKind;
+  /** Target position for MoveTo / Flee-from / Build / Deposit-on-ground. */
+  x?: number;
+  y?: number;
+  /** Target entity (resource node, agent, container) where relevant. */
+  targetId?: number;
+  /** Item kind for Eat / Deposit / Withdraw / Give. */
+  objectKind?: ObjectKind;
+  /** Structure kind for Build. */
+  buildKind?: BuildKind;
+  /** Tick count for Sleep / Idle duration. */
+  durationTicks?: number;
+  /** Utterance payload for Speak. */
+  utterance?: Utterance;
+}
+
+// ─── Communication ───────────────────────────────────────────────────────────
+
+/**
+ * Constrained speech acts with machine-comparable payloads (V2 decision —
+ * knowledge transfer needs payloads the diffusion analyzer can equate).
+ */
+export type SpeechAct = 'share-knowledge' | 'share-episode' | 'inform' | 'request';
+
+export interface Utterance {
+  /** Listener agent id; omitted = addressed to everyone in earshot. */
+  targetId?: number;
+  speechAct: SpeechAct;
+  /** share-knowledge: the rule being taught + the speaker's confidence. */
+  rule?: KnowledgeRule;
+  ruleConfidence?: number;
+  /** share-episode / inform / request: free-ish summary text. */
+  text?: string;
+}
+
+// ─── Events ──────────────────────────────────────────────────────────────────
+
+export type SimEventType =
+  | 'GatherSucceeded'
+  | 'GatherFailed'
+  | 'AteFood'
+  | 'DrankWater'
+  | 'BecameSick'
+  | 'RecoveredFromSickness'
+  | 'SleptSafely'
+  | 'SleptExposed'
+  | 'SufferedExposure'
+  | 'ReceivedItem'
+  | 'GaveItem'
+  | 'WasAttacked'
+  | 'AttackedAgent'
+  | 'AgentDied'
+  | 'WitnessedDeath'
+  | 'SeedDeposited'
+  | 'PlantSprouted'
+  | 'BuiltStructure'
+  | 'DepositedItem'
+  | 'WithdrewItem'
+  | 'UtteranceSpoken'
+  | 'IntentRejected'
+  | 'SawAgent'
+  | 'FoundResource';
+
+export interface SimEvent {
+  tick: number;
+  type: SimEventType;
+  actorId: number;
+  targetIds: number[];
+  x: number;
+  y: number;
+  /** Physical payload only (objectKind, amount, cause, utterance, …). */
+  payload: Record<string, unknown>;
+}
+
+// ─── Memory ──────────────────────────────────────────────────────────────────
+
+/** Where a memory came from. Testimony/observation feed the same miners. */
+export type MemoryOrigin = 'experience' | 'observation' | 'testimony';
+
+export interface MemoryRecord {
+  id: number;
+  tick: number;
+  type: SimEventType;
+  /** Agent ids involved, excluding the rememberer. */
+  subjects: number[];
+  objectKind?: ObjectKind;
+  context: ContextFeatures;
+  /** Need pressure deltas this event caused (negative = relief). */
+  needDeltas: Partial<Needs>;
+  outcome: 'success' | 'failure' | 'neutral';
+  /** Where it happened (world units) — succession mining matches locality. */
+  x?: number;
+  y?: number;
+  summaryText: string;
+  /** Deterministic heuristic (event-type base × magnitude). Never LLM-set. */
+  importance: number;
+  origin: MemoryOrigin;
+  /** For origin=testimony: who told the rememberer. */
+  toldBy?: number;
+  /** For heard speech: what was said (share-knowledge rules ride here). */
+  utterance?: Utterance;
+  /** Retrieval embedding — optional, filled by an IEmbedder when present. */
+  embedding?: Float32Array;
+}
+
+// ─── Knowledge ───────────────────────────────────────────────────────────────
+
+/**
+ * The structured truth-claim a knowledge record asserts. Machine-comparable
+ * by design: two agents hold "the same" belief iff their rules are equal.
+ * Statements are TEMPLATED from rules (see learning/templates.ts) — never
+ * free-generated.
+ */
+export type KnowledgeRule =
+  | {
+      kind: 'context-association';
+      event: SimEventType;
+      objectKind?: ObjectKind;
+      feature: ContextFeatureKey;
+      direction: 'positive' | 'negative';
+    }
+  | {
+      kind: 'succession';
+      causeType: SimEventType;
+      causeObject?: ObjectKind;
+      effectType: SimEventType;
+      effectObject?: ObjectKind;
+    }
+  | {
+      kind: 'social-contingency';
+      partnerId: number;
+      pattern: 'reciprocates' | 'generous' | 'dangerous' | 'helpful';
+    }
+  | {
+      kind: 'outcome-association';
+      actionType: SimEventType;
+      feature: ContextFeatureKey | null;
+      need: NeedKey;
+      direction: 'relieves' | 'worsens';
+    };
+
+export type KnowledgeStatus = 'hypothesis' | 'held' | 'contested' | 'abandoned';
+
+export interface KnowledgeRecord {
+  id: number;
+  /** Canonical string key derived from the rule — dedupe + diffusion compare. */
+  ruleKey: string;
+  rule: KnowledgeRule;
+  /** Templated natural-language rendering, for prompts and the Observatory. */
+  statement: string;
+  /** Evidence-driven (Laplace-smoothed). Never set by hand or by an LLM. */
+  confidence: number;
+  evidenceCount: number;
+  contradictionCount: number;
+  /** Sampled provenance — enough to audit "why do you believe that?". */
+  sourceMemoryIds: number[];
+  status: KnowledgeStatus;
+  origin: MemoryOrigin;
+  /** For origin=testimony: the informant. Provenance chains live here. */
+  testimonyFrom?: number;
+  firstFormed: number;
+  lastReinforced: number;
+}
+
+// ─── Agent snapshot, goals, mind I/O ─────────────────────────────────────────
+
+export interface AgentSnapshot {
+  id: number;
+  name: string;
+  ageTicks: number;
+  traits: Traits;
+  needs: Needs;
+  health: number;
+  sick: boolean;
+  x: number;
+  y: number;
+  inventory: Partial<Record<ObjectKind, number>>;
+  context: ContextFeatures;
+}
+
+export interface ObservedAgent {
+  id: number;
+  x: number;
+  y: number;
+}
+
+export interface ObservedResource {
+  id: number;
+  kind: ResourceNodeKind;
+  x: number;
+  y: number;
+  stock: number;
+}
+
+export interface ObservedStructure {
+  id: number;
+  kind: BuildKind;
+  x: number;
+  y: number;
+}
+
+/** What the agent can currently perceive. */
+export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
+
+export interface WorldView {
+  tick: number;
+  night: boolean;
+  /** Current season — winter collapses forage and raises cold pressure. */
+  season: Season;
+  agents: ObservedAgent[];
+  resources: ObservedResource[];
+  structures: ObservedStructure[];
+}
+
+export interface Goal {
+  id: number;
+  description: string;
+  /** The need this goal serves, when it serves one. */
+  need?: NeedKey;
+  createdTick: number;
+}
+
+export type ThinkTrigger =
+  | 'periodic'
+  | 'planCompleted'
+  | 'planFailed'
+  | 'wasAttacked'
+  | 'witnessedDeath'
+  | 'conversation'
+  | 'needCritical';
+
+export interface RelationshipRecord {
+  trust: number;
+  respect: number;
+  friendship: number;
+  fear: number;
+  interactionCount: number;
+  lastInteractionTick: number;
+}
+
+export interface ThinkInput {
+  snapshot: AgentSnapshot;
+  recalledMemories: MemoryRecord[];
+  /** Held knowledge, confidence-qualified — the agent's worldview. */
+  knowledge: KnowledgeRecord[];
+  relationships: Map<number, RelationshipRecord>;
+  worldView: WorldView;
+  goals: Goal[];
+  trigger: ThinkTrigger;
+}
+
+/**
+ * Everything consciousness is allowed to produce. Deliberately small:
+ * thinking yields goals, plans, and words — nothing else (V2).
+ */
+export interface MindOutput {
+  goals: Goal[];
+  plan: Intent[];
+  utterances: Utterance[];
+}

@@ -1,0 +1,16 @@
+{
+  "name": "yggdrasil-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "description": "Yggdrasil — artificial-life & emergent-civilization research engine and desktop lab.",
+  "scripts": {
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
