@@ -50,6 +50,7 @@ function eventPhrase(type: string, payload: Record<string, unknown>): string {
     case 'PlantSprouted': return 'watched a seed sprout';
     case 'GaveItem': return `shared ${payload['objectKind'] ?? 'an item'}`;
     case 'AttackedAgent': return 'attacked another';
+    case 'AttackedByPredator': return `was attacked by a ${payload['predator'] ?? 'predator'}!`;
     case 'SleptInShelter': case 'Slept': return 'slept';
     // "IntentRejected" = a plan step the world wouldn't allow (e.g. out of range,
     // no wood) — the agent just tries something else. Normal, not an error.

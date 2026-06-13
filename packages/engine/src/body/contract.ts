@@ -147,6 +147,7 @@ export type SimEventType =
   | 'GaveItem'
   | 'WasAttacked'
   | 'AttackedAgent'
+  | 'AttackedByPredator'
   | 'AgentDied'
   | 'WitnessedDeath'
   | 'SeedDeposited'

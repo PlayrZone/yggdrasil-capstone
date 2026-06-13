@@ -56,7 +56,7 @@ export {
 } from './body/Climate.js';
 
 // ── World geography (regions / unequal continent) ────────────────────────────
-export { WORLD, EDGE, regionAt, heightAt, elevationBand, riverY, tributaryY, inRiver, LAKE_CENTERS, clampToWorld } from './world/regions.js';
+export { WORLD, EDGE, SEA_HEIGHT, regionAt, heightAt, elevationBand, riverY, tributaryY, inRiver, LAKE_CENTERS, clampToWorld, isWater, isDeepWater } from './world/regions.js';
 export type { Region } from './world/regions.js';
 
 // ── Experiment runner (headless sim host) ────────────────────────────────────

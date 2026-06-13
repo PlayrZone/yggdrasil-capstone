@@ -120,3 +120,18 @@ export function clampToWorld(p: { x: number; y: number }): void {
   p.x = Math.min(WORLD - EDGE, Math.max(EDGE, p.x));
   p.y = Math.min(WORLD - EDGE, Math.max(EDGE, p.y));
 }
+
+/** Sea level in world-height units — terrain below this is underwater. */
+export const SEA_HEIGHT = 0.85;
+
+/** Any water: the sea, lakes, and the river (fish/crocodile habitat). */
+export function isWater(x: number, y: number): boolean {
+  const r = regionAt(x, y);
+  return r === 'lake' || r === 'river' || (r === 'coast' && heightAt(x, y) < SEA_HEIGHT);
+}
+
+/** DEEP water a walker can't enter (sea + lakes). Rivers stay fordable. */
+export function isDeepWater(x: number, y: number): boolean {
+  const r = regionAt(x, y);
+  return r === 'lake' || (r === 'coast' && heightAt(x, y) < SEA_HEIGHT);
+}

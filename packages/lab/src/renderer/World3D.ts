@@ -14,8 +14,15 @@ const RESOURCE_RGB: Record<string, [number, number, number]> = {
   goldVein: [0.83, 0.69, 0.22], gemVein: [0.31, 0.81, 0.75],
 };
 const ANIMAL_RGB: Record<string, THREE.Color> = {
-  deer: new THREE.Color(0.55, 0.4, 0.26), hare: new THREE.Color(0.66, 0.62, 0.55), boar: new THREE.Color(0.28, 0.24, 0.22),
+  deer: new THREE.Color(0.55, 0.4, 0.26),
+  hare: new THREE.Color(0.66, 0.62, 0.55),
+  boar: new THREE.Color(0.28, 0.24, 0.22),
+  fish: new THREE.Color(0.4, 0.6, 0.78),
+  wolf: new THREE.Color(0.5, 0.5, 0.54), // predators
+  bear: new THREE.Color(0.34, 0.22, 0.16),
+  crocodile: new THREE.Color(0.2, 0.34, 0.2),
 };
+const ANIMAL_SIZE: Record<string, number> = { hare: 0.65, deer: 1, boar: 1.1, fish: 0.6, wolf: 1.15, bear: 1.6, crocodile: 1.5 };
 
 const HSCALE = 9; // vertical exaggeration of the heightmap
 const SEA = 0.85; // sea level in world-height units
@@ -332,9 +339,10 @@ export class World3D {
     const n = Math.min(list.length, mesh.instanceMatrix.count);
     for (let i = 0; i < n; i++) {
       const a = list[i]!;
-      this.dummy.scale.set(1, 1, 1);
+      const sz = ANIMAL_SIZE[a.kind] ?? 1;
+      this.dummy.scale.set(sz, sz, sz);
       this.dummy.rotation.set(0, 0, 0);
-      this.dummy.position.set(a.x - HALF, heightAt(a.x, a.y) * HSCALE + 3, a.y - HALF);
+      this.dummy.position.set(a.x - HALF, heightAt(a.x, a.y) * HSCALE + 3 * sz, a.y - HALF);
       this.dummy.updateMatrix();
       mesh.setMatrixAt(i, this.dummy.matrix);
       mesh.setColorAt(i, ANIMAL_RGB[a.kind] ?? ANIMAL_RGB['deer']!);

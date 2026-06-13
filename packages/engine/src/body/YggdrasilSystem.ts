@@ -17,7 +17,7 @@ import {
   SICKNESS_TICKS,
 } from './WorldRegularities.js';
 import { coldPressure, hungerRateMultiplier } from './Climate.js';
-import { clampToWorld } from '../world/regions.js';
+import { clampToWorld, isDeepWater } from '../world/regions.js';
 
 const MOVE_SPEED = 0.5;
 const ARRIVE_DISTANCE = 1.0;
@@ -591,9 +591,15 @@ export class YggdrasilSystem {
         const dx = t.x - intent.x;
         const dy = t.y - intent.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        t.x += (dx / d) * MOVE_SPEED * 1.5; // Fear is fast.
-        t.y += (dy / d) * MOVE_SPEED * 1.5;
-        clampToWorld(t);
+        {
+          const fx = t.x + (dx / d) * MOVE_SPEED * 1.5; // Fear is fast.
+          const fy = t.y + (dy / d) * MOVE_SPEED * 1.5;
+          if (!isDeepWater(fx, fy)) {
+            t.x = fx;
+            t.y = fy;
+            clampToWorld(t);
+          }
+        }
         return;
       }
       case 'Idle': {
@@ -615,8 +621,12 @@ export class YggdrasilSystem {
     const dy = y - t.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d <= ARRIVE_DISTANCE) return true;
-    t.x += (dx / d) * MOVE_SPEED;
-    t.y += (dy / d) * MOVE_SPEED;
+    const nx = t.x + (dx / d) * MOVE_SPEED;
+    const ny = t.y + (dy / d) * MOVE_SPEED;
+    // Deep water (sea, lakes) is impassable on foot — stop at the shoreline.
+    if (isDeepWater(nx, ny)) return true;
+    t.x = nx;
+    t.y = ny;
     clampToWorld(t);
     return false;
   }

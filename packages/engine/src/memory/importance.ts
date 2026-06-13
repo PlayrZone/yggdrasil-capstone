@@ -20,6 +20,7 @@ const BASE: Record<SimEventType, number> = {
   GaveItem: 0.45,
   WasAttacked: 0.9,
   AttackedAgent: 0.7,
+  AttackedByPredator: 0.92,
   AgentDied: 0.95,
   WitnessedDeath: 0.9,
   SeedDeposited: 0.2,

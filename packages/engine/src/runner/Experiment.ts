@@ -27,7 +27,7 @@ import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { Intent, MindOutput, ResourceNodeKind, SimEvent } from '../contract/types.js';
-import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS } from '../world/regions.js';
+import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS, isDeepWater } from '../world/regions.js';
 import type { Region } from '../world/regions.js';
 
 export interface AgentInfo {
@@ -200,8 +200,14 @@ export class Experiment {
     scatter('clayDeposit', 'river', 36, 20);
     scatter('fiberPlant', 'river', 26, 10);
 
-    // Lakes — freshwater at the centre + fertile shores.
-    for (const [cx, cy] of LAKE_CENTERS) place('waterSource', cx, cy, 9999);
+    // Lakes — freshwater drawn from the SHORE (the centre is impassable water),
+    // plus fertile shores.
+    for (const [cx, cy, r] of LAKE_CENTERS) {
+      place('waterSource', cx + r + 10, cy, 9999);
+      place('waterSource', cx - r - 10, cy, 9999);
+      place('waterSource', cx, cy + r + 10, 9999);
+      place('waterSource', cx, cy - r - 10, 9999);
+    }
     scatter('berryBush', 'lake', 34, 16);
     scatter('tuberPlant', 'lake', 26, 16);
     scatter('fiberPlant', 'lake', 22, 10);
@@ -212,8 +218,8 @@ export class Experiment {
     scatter('clayDeposit', 'wetland', 34, 18);
     scatter('tuberPlant', 'wetland', 30, 12);
 
-    // Coast — sea water + salt + reeds + a little shore forage.
-    for (let y = 20; y < WORLD - 20; y += 40) place('waterSource', WORLD * 0.025, y, 9999);
+    // Coast — sea water reachable from the beach (not out in the deep) + salt.
+    for (let y = 20; y < WORLD - 20; y += 40) place('waterSource', WORLD * 0.05, y, 9999);
     scatter('saltFlat', 'coast', 30, 14);
     scatter('fiberPlant', 'coast', 26, 10);
     scatter('berryBush', 'coast', 18, 12);
@@ -249,12 +255,14 @@ export class Experiment {
 
     // Spawn in a generous CENTRAL band — dense enough that groups meet and
     // knowledge spreads, with the whole continent around them to migrate into.
-    const agents = spawnGahallians(this.world, agentCount, this.seed, {
-      x: WORLD * 0.14,
-      y: WORLD * 0.2,
-      width: WORLD * 0.5,
-      height: WORLD * 0.6,
-    });
+    const agents = spawnGahallians(
+      this.world,
+      agentCount,
+      this.seed,
+      { x: WORLD * 0.14, y: WORLD * 0.2, width: WORLD * 0.5, height: WORLD * 0.6 },
+      0,
+      isDeepWater, // never born in the sea or a lake
+    );
     for (const agent of agents) {
       this.agentIds.push(agent.id);
       this.minds.set(agent.id, new AgentMind(agent.id));
@@ -269,7 +277,7 @@ export class Experiment {
     for (let i = 0; i < ticks; i++) {
       const tick = this.tick++;
       this.resources.step(this.world, tick);
-      this.wildlife.step(this.world, tick);
+      this.wildlife.step(this.world, tick, this.bus);
       this.regularities.step(this.world, tick, this.bus);
       this.body.step(this.world, tick, this.bus);
 
