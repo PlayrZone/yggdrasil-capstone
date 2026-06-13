@@ -70,6 +70,9 @@ export { PerceptionSystem } from './PerceptionSystem.js';
 
 export { YggdrasilSystem } from './YggdrasilSystem.js';
 
+export { WildlifeSystem } from './WildlifeSystem.js';
+export type { Animal, AnimalKind } from './WildlifeSystem.js';
+
 export { spawnGahallians } from './genesis.js';
 export type { GenesisArea } from './genesis.js';
 

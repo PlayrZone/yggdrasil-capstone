@@ -7,11 +7,14 @@ import {
   ResourceNodeSystem,
   SimEventBus,
   WorldRegularitiesSystem,
+  WildlifeSystem,
   YggdrasilSystem,
   createResourceNode,
   spawnGahallians,
   TICKS_PER_DAY,
 } from '../body/index.js';
+import type { Animal } from '../body/index.js';
+import type { ResourceNode } from '../body/index.js';
 import { mulberry32, hashSeed } from '../body/prng.js';
 import { AgentMind } from '../agent/AgentMind.js';
 import { CognitionLog } from '../scheduler/CognitionLog.js';
@@ -65,6 +68,7 @@ export class Experiment {
   readonly perception = new PerceptionSystem({ elevationBand });
   private readonly resources = new ResourceNodeSystem();
   private readonly regularities = new WorldRegularitiesSystem();
+  private wildlife!: WildlifeSystem;
   readonly body = new YggdrasilSystem(this.perception);
   readonly minds = new Map<number, AgentMind>();
   readonly agentIds: number[] = [];
@@ -255,6 +259,9 @@ export class Experiment {
       this.agentIds.push(agent.id);
       this.minds.set(agent.id, new AgentMind(agent.id));
     }
+
+    // Wild animals roam the lowlands — mobile food, and a reason to range.
+    this.wildlife = new WildlifeSystem(this.seed, Math.max(40, Math.round(agentCount * 0.6)));
   }
 
   /** Advance the fixed-timestep loop by N ticks. */
@@ -262,6 +269,7 @@ export class Experiment {
     for (let i = 0; i < ticks; i++) {
       const tick = this.tick++;
       this.resources.step(this.world, tick);
+      this.wildlife.step(this.world, tick);
       this.regularities.step(this.world, tick, this.bus);
       this.body.step(this.world, tick, this.bus);
 
@@ -369,6 +377,31 @@ export class Experiment {
     const body = this.agentBody(agentId);
     if (!body) return agentId === 0 ? 'world' : `#${agentId}`;
     return body.name && body.name.length ? body.name : `Gahallian #${agentId}`;
+  }
+
+  /** Wild animals currently roaming (moving — read every frame). */
+  animals(): { id: number; x: number; y: number; kind: string }[] {
+    const out: { id: number; x: number; y: number; kind: string }[] = [];
+    this.world.forEach((e) => {
+      const a = e.components['Animal'] as Animal | undefined;
+      if (!a) return;
+      const t = e.components['Transform2D'] as { x: number; y: number } | undefined;
+      if (t) out.push({ id: e.id, x: t.x, y: t.y, kind: a.kind });
+    });
+    return out;
+  }
+
+  /** Static resource nodes (food, water, ore, …) for the world view (read once). */
+  resourceNodes(): { id: number; x: number; y: number; kind: string }[] {
+    const out: { id: number; x: number; y: number; kind: string }[] = [];
+    this.world.forEach((e) => {
+      if (e.components['Animal']) return; // animals are rendered separately
+      const n = e.components['ResourceNode'] as ResourceNode | undefined;
+      if (!n) return;
+      const t = e.components['Transform2D'] as { x: number; y: number } | undefined;
+      if (t) out.push({ id: e.id, x: t.x, y: t.y, kind: n.kind });
+    });
+    return out;
   }
 
   /** Structures the Gahallians have built (shelters, walls, containers, drops). */

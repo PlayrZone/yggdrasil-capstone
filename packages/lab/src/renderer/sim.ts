@@ -26,7 +26,10 @@ export const SPEED_PRESETS: SpeedPreset[] = [
   { mult: 2400, label: '2400×', rate: '3s / day' },
 ];
 
-const MAX_TICKS_PER_FRAME = 4000; // safety cap at extreme speeds
+// Hard cap on work per frame so high speeds (and a stalled/backgrounded tab)
+// can never lock the UI or flood the LLM scheduler. Beyond this the sim just
+// runs at the cap rate (~cap×60 ticks/s) instead of trying to catch up.
+const MAX_TICKS_PER_FRAME = 320;
 
 export interface Pos {
   x: number;

@@ -1,7 +1,21 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { heightAt, regionAt, WORLD } from '@yggdrasil/engine';
 import type { Region } from '@yggdrasil/engine';
+
+// Resource node → marker colour. Trees/rivers are skipped (decor + water cover them).
+const RESOURCE_RGB: Record<string, [number, number, number]> = {
+  berryBush: [0.25, 0.7, 0.25], foodPlant: [0.25, 0.7, 0.25], tuberPlant: [0.55, 0.62, 0.25],
+  mushroomPatch: [0.78, 0.28, 0.2], fiberPlant: [0.74, 0.66, 0.42], nightshadePlant: [0.5, 0.25, 0.6],
+  waterSource: [0.27, 0.56, 0.85], stoneDeposit: [0.55, 0.55, 0.58], clayDeposit: [0.62, 0.42, 0.25],
+  saltFlat: [0.85, 0.85, 0.88], copperVein: [0.72, 0.45, 0.2], tinVein: [0.6, 0.62, 0.66],
+  ironVein: [0.5, 0.44, 0.4], coalSeam: [0.13, 0.13, 0.15], silverVein: [0.8, 0.82, 0.88],
+  goldVein: [0.83, 0.69, 0.22], gemVein: [0.31, 0.81, 0.75],
+};
+const ANIMAL_RGB: Record<string, THREE.Color> = {
+  deer: new THREE.Color(0.55, 0.4, 0.26), hare: new THREE.Color(0.66, 0.62, 0.55), boar: new THREE.Color(0.28, 0.24, 0.22),
+};
 
 const HSCALE = 9; // vertical exaggeration of the heightmap
 const SEA = 0.85; // sea level in world-height units
@@ -58,6 +72,10 @@ export class World3D {
   private readonly controls: OrbitControls;
   private agents: THREE.InstancedMesh | null = null;
   private instanceIds: number[] = [];
+  private readonly lastPos = new Map<number, { x: number; y: number }>();
+  private readonly headings = new Map<number, number>();
+  private resourceMesh: THREE.InstancedMesh | null = null;
+  private animalMesh: THREE.InstancedMesh | null = null;
   private readonly dummy = new THREE.Object3D();
   private readonly raycaster = new THREE.Raycaster();
   private readonly structureGroup = new THREE.Group();
@@ -240,20 +258,90 @@ export class World3D {
     this.scene.add(rocks);
   }
 
+  // Body capsule + a forward-pointing nose, so an agent visibly FACES the way
+  // it walks (a plain capsule is radially symmetric and can't show heading).
+  private static agentGeometry(): THREE.BufferGeometry {
+    const body = new THREE.CapsuleGeometry(3.2, 5, 4, 8);
+    const nose = new THREE.ConeGeometry(1.7, 4.5, 6);
+    nose.rotateX(Math.PI / 2); // point +Z
+    nose.translate(0, 1.8, 3.6);
+    return mergeGeometries([body, nose]) ?? body;
+  }
+
   setPopulation(count: number): void {
     if (this.agents) {
       this.scene.remove(this.agents);
       this.agents.geometry.dispose();
       (this.agents.material as THREE.Material).dispose();
     }
-    const mesh = new THREE.InstancedMesh(new THREE.CapsuleGeometry(3.2, 5, 4, 8), new THREE.MeshStandardMaterial({ roughness: 0.6 }), Math.max(1, count));
+    const mesh = new THREE.InstancedMesh(World3D.agentGeometry(), new THREE.MeshStandardMaterial({ roughness: 0.6 }), Math.max(1, count));
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.count = 0;
     this.scene.add(mesh);
     this.agents = mesh;
+    this.lastPos.clear();
+    this.headings.clear();
     // New world → forget old structures so they rebuild.
     for (const child of [...this.structureGroup.children]) this.structureGroup.remove(child);
     this.seenStructures.clear();
+  }
+
+  /** Build the static resource-node markers (call once per world). */
+  setResources(list: { x: number; y: number; kind: string }[]): void {
+    if (this.resourceMesh) {
+      this.scene.remove(this.resourceMesh);
+      this.resourceMesh.geometry.dispose();
+      (this.resourceMesh.material as THREE.Material).dispose();
+      this.resourceMesh = null;
+    }
+    const shown = list.filter((r) => RESOURCE_RGB[r.kind]);
+    if (shown.length === 0) return;
+    const mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(3.2, 0), new THREE.MeshStandardMaterial({ roughness: 0.7, flatShading: true }), shown.length);
+    const c = new THREE.Color();
+    shown.forEach((r, i) => {
+      const [cr, cg, cb] = RESOURCE_RGB[r.kind]!;
+      this.dummy.scale.set(1, 1, 1);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.position.set(r.x - HALF, heightAt(r.x, r.y) * HSCALE + 3, r.y - HALF);
+      this.dummy.updateMatrix();
+      mesh.setMatrixAt(i, this.dummy.matrix);
+      mesh.setColorAt(i, c.setRGB(cr, cg, cb));
+    });
+    mesh.instanceColor!.needsUpdate = true;
+    this.scene.add(mesh);
+    this.resourceMesh = mesh;
+  }
+
+  /** (Re)create the animal instance mesh (a generous cap for the roaming herd). */
+  setAnimals(cap: number): void {
+    if (this.animalMesh) {
+      this.scene.remove(this.animalMesh);
+      this.animalMesh.geometry.dispose();
+      (this.animalMesh.material as THREE.Material).dispose();
+    }
+    const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(4, 4, 7), new THREE.MeshStandardMaterial({ roughness: 0.8 }), Math.max(1, cap));
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.count = 0;
+    this.scene.add(mesh);
+    this.animalMesh = mesh;
+  }
+
+  updateAnimals(list: { x: number; y: number; kind: string }[]): void {
+    const mesh = this.animalMesh;
+    if (!mesh) return;
+    const n = Math.min(list.length, mesh.instanceMatrix.count);
+    for (let i = 0; i < n; i++) {
+      const a = list[i]!;
+      this.dummy.scale.set(1, 1, 1);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.position.set(a.x - HALF, heightAt(a.x, a.y) * HSCALE + 3, a.y - HALF);
+      this.dummy.updateMatrix();
+      mesh.setMatrixAt(i, this.dummy.matrix);
+      mesh.setColorAt(i, ANIMAL_RGB[a.kind] ?? ANIMAL_RGB['deer']!);
+    }
+    mesh.count = n;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
   update(agents: Agent3D[]): void {
@@ -264,8 +352,18 @@ export class World3D {
     for (let i = 0; i < n; i++) {
       const a = agents[i]!;
       const surface = heightAt(a.x, a.y) * HSCALE;
+      // Face the direction of travel (scene x = world x, scene z = world y).
+      const last = this.lastPos.get(a.id);
+      let heading = this.headings.get(a.id) ?? 0;
+      if (last) {
+        const dx = a.x - last.x;
+        const dz = a.y - last.y;
+        if (dx * dx + dz * dz > 0.0004) heading = Math.atan2(dx, dz);
+      }
+      this.headings.set(a.id, heading);
+      this.lastPos.set(a.id, { x: a.x, y: a.y });
       this.dummy.scale.set(1, 1, 1);
-      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.rotation.set(0, heading, 0);
       this.dummy.position.set(a.x - HALF, surface + 5, a.y - HALF);
       this.dummy.updateMatrix();
       mesh.setMatrixAt(i, this.dummy.matrix);

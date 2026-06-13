@@ -80,7 +80,8 @@ export type ResourceNodeKind =
   | 'saltFlat'
   | 'silverVein'
   | 'goldVein'
-  | 'gemVein';
+  | 'gemVein'
+  | 'game';
 
 export type BuildKind = 'shelter' | 'wall' | 'container';
 

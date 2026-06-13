@@ -34,6 +34,7 @@ export const NODE_YIELD: Record<ResourceNodeKind, ObjectKind> = {
   silverVein: 'silver',
   goldVein: 'gold',
   gemVein: 'gemstone',
+  game: 'meat',
 };
 
 /** Every Nth gather from a food bush/plant also yields a seed — the
@@ -61,6 +62,7 @@ export const DEFAULT_REGROW: Record<ResourceNodeKind, number> = {
   silverVein: 0,
   goldVein: 0,
   gemVein: 0,
+  game: 0, // an animal is one carcass; the wildlife system respawns the herd
 };
 
 /** Plant nodes whose regrowth follows the seasons (winter halts them). */

@@ -36,6 +36,28 @@ interface Stats {
 
 const dayOf = (tick: number): number => Math.floor(tick / TICKS_PER_DAY) + 1;
 
+// Humanize raw event types for the feed.
+function eventPhrase(type: string, payload: Record<string, unknown>): string {
+  switch (type) {
+    case 'GatherSucceeded': return payload['dug'] ? `dug ${payload['objectKind']}` : `gathered ${payload['objectKind'] ?? 'something'}`;
+    case 'GatherFailed': return 'found nothing to gather';
+    case 'AteFood': return `ate ${payload['objectKind'] ?? 'food'}`;
+    case 'BecameSick': return 'fell sick';
+    case 'Recovered': return 'recovered';
+    case 'AgentDied': return `died (${payload['cause'] ?? 'unknown'})`;
+    case 'BuiltStructure': return `built a ${payload['buildKind'] ?? 'structure'}`;
+    case 'SeedDeposited': return 'planted a seed';
+    case 'PlantSprouted': return 'watched a seed sprout';
+    case 'GaveItem': return `shared ${payload['objectKind'] ?? 'an item'}`;
+    case 'AttackedAgent': return 'attacked another';
+    case 'SleptInShelter': case 'Slept': return 'slept';
+    // "IntentRejected" = a plan step the world wouldn't allow (e.g. out of range,
+    // no wood) — the agent just tries something else. Normal, not an error.
+    case 'IntentRejected': return `couldn't ${payload['intentKind'] ?? 'act'} (${payload['reason'] ?? '—'})`;
+    default: return type.replace(/([A-Z])/g, ' $1').trim().toLowerCase();
+  }
+}
+
 export function App(): React.ReactElement {
   const clockRef = useRef<SimClock | null>(null);
   const world3dRef = useRef<World3D | null>(null);
@@ -65,7 +87,7 @@ export function App(): React.ReactElement {
       if (e.type === 'UtteranceSpoken' && utt?.text) {
         return { tick: e.tick, kind: 'speech', who: exp.nameOf(e.actorId), text: utt.text };
       }
-      return { tick: e.tick, kind: 'event', who: exp.nameOf(e.actorId), text: e.type };
+      return { tick: e.tick, kind: 'event', who: exp.nameOf(e.actorId), text: eventPhrase(e.type, e.payload) };
     });
     return {
       day: exp.day(),
@@ -98,6 +120,7 @@ export function App(): React.ReactElement {
       agents.push({ id: p.id, x: p.x, y: p.y, state: s });
     }
     world.update(agents);
+    world.updateAnimals(clock.exp.animals());
     world.render();
   }, []);
 
@@ -108,7 +131,12 @@ export function App(): React.ReactElement {
         selectedRef.current = id;
         setSelected(id !== null && clockRef.current ? clockRef.current.exp.agentDetail(id) : null);
       });
-      world.setPopulation(clockRef.current?.exp.agentIds.length ?? 80);
+      const exp = clockRef.current?.exp;
+      world.setPopulation(exp?.agentIds.length ?? 80);
+      if (exp) {
+        world.setResources(exp.resourceNodes());
+        world.setAnimals(300);
+      }
       world3dRef.current = world;
     } else {
       world3dRef.current?.dispose();
@@ -121,6 +149,8 @@ export function App(): React.ReactElement {
     const exp = new Experiment({ seed, agentCount, mindBackend });
     clockRef.current = new SimClock(exp, () => performance.now());
     world3dRef.current?.setPopulation(exp.agentIds.length);
+    world3dRef.current?.setResources(exp.resourceNodes());
+    world3dRef.current?.setAnimals(300);
     world3dRef.current?.setSelected(null);
     selectedRef.current = null;
     setSelected(null);
@@ -206,8 +236,9 @@ export function App(): React.ReactElement {
   const sendIdea = useCallback(() => {
     const clock = clockRef.current;
     const clean = idea.trim();
-    if (!clock || !clean) return;
-    clock.exp.giveIdea(clean, 'all');
+    const target = selectedRef.current;
+    if (!clock || !clean || target === null) return;
+    clock.exp.giveIdea(clean, target); // a thought lands in ONE head — the selected one
     setIdea('');
   }, [idea]);
 
@@ -311,11 +342,18 @@ export function App(): React.ReactElement {
             )}
 
             <section className="idea">
-              <label>Give them an idea (only you can)</label>
+              <label>Give a thought to {selected ? selected.name : 'one Gahallian'} (only you can)</label>
               <div className="row">
-                <input value={idea} placeholder="e.g. water is by the river" onChange={(e) => setIdea(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendIdea()} />
-                <button className="go" onClick={sendIdea}>Send</button>
+                <input
+                  value={idea}
+                  placeholder={selected ? `whisper to ${selected.name}…` : 'click a Gahallian first'}
+                  disabled={!selected}
+                  onChange={(e) => setIdea(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendIdea()}
+                />
+                <button className="go" disabled={!selected} onClick={sendIdea}>Send</button>
               </div>
+              {!selected && <p className="ideahint">A thought lands in one head, not the whole world — click a Gahallian to choose who hears it.</p>}
             </section>
 
             {stats && (

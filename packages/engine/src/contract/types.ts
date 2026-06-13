@@ -106,7 +106,8 @@ export type ResourceNodeKind =
   | 'saltFlat'
   | 'silverVein'
   | 'goldVein'
-  | 'gemVein';
+  | 'gemVein'
+  | 'game'; // a wild animal — moves; hunting (gathering) it yields meat
 
 /**
  * Context features captured AT THE MOMENT a memory forms — the learning

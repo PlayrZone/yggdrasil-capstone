@@ -52,6 +52,8 @@ body {
 .iknow li { font-size: 12px; color: #cdd8de; padding: 3px 0; border-bottom: 1px solid #161d23; }
 .iknow li em { color: var(--green); font-style: normal; float: right; }
 .iknow li.empty { color: var(--muted); }
+.ideahint { color: var(--muted); font-size: 11px; margin: 8px 0 0; line-height: 1.4; }
+button:disabled, input:disabled { opacity: 0.5; cursor: not-allowed; }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
 
 .panel { width: 340px; border-left: 1px solid var(--line); background: var(--panel); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
