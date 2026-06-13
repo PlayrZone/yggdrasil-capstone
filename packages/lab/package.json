@@ -1,7 +1,7 @@
 {
   "name": "@yggdrasil/lab",
   "productName": "Yggdrasil Lab",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Yggdrasil Lab — desktop observatory for artificial-life experiments.",
   "private": true,
   "main": "./out/main/index.js",
@@ -19,12 +19,14 @@
     "test": "echo \"(lab has no unit tests)\""
   },
   "dependencies": {
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "three": "^0.171.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "@yggdrasil/engine": "workspace:*",
     "@types/node": "^22.0.0",
+    "@types/three": "^0.171.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "electron": "33.4.11",

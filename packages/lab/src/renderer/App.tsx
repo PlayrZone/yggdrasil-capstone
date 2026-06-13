@@ -1,23 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Experiment, regionAt, TICKS_PER_DAY, WORLD } from '@yggdrasil/engine';
-import type { Region } from '@yggdrasil/engine';
+import { Experiment, TICKS_PER_DAY } from '@yggdrasil/engine';
 import { SimClock, SPEED_PRESETS } from './sim.js';
 import { BridgeBackend } from './bridgeBackend.js';
+import { World3D, type Agent3D } from './World3D.js';
 import { ActivityView } from './ActivityView.js';
 import { ReportsView } from './ReportsView.js';
 import { AnalysisView, type AnalysisSnapshot } from './AnalysisView.js';
-
-const CANVAS = 640;
-const SCALE = CANVAS / WORLD;
-
-const REGION_COLOR: Record<Region, string> = {
-  river: '#1c3a4f',
-  coast: '#16313f',
-  forest: '#16331f',
-  mountain: '#3a3540',
-  hills: '#34301f',
-  plains: '#23301c',
-};
 
 type Tab = 'world' | 'activity' | 'analysis' | 'reports';
 
@@ -46,27 +34,11 @@ interface Stats {
   feed: FeedItem[];
 }
 
-function buildBackground(): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = CANVAS;
-  c.height = CANVAS;
-  const ctx = c.getContext('2d')!;
-  const step = 4;
-  for (let wy = 0; wy < WORLD; wy += step) {
-    for (let wx = 0; wx < WORLD; wx += step) {
-      ctx.fillStyle = REGION_COLOR[regionAt(wx + step / 2, wy + step / 2)];
-      ctx.fillRect(wx * SCALE, wy * SCALE, step * SCALE + 1, step * SCALE + 1);
-    }
-  }
-  return c;
-}
-
 const dayOf = (tick: number): number => Math.floor(tick / TICKS_PER_DAY) + 1;
 
 export function App(): React.ReactElement {
   const clockRef = useRef<SimClock | null>(null);
-  const bgRef = useRef<HTMLCanvasElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const world3dRef = useRef<World3D | null>(null);
   const rafRef = useRef<number>(0);
   const lastFrameRef = useRef<number>(0);
   const runningRef = useRef(false);
@@ -112,20 +84,29 @@ export function App(): React.ReactElement {
     };
   }, []);
 
-  const draw = useCallback((clock: SimClock) => {
-    const canvas = canvasRef.current;
-    const bg = bgRef.current;
-    if (!canvas || !bg) return;
-    const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(bg, 0, 0);
+  // The 3D scene draws the interpolated agents standing on the terrain.
+  const drawWorld = useCallback((clock: SimClock) => {
+    const world = world3dRef.current;
+    if (!world) return;
     const state = new Map(clock.exp.agentInfos().map((a) => [a.id, a]));
+    const agents: Agent3D[] = [];
     for (const p of clock.interpolated()) {
       const a = state.get(p.id);
-      if (!a) continue;
-      ctx.fillStyle = a.sick ? '#e0524d' : a.sleeping ? '#5b8bd0' : a.hungerCritical ? '#e09a3a' : '#43d18a';
-      ctx.beginPath();
-      ctx.arc(p.x * SCALE, p.y * SCALE, 2.4, 0, Math.PI * 2);
-      ctx.fill();
+      const s = a ? (a.sick ? 3 : a.sleeping ? 2 : a.hungerCritical ? 1 : 0) : 0;
+      agents.push({ x: p.x, y: p.y, state: s });
+    }
+    world.update(agents);
+    world.render();
+  }, []);
+
+  // Callback ref: spin up / tear down the WebGL world with the canvas element.
+  const canvasCb = useCallback((el: HTMLCanvasElement | null) => {
+    if (el) {
+      world3dRef.current = new World3D(el);
+      world3dRef.current.setPopulation(clockRef.current?.exp.agentIds.length ?? 80);
+    } else {
+      world3dRef.current?.dispose();
+      world3dRef.current = null;
     }
   }, []);
 
@@ -133,7 +114,7 @@ export function App(): React.ReactElement {
     const mindBackend = llm.hasKey ? new BridgeBackend(llm.model) : undefined;
     const exp = new Experiment({ seed, agentCount, mindBackend });
     clockRef.current = new SimClock(exp, () => performance.now());
-    bgRef.current = buildBackground();
+    world3dRef.current?.setPopulation(exp.agentIds.length);
     setStats(sampleStats(exp));
   }, [seed, agentCount, llm, sampleStats]);
 
@@ -177,13 +158,13 @@ export function App(): React.ReactElement {
           clock.tickFrame(dt, SPEED_PRESETS[speedRef.current]!.mult);
           if (statTick++ % 8 === 0) setStats(sampleStats(clock.exp));
         }
-        draw(clock);
+        drawWorld(clock); // smooth interpolation + orbit controls every frame
       }
       rafRef.current = requestAnimationFrame(loop);
     };
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [draw, sampleStats]);
+  }, [drawWorld, sampleStats]);
 
   useEffect(() => { runningRef.current = running; }, [running]);
   useEffect(() => { speedRef.current = speedIdx; }, [speedIdx]);
@@ -247,12 +228,13 @@ export function App(): React.ReactElement {
       {tab === 'world' && (
         <div className="body">
           <div className="stage">
-            <canvas ref={canvasRef} width={CANVAS} height={CANVAS} className="world" />
+            <canvas ref={canvasCb} className="world3d" />
             <div className="legend">
               <span><i style={{ background: '#43d18a' }} /> active</span>
               <span><i style={{ background: '#e09a3a' }} /> hungry</span>
               <span><i style={{ background: '#5b8bd0' }} /> sleeping</span>
               <span><i style={{ background: '#e0524d' }} /> sick</span>
+              <span className="orbit">drag to orbit · scroll to zoom</span>
             </div>
           </div>
 
