@@ -2,11 +2,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import { ResearchDB } from '@yggdrasil/db';
 import { MATERIAL_PROPERTIES, WORLD } from '@yggdrasil/engine';
 import { SessionManager } from './SessionManager.js';
+import { dbPath, yggHome } from './home.js';
+import { appendActivity } from './activity.js';
+import { listReports, readReport, writeReport } from './reports.js';
+import { hasLlmKey, llmModelId, makeLlmBackend } from './llm.js';
 
 /**
  * Yggdrasil Lab MCP server. Lets an MCP client (Claude) run, watch, query,
@@ -22,10 +24,19 @@ import { SessionManager } from './SessionManager.js';
  *    (the client relays the human's words); the engine never seeds ideas.
  */
 
-const DB_PATH = resolve(process.env['YGG_DB'] ?? '.yggdrasil/research.db');
-mkdirSync(dirname(DB_PATH), { recursive: true });
+const DB_PATH = dbPath();
 const db = new ResearchDB(DB_PATH);
-const sessions = new SessionManager(db);
+const sessions = new SessionManager(db, makeLlmBackend);
+
+/** Compact agent positions for the lab minimap (state: 0 ok,1 hungry,2 sleep,3 sick). */
+function agentSnapshot(runId: number): { id: number; x: number; y: number; state: number }[] {
+  const s = sessions.get(runId);
+  if (!s) return [];
+  return s.exp
+    .agentInfos()
+    .filter((a) => a.alive)
+    .map((a) => ({ id: a.id, x: Math.round(a.x), y: Math.round(a.y), state: a.sick ? 3 : a.sleeping ? 2 : a.hungerCritical ? 1 : 0 }));
+}
 
 const server = new McpServer({ name: 'yggdrasil-lab', version: '0.1.0' });
 
@@ -34,10 +45,26 @@ const text = (s: string): { content: { type: 'text'; text: string }[] } => ({
 });
 const json = (v: unknown): { content: { type: 'text'; text: string }[] } => text(JSON.stringify(v, null, 2));
 
-const MUTATING = new Set(['create_experiment', 'advance', 'give_idea', 'finish_run', 'run_experiment']);
+const MUTATING = new Set(['create_experiment', 'advance', 'give_idea', 'finish_run', 'run_experiment', 'write_report']);
 function logMutation(tool: string, detail: unknown, runId?: number): void {
   if (!MUTATING.has(tool)) return;
   db.recordAction('mcp', tool, detail, runId);
+}
+
+const ACTOR = process.env['YGG_ACTOR'] ?? 'ai-engineer';
+
+/** Push a line onto the shared feed the lab tails — so the human sees it live. */
+function announce(kind: string, summary: string, opts: { runId?: number; data?: Record<string, unknown>; withAgents?: boolean } = {}): void {
+  const at = opts.runId !== undefined ? (sessions.get(opts.runId)?.exp.tick ?? 0) : 0;
+  appendActivity({
+    at,
+    actor: ACTOR,
+    kind,
+    runId: opts.runId,
+    summary,
+    data: opts.data,
+    agents: opts.withAgents && opts.runId !== undefined ? agentSnapshot(opts.runId) : undefined,
+  });
 }
 
 // ── describe_lab ───────────────────────────────────────────────────────────────
@@ -60,6 +87,14 @@ server.registerTool(
         'MEMORY (episodic stream), LEARNING (deterministic statistical miners',
         'form knowledge from experience), CONSCIOUSNESS (LLM reasons over learned',
         'knowledge only — it is not the source of knowledge; the world is).',
+        '',
+        `The LLM consciousness is REQUIRED — it is what the lab exists to TRAIN.`,
+        `Model: ${hasLlmKey() ? llmModelId() : '(no FIREWORKS_API_KEY set — set it to run real minds)'}.`,
+        'Reflex is only a non-blocking fallback while the LLM is mid-thought.',
+        '',
+        'Shared with the human, live: an activity feed (every run/advance/idea/',
+        'report streams to the lab) and a Reports section both sides read+write',
+        '(list_reports / read_report / write_report).',
         '',
         'Anti-NPC doctrine: no roles, jobs, factions, leaders, governments, or',
         'religions are ever assigned. They may EMERGE through behavior and',
@@ -120,9 +155,11 @@ server.registerTool(
     },
   },
   async ({ seed, agentCount }) => {
-    const runId = sessions.create(seed, agentCount ?? 100, 0);
-    logMutation('create_experiment', { seed, agentCount: agentCount ?? 100 }, runId);
-    return json({ runId, seed, agentCount: agentCount ?? 100, message: 'created (tick 0). Use advance to run it.' });
+    const n = agentCount ?? 100;
+    const runId = sessions.create(seed, n, 0);
+    logMutation('create_experiment', { seed, agentCount: n }, runId);
+    announce('create', `Created experiment "${seed}" with ${n} Gahallians`, { runId, data: { seed, agentCount: n }, withAgents: true });
+    return json({ runId, seed, agentCount: n, message: 'created (tick 0). Use advance to run it.' });
   },
 );
 
@@ -138,8 +175,17 @@ server.registerTool(
     },
   },
   async ({ runId, ticks }) => {
-    sessions.advance(runId, ticks);
+    await sessions.advance(runId, ticks);
     logMutation('advance', { ticks }, runId);
+    const s = sessions.get(runId);
+    if (s) {
+      const exp = s.exp;
+      announce('advance', `Day ${exp.day()} — ${exp.aliveCount()}/${s.agentCount} alive, ${exp.totalKnowledge()} knowledge`, {
+        runId,
+        data: { exchanges: exp.exchangeCount, conflicts: exp.conflictCount, shares: exp.shareCount, builds: exp.buildCount },
+        withAgents: true,
+      });
+    }
     return json(snapshot(runId));
   },
 );
@@ -158,6 +204,7 @@ server.registerTool(
   },
   async ({ runId, text: idea, target }) => {
     const reached = sessions.giveIdea(runId, idea, target);
+    announce('idea', `Idea given to ${reached} Gahallian(s): "${idea}"`, { runId, data: { target } });
     return json({ runId, reached, idea });
   },
 );
@@ -171,6 +218,9 @@ server.registerTool(
     inputSchema: { runId: z.number().int().positive() },
   },
   async ({ runId }) => {
+    const s = sessions.get(runId);
+    const summary = s ? `Finished run ${runId} at day ${s.exp.day()} — ${s.exp.aliveCount()} survived, ${s.exp.totalKnowledge()} knowledge` : `Finished run ${runId}`;
+    announce('finish', summary, { runId });
     sessions.finish(runId);
     logMutation('finish_run', {}, runId);
     return json({ runId, status: 'finished' });
@@ -190,10 +240,15 @@ server.registerTool(
     },
   },
   async ({ seed, ticks, agentCount }) => {
-    const runId = sessions.create(seed, agentCount ?? 100, 0);
-    logMutation('run_experiment', { seed, ticks, agentCount: agentCount ?? 100 }, runId);
-    sessions.advance(runId, ticks);
+    const n = agentCount ?? 100;
+    const runId = sessions.create(seed, n, 0);
+    logMutation('run_experiment', { seed, ticks, agentCount: n }, runId);
+    announce('create', `Batch run "${seed}" with ${n} Gahallians for ${ticks} ticks`, { runId, withAgents: true });
+    await sessions.advance(runId, ticks);
+    const s = sessions.get(runId);
+    if (s) announce('advance', `Day ${s.exp.day()} — ${s.exp.aliveCount()}/${n} alive, ${s.exp.totalKnowledge()} knowledge`, { runId, withAgents: true });
     const snap = snapshot(runId);
+    announce('finish', `Batch run ${runId} complete`, { runId });
     sessions.finish(runId);
     return json(snap);
   },
@@ -280,6 +335,40 @@ server.registerTool(
   },
 );
 
+// ── reports (shared read/write channel between the human and the AI) ────────────
+server.registerTool(
+  'list_reports',
+  { title: 'List reports', description: 'The shared reports (Markdown) both you and the human read and write. Most recently updated first.', inputSchema: {} },
+  async () => json(listReports()),
+);
+
+server.registerTool(
+  'read_report',
+  { title: 'Read a report', description: 'Read one shared report by slug (from list_reports).', inputSchema: { slug: z.string() } },
+  async ({ slug }) => {
+    const r = readReport(slug);
+    return r ? json(r) : text(`no report "${slug}"`);
+  },
+);
+
+server.registerTool(
+  'write_report',
+  {
+    title: 'Write a report (MUTATING)',
+    description: 'Create or overwrite a shared report (Markdown body). The human sees it in the lab Reports tab and can edit it back. Use this to record findings, plans, and hypotheses.',
+    inputSchema: {
+      title: z.string(),
+      body: z.string().describe('Markdown body.'),
+      slug: z.string().optional().describe('Omit to derive from the title; pass an existing slug to overwrite.'),
+    },
+  },
+  async ({ title, body, slug }) => {
+    const finalSlug = writeReport(title, body, ACTOR, slug);
+    announce('report', `Wrote report "${title}"`, { data: { slug: finalSlug } });
+    return json({ slug: finalSlug, title });
+  },
+);
+
 function snapshot(runId: number): unknown {
   const s = sessions.get(runId);
   if (!s) {
@@ -310,5 +399,6 @@ function snapshot(runId: number): unknown {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+const llmStatus = hasLlmKey() ? `LLM minds: ${llmModelId()}` : 'LLM minds: NO KEY (set FIREWORKS_API_KEY) — running reflex';
 // eslint-disable-next-line no-console
-console.error(`yggdrasil-lab mcp ready (read-first; mutations allowlisted+logged) — db ${DB_PATH}`);
+console.error(`yggdrasil-lab mcp ready (read-first; mutations allowlisted+logged) — db ${DB_PATH} — home ${yggHome()} — ${llmStatus}`);

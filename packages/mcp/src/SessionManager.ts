@@ -1,4 +1,5 @@
 import { Experiment } from '@yggdrasil/engine';
+import type { IMindBackend } from '@yggdrasil/engine';
 import type { ResearchDB, EventRow, KnowledgeRow } from '@yggdrasil/db';
 
 interface Session {
@@ -19,10 +20,14 @@ interface Session {
 export class SessionManager {
   private readonly sessions = new Map<number, Session>();
 
-  constructor(private readonly db: ResearchDB) {}
+  constructor(
+    private readonly db: ResearchDB,
+    private readonly makeBackend: () => IMindBackend | null = () => null,
+  ) {}
 
   create(seed: string, agentCount: number, startedAt: number): number {
-    const exp = new Experiment({ seed, agentCount });
+    const mindBackend = this.makeBackend() ?? undefined;
+    const exp = new Experiment({ seed, agentCount, mindBackend });
     const runId = this.db.createRun({ seed, agentCount, backend: exp.backendLabel, startedAt });
     this.sessions.set(runId, { exp, runId, agentCount, lastRecordedEventCount: 0, startedAt });
     this.snapshotMetrics(runId);
@@ -37,10 +42,24 @@ export class SessionManager {
     return [...this.sessions.keys()];
   }
 
-  advance(runId: number, ticks: number): void {
+  /**
+   * Advance in chunks, yielding to the event loop between them so the LLM's
+   * async cognition (network round-trips, dispatched by the scheduler) can
+   * resolve and its plans land. Reflex keeps agents acting in the meantime, so
+   * the sim never blocks; over many chunks the LLM progressively takes over.
+   */
+  async advance(runId: number, ticks: number): Promise<void> {
     const s = this.require(runId);
-    s.exp.advance(ticks);
-    this.drainEvents(s);
+    const CHUNK = 50;
+    let remaining = ticks;
+    while (remaining > 0) {
+      const n = Math.min(CHUNK, remaining);
+      s.exp.advance(n);
+      remaining -= n;
+      this.drainEvents(s);
+      // Yield so resolved cognition promises fire their apply callbacks.
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
     this.snapshotMetrics(runId);
   }
 
