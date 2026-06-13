@@ -66,6 +66,9 @@ export type ObjectKind =
   | 'charcoal'
   | 'leather'
   | 'rope'
+  | 'spear' // tool/weapon — discovered by combining materials (a point + a shaft)
+  | 'club'
+  | 'handaxe'
   | 'brick'
   | 'copper'
   | 'tin'
@@ -138,6 +141,7 @@ export type IntentKind =
   | 'Withdraw'
   | 'Give'
   | 'Attack'
+  | 'Craft' // try to combine the materials you hold into something new
   | 'Speak'
   | 'Follow'
   | 'Flee'
@@ -198,6 +202,9 @@ export type SimEventType =
   | 'WasAttacked'
   | 'AttackedAgent'
   | 'AttackedByPredator'
+  | 'FoughtPredator'
+  | 'KilledPredator'
+  | 'Crafted'
   | 'AgentDied'
   | 'WitnessedDeath'
   | 'SeedDeposited'

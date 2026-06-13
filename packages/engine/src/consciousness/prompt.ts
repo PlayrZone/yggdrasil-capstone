@@ -17,7 +17,7 @@ export interface ThinkPrompt {
 }
 
 const INTENT_VOCAB =
-  'MoveTo, Gather, Dig, Eat, Drink, Sleep, Build, Deposit, Withdraw, Give, Attack, Speak, Follow, Flee, Idle';
+  'MoveTo, Gather, Dig, Eat, Drink, Sleep, Build, Deposit, Withdraw, Give, Attack, Craft, Speak, Follow, Flee, Idle';
 
 export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
   const { snapshot, knowledge, recalledMemories, worldView, goals, trigger } = input;
@@ -45,6 +45,7 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     `INTENT kind is one of: ${INTENT_VOCAB}.`,
     `Intent args: MoveTo{x,y|targetId}, Gather{targetId}, Eat{objectKind}, Build{buildKind,x,y},`,
     `Dig{} (dig the ground where you stand), Give{targetId,objectKind}, Deposit{objectKind,targetId?}, Sleep{durationTicks}, Idle{durationTicks},`,
+    `Craft{} (try combining the raw materials you carry — whether anything useful results, and what, is for you to DISCOVER through trying),`,
     `Flee{x,y}, Follow{targetId}, Speak{} (put speech in utterances).`,
     `Keep the plan short (1-4 intents). The world validates every intent; impossible ones fail.`,
   ].join('\n');

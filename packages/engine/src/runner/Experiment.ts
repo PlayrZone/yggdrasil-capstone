@@ -263,9 +263,22 @@ export class Experiment {
       0,
       isDeepWater, // never born in the sea or a lake
     );
+    // Cognition VARIES by personality, so no two minds are equal: the curious
+    // think and act more often, the curious+ambitious learn faster and remember
+    // more. Nothing assigns a role — but these differences let some become
+    // knowledge-rich innovators/teachers while others stay foragers. (Research:
+    // a uniform mind produced no ability-driven divergence.)
     for (const agent of agents) {
       this.agentIds.push(agent.id);
-      this.minds.set(agent.id, new AgentMind(agent.id));
+      const tr = (agent.components['GahallianBody'] as GahallianBody).traits;
+      this.minds.set(
+        agent.id,
+        new AgentMind(agent.id, {
+          thinkInterval: Math.round(180 - tr.curiosity * 1.1), // 70 (curious) … 180 (incurious)
+          consolidateInterval: Math.round(420 - (tr.curiosity * 0.6 + tr.ambition * 0.4) * 2.2), // faster learners form knowledge sooner
+          memoryHotCapacity: Math.round(256 + ((tr.curiosity + tr.ambition) / 2) * 5), // 256 … ~756 memories
+        }),
+      );
     }
 
     // Wild animals roam the lowlands — mobile food, and a reason to range.

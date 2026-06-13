@@ -48,6 +48,18 @@ describe('Experiment (headless host)', () => {
     expect(result === null || typeof result.archetype === 'string').toBe(true);
   });
 
+  it('crafts a spear from wood + stone — a discoverable tool, not a recipe menu', () => {
+    const exp = new Experiment({ seed: 'craft', agentCount: 4 });
+    const id = exp.agentIds[0]!;
+    const body = exp.agentBody(id)!;
+    body.inventory = { wood: 1, stone: 1 };
+    exp.body.setPlan(body, [{ kind: 'Craft' }]);
+    exp.advance(10);
+    expect(body.inventory.spear).toBe(1);
+    expect(body.inventory.wood ?? 0).toBe(0);
+    expect(body.inventory.stone ?? 0).toBe(0);
+  });
+
   it('produces an analysis snapshot (diffusion, accuracy, archetypes, culture)', () => {
     const exp = new Experiment({ seed: 'analysis', agentCount: 40 });
     exp.advance(6000);

@@ -32,6 +32,19 @@ const SICK_SAFETY_HIT = 15;
 
 const BUILD_COST: Record<BuildKind, number> = { shelter: 3, wall: 1, container: 2 };
 
+/**
+ * Hidden material relationships — the world's physics of toolmaking, NOT a
+ * crafting menu. A pointed stone lashed to a shaft is a spear; the engine
+ * knows this, the Gahallians must discover it by trying Craft with the right
+ * things in hand. First match wins, so richer combinations take precedence.
+ */
+const CRAFT_RECIPES: { inputs: Partial<Record<ObjectKind, number>>; output: ObjectKind }[] = [
+  { inputs: { wood: 1, stone: 1 }, output: 'spear' }, // a point on a shaft — the best weapon
+  { inputs: { stone: 1, fiber: 1 }, output: 'handaxe' }, // a bound edge — weapon + tool
+  { inputs: { wood: 2 }, output: 'club' }, // a heavy length of wood
+  { inputs: { fiber: 2 }, output: 'rope' }, // twisted fibre — a building block
+];
+
 const DECAY = {
   hunger: 0.022,
   restAwake: 0.03,
@@ -446,6 +459,37 @@ export class YggdrasilSystem {
         if (kind === 'shelter') body.needs.safety = clamp(body.needs.safety - 10);
         this.advance(body);
         return;
+      }
+      case 'Craft': {
+        // The world's hidden material relationships (like "seeds become
+        // plants"): combining the right raw stuff yields a tool. The engine
+        // knows these; the Gahallians do not — they discover them by trying,
+        // and the OutcomeMiner folds "Craft while holding X → got Y" into
+        // knowledge. Nothing tells anyone to craft, or what.
+        for (const recipe of CRAFT_RECIPES) {
+          let ok = true;
+          for (const [k, n] of Object.entries(recipe.inputs)) {
+            if ((body.inventory[k as ObjectKind] ?? 0) < (n as number)) {
+              ok = false;
+              break;
+            }
+          }
+          if (!ok) continue;
+          for (const [k, n] of Object.entries(recipe.inputs)) removeItem(body.inventory, k as ObjectKind, n as number);
+          addItem(body.inventory, recipe.output, 1);
+          bus.emit({
+            tick,
+            type: 'Crafted',
+            actorId: entity.id,
+            targetIds: [],
+            x: t.x,
+            y: t.y,
+            payload: { made: recipe.output, objectKind: recipe.output },
+          });
+          this.advance(body);
+          return;
+        }
+        return reject('nothing-to-craft');
       }
       case 'Deposit': {
         const kind = intent.objectKind ?? 'seed';

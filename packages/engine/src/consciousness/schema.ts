@@ -9,7 +9,7 @@ import type { Goal, Intent, IntentKind, MindOutput, SpeechAct, Utterance } from 
 
 const INTENT_KINDS = new Set<IntentKind>([
   'MoveTo', 'Gather', 'Dig', 'Eat', 'Drink', 'Sleep', 'Build', 'Deposit', 'Withdraw',
-  'Give', 'Attack', 'Speak', 'Follow', 'Flee', 'Idle',
+  'Give', 'Attack', 'Craft', 'Speak', 'Follow', 'Flee', 'Idle',
 ]);
 const SPEECH_ACTS = new Set<SpeechAct>(['share-knowledge', 'share-episode', 'inform', 'request']);
 const BUILD_KINDS = new Set(['shelter', 'wall', 'container']);

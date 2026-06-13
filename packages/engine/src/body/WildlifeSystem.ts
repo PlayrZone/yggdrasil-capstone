@@ -16,9 +16,21 @@ export interface Animal {
   kind: AnimalKind;
   heading: number;
   changeAt: number;
-  /** Predators only: current quarry + attack cooldown. */
+  /** Predators only: current quarry + attack cooldown + health (can be killed). */
   targetId: number;
   lastAttack: number;
+  health: number;
+}
+
+// What a held weapon does to a predator that attacks you. Emergent: you only
+// have one if you DISCOVERED how to craft it. Best weapon in hand is used.
+const WEAPON_DAMAGE: Record<string, number> = { spear: 12, handaxe: 9, club: 6 };
+const PRED_HEALTH: Record<string, number> = { wolf: 18, bear: 34, crocodile: 24 };
+
+function bestWeaponDamage(inv: Partial<Record<string, number>>): number {
+  let best = 0;
+  for (const [w, d] of Object.entries(WEAPON_DAMAGE)) if ((inv[w] ?? 0) > 0 && d > best) best = d;
+  return best;
 }
 
 const PREY: ReadonlySet<AnimalKind> = new Set<AnimalKind>(['deer', 'hare', 'boar', 'fish']);
@@ -65,7 +77,8 @@ export class WildlifeSystem {
   }
 
   private pickKind(): AnimalKind {
-    // ~88% prey, ~12% predators — danger that pressures, not exterminates.
+    // ~88% prey, ~12% predators. The threat stays real — survival is meant to
+    // come from DISCOVERING weapons and fighting back, not from a tame world.
     const r = this.rng();
     if (r < 0.42) return 'deer';
     if (r < 0.56) return 'hare';
@@ -91,6 +104,7 @@ export class WildlifeSystem {
       changeAt: tick + 80 + Math.floor(this.rng() * 240),
       targetId: 0,
       lastAttack: 0,
+      health: PRED_HEALTH[k] ?? 10,
     };
     const components: Record<string, unknown> = { Transform2D: { x, y } satisfies Transform2D, Animal: animal };
     if (PREY.has(k)) components['ResourceNode'] = createResourceNode('game', k === 'fish' ? 2 : MEAT_PER_PREY);
@@ -134,7 +148,7 @@ export class WildlifeSystem {
       }
       alive++;
       const predator = !PREY.has(animal.kind);
-      if (predator) this.stepPredator(animal, e.id, t, people, tick, bus);
+      if (predator) this.stepPredator(world, animal, e.id, t, people, tick, bus);
       else this.stepPrey(animal, t, animals, tick);
     }
 
@@ -194,6 +208,7 @@ export class WildlifeSystem {
   }
 
   private stepPredator(
+    world: World,
     animal: Animal,
     id: number,
     t: Transform2D,
@@ -241,6 +256,19 @@ export class WildlifeSystem {
           y: quarry.y,
           payload: { predator: animal.kind, damage: dmg },
         });
+        // An ARMED Gahallian fights back — the whole point of weapons. They
+        // only have one if they discovered how to craft it.
+        const wdmg = bestWeaponDamage(quarry.body.inventory as Partial<Record<string, number>>);
+        if (wdmg > 0) {
+          animal.health -= wdmg;
+          bus.emit({ tick, type: 'FoughtPredator', actorId: quarry.id, targetIds: [id], x: quarry.x, y: quarry.y, payload: { predator: animal.kind, damage: wdmg } });
+          if (animal.health <= 0) {
+            world.removeEntity(id); // the beast is slain
+            world.createEntity({ Transform2D: { x: t.x, y: t.y } satisfies Transform2D, ResourceNode: createResourceNode('game', 2) }); // a carcass to butcher
+            bus.emit({ tick, type: 'KilledPredator', actorId: quarry.id, targetIds: [], x: quarry.x, y: quarry.y, payload: { predator: animal.kind } });
+            quarry.body.needs.safety = Math.max(0, quarry.body.needs.safety - 25); // relief
+          }
+        }
       }
     } else {
       this.moveToward(animal, t, quarry.x, quarry.y, tick, 1);
