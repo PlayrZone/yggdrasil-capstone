@@ -318,6 +318,35 @@ server.registerTool(
   },
 );
 
+// ── get_analysis (live diffusion / culture / archetypes) ────────────────────────
+server.registerTool(
+  'get_analysis',
+  {
+    title: 'Analyze a live run',
+    description: 'Post-hoc analysis of a LIVE run: knowledge diffusion (top beliefs + how they spread), belief accuracy + superstitions, culture (beliefs that outlived their discoverer), and emergent behavioral archetypes. Nothing is read back into the sim.',
+    inputSchema: { runId: z.number().int().positive(), topBeliefs: z.number().int().positive().max(60).optional() },
+  },
+  async ({ runId, topBeliefs }) => {
+    const s = sessions.get(runId);
+    if (!s) return text(`no live session for run ${runId} (analysis runs on live runs)`);
+    const a = s.exp.analysis();
+    return json({
+      cultureCount: a.cultureCount,
+      accuracy: { ...a.accuracy, falseBeliefs: a.accuracy.falseBeliefs.map((c) => ({ statement: c.statement, holders: c.livingHolders })) },
+      archetypes: a.archetypes,
+      topBeliefs: a.diffusion.slice(0, topBeliefs ?? 25).map((c) => ({
+        statement: c.statement,
+        truth: c.truth,
+        livingHolders: c.livingHolders,
+        byExperience: c.byExperience,
+        byObservation: c.byObservation,
+        byTestimony: c.byTestimony,
+        outlivedOriginator: c.outlivedOriginator,
+      })),
+    });
+  },
+);
+
 // ── query_db (read-only SELECT escape hatch) ────────────────────────────────────
 server.registerTool(
   'query_db',

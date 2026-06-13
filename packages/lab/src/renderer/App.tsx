@@ -5,6 +5,7 @@ import { SimClock, SPEED_PRESETS } from './sim.js';
 import { BridgeBackend } from './bridgeBackend.js';
 import { ActivityView } from './ActivityView.js';
 import { ReportsView } from './ReportsView.js';
+import { AnalysisView, type AnalysisSnapshot } from './AnalysisView.js';
 
 const CANVAS = 640;
 const SCALE = CANVAS / WORLD;
@@ -18,7 +19,7 @@ const REGION_COLOR: Record<Region, string> = {
   plains: '#23301c',
 };
 
-type Tab = 'world' | 'activity' | 'reports';
+type Tab = 'world' | 'activity' | 'analysis' | 'reports';
 
 interface FeedItem {
   tick: number;
@@ -82,6 +83,7 @@ export function App(): React.ReactElement {
   const [updateMsg, setUpdateMsg] = useState('');
   const [llm, setLlm] = useState<{ hasKey: boolean; model: string }>({ hasKey: false, model: '' });
   const [keyInput, setKeyInput] = useState('');
+  const [analysis, setAnalysis] = useState<AnalysisSnapshot | null>(null);
 
   const sampleStats = useCallback((exp: Experiment): Stats => {
     const feed: FeedItem[] = exp.recentEvents(50).map((e) => {
@@ -186,6 +188,19 @@ export function App(): React.ReactElement {
   useEffect(() => { runningRef.current = running; }, [running]);
   useEffect(() => { speedRef.current = speedIdx; }, [speedIdx]);
 
+  // Recompute the analysis snapshot while the Analysis tab is open (it walks
+  // every agent's memory, so only do it when it's being looked at).
+  useEffect(() => {
+    if (tab !== 'analysis') return;
+    const compute = (): void => {
+      const exp = clockRef.current?.exp;
+      if (exp) setAnalysis(exp.analysis());
+    };
+    compute();
+    const id = setInterval(compute, 2500);
+    return () => clearInterval(id);
+  }, [tab]);
+
   const saveKey = useCallback(async () => {
     const lab = window.lab;
     if (!lab || !keyInput.trim()) return;
@@ -212,9 +227,9 @@ export function App(): React.ReactElement {
           {version && <span className="ver">v{version}</span>}
         </div>
         <nav className="tabs">
-          {(['world', 'activity', 'reports'] as Tab[]).map((t) => (
+          {(['world', 'activity', 'analysis', 'reports'] as Tab[]).map((t) => (
             <button key={t} className={t === tab ? 'sel' : ''} onClick={() => setTab(t)}>
-              {t === 'world' ? 'World' : t === 'activity' ? 'Live Activity' : 'Reports'}
+              {t === 'world' ? 'World' : t === 'activity' ? 'Live Activity' : t === 'analysis' ? 'Analysis' : 'Reports'}
             </button>
           ))}
         </nav>
@@ -302,6 +317,7 @@ export function App(): React.ReactElement {
       )}
 
       {tab === 'activity' && <ActivityView />}
+      {tab === 'analysis' && <AnalysisView snap={analysis} />}
       {tab === 'reports' && <ReportsView />}
     </div>
   );

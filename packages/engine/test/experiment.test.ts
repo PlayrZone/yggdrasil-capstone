@@ -47,4 +47,18 @@ describe('Experiment (headless host)', () => {
     const result = exp.archetypeOf(someId);
     expect(result === null || typeof result.archetype === 'string').toBe(true);
   });
+
+  it('produces an analysis snapshot (diffusion, accuracy, archetypes, culture)', () => {
+    const exp = new Experiment({ seed: 'analysis', agentCount: 40 });
+    exp.advance(6000);
+    const a = exp.analysis();
+    expect(Array.isArray(a.diffusion)).toBe(true);
+    expect(Array.isArray(a.archetypes)).toBe(true);
+    expect(typeof a.cultureCount).toBe('number');
+    expect(a.accuracy).toHaveProperty('heldTotal');
+    expect(a.accuracy).toHaveProperty('falseBeliefs');
+    // Archetype counts never exceed the living population.
+    const labelled = a.archetypes.reduce((s, x) => s + x.count, 0);
+    expect(labelled).toBeLessThanOrEqual(exp.aliveCount());
+  });
 });

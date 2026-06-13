@@ -17,9 +17,10 @@ import { CognitionLog } from '../scheduler/CognitionLog.js';
 import { CognitionScheduler } from '../scheduler/CognitionScheduler.js';
 import { LlmMind } from '../consciousness/LlmMind.js';
 import { classifyArchetype } from '../analysis/archetype.js';
+import { analyzeDiffusion, analyzeBeliefAccuracy } from '../analysis/diffusion.js';
 import { memoryFromEvent } from '../memory/memoryFromEvent.js';
-import type { AgentKnowledge } from '../analysis/diffusion.js';
-import type { ArchetypeResult } from '../analysis/archetype.js';
+import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
+import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { Intent, MindOutput, ResourceNodeKind, SimEvent } from '../contract/types.js';
 import { WORLD, elevationBand, regionAt, riverY } from '../world/regions.js';
@@ -367,6 +368,30 @@ export class Experiment {
   archetypeOf(agentId: number): ArchetypeResult | null {
     const mind = this.minds.get(agentId);
     return mind ? classifyArchetype(mind.memory.all()) : null;
+  }
+
+  /**
+   * A complete analysis snapshot for the observatory: how knowledge has spread
+   * across the population (diffusion clusters, incl. culture — beliefs that
+   * outlived their discoverer) and the behavioral-archetype distribution. All
+   * post-hoc labelling; nothing here is read back into the simulation.
+   */
+  analysis(): {
+    diffusion: BeliefCluster[];
+    accuracy: BeliefAccuracy;
+    archetypes: { archetype: Archetype; count: number }[];
+    cultureCount: number;
+  } {
+    const diffusion = analyzeDiffusion(this.agentKnowledge());
+    const accuracy = analyzeBeliefAccuracy(diffusion);
+    const counts = new Map<Archetype, number>();
+    for (const id of this.agentIds) {
+      if (!this.agentBody(id)?.alive) continue;
+      const r = this.archetypeOf(id);
+      if (r && r.sampleSize > 0) counts.set(r.archetype, (counts.get(r.archetype) ?? 0) + 1);
+    }
+    const archetypes = [...counts.entries()].map(([archetype, count]) => ({ archetype, count })).sort((a, b) => b.count - a.count);
+    return { diffusion, accuracy, archetypes, cultureCount: diffusion.filter((c) => c.outlivedOriginator).length };
   }
 
   totalKnowledge(): number {
