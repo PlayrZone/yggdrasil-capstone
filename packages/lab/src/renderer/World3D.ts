@@ -9,13 +9,21 @@ const GRID = 140; // terrain resolution
 const HALF = WORLD / 2;
 
 const REGION_RGB: Record<Region, [number, number, number]> = {
-  river: [0.18, 0.42, 0.3],
+  river: [0.2, 0.45, 0.34],
   coast: [0.72, 0.66, 0.43],
-  forest: [0.13, 0.34, 0.16],
+  lake: [0.16, 0.34, 0.42],
+  wetland: [0.24, 0.36, 0.26],
+  forest: [0.12, 0.32, 0.15],
   mountain: [0.42, 0.4, 0.44],
   hills: [0.4, 0.36, 0.22],
-  plains: [0.28, 0.42, 0.2],
+  plains: [0.3, 0.44, 0.21],
 };
+
+// Deterministic 0..1 hash for scattering decor — same trees every run.
+function hash2(i: number, j: number): number {
+  const h = Math.sin(i * 127.1 + j * 311.7) * 43758.5453;
+  return h - Math.floor(h);
+}
 
 // Agent state → colour (0 ok, 1 hungry, 2 sleeping, 3 sick).
 const STATE_RGB: THREE.Color[] = [
@@ -52,24 +60,26 @@ export class World3D {
     this.scene.background = new THREE.Color('#0a0e12');
     this.scene.fog = new THREE.Fog('#0a0e12', 380, 900);
 
-    this.camera = new THREE.PerspectiveCamera(48, 1, 0.5, 4000);
-    this.camera.position.set(-220, 230, 300);
+    this.camera = new THREE.PerspectiveCamera(48, 1, 0.5, 6000);
+    this.camera.position.set(-380, 380, 520);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.maxPolarAngle = Math.PI * 0.49; // don't go under the ground
-    this.controls.minDistance = 60;
-    this.controls.maxDistance = 900;
+    this.controls.minDistance = 80;
+    this.controls.maxDistance = 1800;
     this.controls.target.set(0, 10, 0);
 
-    this.scene.add(new THREE.HemisphereLight(0xbcd6ff, 0x2a2a1f, 0.85));
-    const sun = new THREE.DirectionalLight(0xfff2d8, 1.1);
-    sun.position.set(180, 320, 120);
+    this.scene.add(new THREE.HemisphereLight(0xbcd6ff, 0x2a2a1f, 0.9));
+    const sun = new THREE.DirectionalLight(0xfff2d8, 1.05);
+    sun.position.set(300, 520, 200);
     this.scene.add(sun);
 
     this.buildTerrain();
     this.buildWater();
+    this.buildTrees();
+    this.buildRocks();
     this.resize();
 
     this.ro = new ResizeObserver(() => this.resize());
@@ -126,6 +136,77 @@ export class World3D {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.y = SEA * HSCALE;
     this.scene.add(mesh);
+  }
+
+  // Scatter trees across forest regions (deterministic — same forest each run).
+  private buildTrees(): void {
+    const step = 16;
+    const placements: { x: number; y: number; s: number }[] = [];
+    for (let wy = 0; wy < WORLD; wy += step) {
+      for (let wx = 0; wx < WORLD; wx += step) {
+        const region = regionAt(wx, wy);
+        const density = region === 'forest' ? 0.78 : region === 'hills' ? 0.12 : 0;
+        if (density === 0) continue;
+        const i = Math.round(wx / step);
+        const j = Math.round(wy / step);
+        if (hash2(i, j) > density) continue;
+        const jx = wx + (hash2(i + 7, j) - 0.5) * step;
+        const jy = wy + (hash2(i, j + 7) - 0.5) * step;
+        placements.push({ x: jx, y: jy, s: 0.8 + hash2(i + 3, j + 3) * 0.8 });
+        if (placements.length >= 2600) break;
+      }
+    }
+    const trunkGeo = new THREE.CylinderGeometry(0.5, 0.75, 4, 5);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a3b22, roughness: 0.9 });
+    const foliageGeo = new THREE.ConeGeometry(3, 8, 7);
+    const foliageMat = new THREE.MeshStandardMaterial({ color: 0x2f6b2c, roughness: 0.85 });
+    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, placements.length);
+    const foliage = new THREE.InstancedMesh(foliageGeo, foliageMat, placements.length);
+    placements.forEach((p, k) => {
+      const base = heightAt(p.x, p.y) * HSCALE;
+      const px = p.x - HALF;
+      const pz = p.y - HALF;
+      this.dummy.scale.set(p.s, p.s, p.s);
+      this.dummy.position.set(px, base + 2 * p.s, pz);
+      this.dummy.rotation.set(0, hash2(k, k) * Math.PI, 0);
+      this.dummy.updateMatrix();
+      trunks.setMatrixAt(k, this.dummy.matrix);
+      this.dummy.position.set(px, base + (4 + 4) * p.s, pz);
+      this.dummy.updateMatrix();
+      foliage.setMatrixAt(k, this.dummy.matrix);
+    });
+    this.dummy.scale.set(1, 1, 1);
+    this.scene.add(trunks, foliage);
+  }
+
+  // A few boulders on the mountains so the highlands read as rocky.
+  private buildRocks(): void {
+    const step = 26;
+    const placements: { x: number; y: number; s: number }[] = [];
+    for (let wy = 0; wy < WORLD; wy += step) {
+      for (let wx = 0; wx < WORLD; wx += step) {
+        if (regionAt(wx, wy) !== 'mountain') continue;
+        const i = Math.round(wx / step);
+        const j = Math.round(wy / step);
+        if (hash2(i + 11, j + 5) > 0.4) continue;
+        placements.push({ x: wx, y: wy, s: 1.5 + hash2(i, j + 2) * 3 });
+        if (placements.length >= 900) break;
+      }
+    }
+    const geo = new THREE.IcosahedronGeometry(2, 0);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x6b6b73, roughness: 1, flatShading: true });
+    const rocks = new THREE.InstancedMesh(geo, mat, Math.max(1, placements.length));
+    placements.forEach((p, k) => {
+      const base = heightAt(p.x, p.y) * HSCALE;
+      this.dummy.scale.set(p.s, p.s * 0.8, p.s);
+      this.dummy.position.set(p.x - HALF, base + p.s * 0.6, p.y - HALF);
+      this.dummy.rotation.set(hash2(k, 1), hash2(k, 2) * Math.PI, hash2(k, 3));
+      this.dummy.updateMatrix();
+      rocks.setMatrixAt(k, this.dummy.matrix);
+    });
+    this.dummy.scale.set(1, 1, 1);
+    this.dummy.rotation.set(0, 0, 0);
+    this.scene.add(rocks);
   }
 
   /** (Re)create the instanced agent mesh for a population size. */

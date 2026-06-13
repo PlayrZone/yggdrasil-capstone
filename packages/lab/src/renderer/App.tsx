@@ -46,8 +46,8 @@ export function App(): React.ReactElement {
 
   const [tab, setTab] = useState<Tab>('world');
   const [seed, setSeed] = useState('genesis-01');
-  const [agentCount, setAgentCount] = useState(80);
-  const [speedIdx, setSpeedIdx] = useState(0);
+  const [agentCount, setAgentCount] = useState(150);
+  const [speedIdx, setSpeedIdx] = useState(3); // 30× (4 min/day) — motion is clearly visible; 1× stays for calm watching
   const [running, setRunning] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [idea, setIdea] = useState('');
@@ -246,7 +246,7 @@ export function App(): React.ReactElement {
               </div>
               <label>Seed<input value={seed} onChange={(e) => setSeed(e.target.value)} disabled={running} /></label>
               <label>Population: {agentCount}
-                <input type="range" min={20} max={256} step={4} value={agentCount} disabled={running} onChange={(e) => setAgentCount(Number(e.target.value))} />
+                <input type="range" min={20} max={256} step={2} value={agentCount} disabled={running} onChange={(e) => setAgentCount(Number(e.target.value))} />
               </label>
               <label>Speed — {preset.rate}</label>
               <div className="speeds">

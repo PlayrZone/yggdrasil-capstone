@@ -131,14 +131,16 @@ server.registerTool(
   async () =>
     text(
       [
-        `World size: ${WORLD}×${WORLD}.`,
+        `World size: ${WORLD}×${WORLD} — a medium continent (west sea → eastern mountains).`,
         'Regions (deliberately unequal — the inequality drives trade/migration/conflict):',
-        '- river valley: drinking water + abundant berry/tuber food (breadbasket)',
-        '- coast: sea water, salt, reeds, light forage',
-        '- forest: wood-rich, decent food, poison-plant danger (nightshade)',
-        '- mountain: ore-rich (copper/iron/coal/tin/gem/silver/gold) but FOOD-POOR',
-        '- hills: stone + clay, a little wood',
+        '- coast (west): sea water, salt, reeds, light shore forage',
+        '- wetland: reeds (fiber), clay, tubers, standing water — coastal + lake edges',
+        '- river valley + tributary: drinking water + abundant berry/tuber food (breadbasket)',
+        '- lake (×3): freshwater + fertile shores',
+        '- forest (×5 belts): wood-rich, decent food, poison-plant danger (nightshade)',
         '- plains: modest forage, open ground',
+        '- hills (foothills): stone + clay, a little wood',
+        '- mountain (east): ore-rich (copper/iron/coal/tin/gem/silver/gold) but FOOD-POOR',
       ].join('\n'),
     ),
 );

@@ -23,7 +23,7 @@ import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { Intent, MindOutput, ResourceNodeKind, SimEvent } from '../contract/types.js';
-import { WORLD, elevationBand, regionAt, riverY } from '../world/regions.js';
+import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS } from '../world/regions.js';
 import type { Region } from '../world/regions.js';
 
 export interface AgentInfo {
@@ -177,7 +177,7 @@ export class Experiment {
     // Rejection-sample `count` nodes of `kind` inside a given region.
     const scatter = (kind: ResourceNodeKind, region: Region, count: number, stock: number): void => {
       let placed = 0;
-      for (let attempts = 0; placed < count && attempts < count * 60; attempts++) {
+      for (let attempts = 0; placed < count && attempts < count * 90; attempts++) {
         const x = 8 + rng() * (WORLD - 16);
         const y = 8 + rng() * (WORLD - 16);
         if (regionAt(x, y) !== region) continue;
@@ -186,55 +186,69 @@ export class Experiment {
       }
     };
 
-    // River valley — drinking water along the line + abundant food banks (the
-    // continent's breadbasket; supports a dense population).
-    for (let x = 40; x <= 360; x += 15) place('river', x, riverY(x), 9999);
-    scatter('berryBush', 'river', 30, 18);
-    scatter('tuberPlant', 'river', 22, 18);
-    scatter('clayDeposit', 'river', 6, 20);
-    scatter('fiberPlant', 'river', 4, 10);
+    // Great river + tributary — drinking water along the lines + abundant food
+    // banks (the continent's breadbasket; supports dense populations).
+    for (let x = 72; x <= 760; x += 16) place('river', x, riverY(x), 9999);
+    for (let x = 340; x <= 740; x += 18) place('river', x, tributaryY(x), 9999);
+    scatter('berryBush', 'river', 70, 18);
+    scatter('tuberPlant', 'river', 55, 18);
+    scatter('clayDeposit', 'river', 16, 20);
+    scatter('fiberPlant', 'river', 12, 10);
+
+    // Lakes — freshwater at the centre + fertile shores.
+    for (const [cx, cy] of LAKE_CENTERS) place('waterSource', cx, cy, 9999);
+    scatter('berryBush', 'lake', 16, 16);
+    scatter('tuberPlant', 'lake', 12, 16);
+    scatter('fiberPlant', 'lake', 10, 10);
+
+    // Wetlands — reeds (fiber), clay, tubers, standing water.
+    scatter('waterSource', 'wetland', 8, 9999);
+    scatter('fiberPlant', 'wetland', 26, 12);
+    scatter('clayDeposit', 'wetland', 16, 18);
+    scatter('tuberPlant', 'wetland', 14, 12);
 
     // Coast — sea water + salt + reeds + a little shore forage.
-    for (let y = 20; y < WORLD - 20; y += 22) place('waterSource', 6, y, 9999);
-    scatter('saltFlat', 'coast', 6, 14);
-    scatter('fiberPlant', 'coast', 6, 10);
-    scatter('berryBush', 'coast', 4, 12);
+    for (let y = 20; y < WORLD - 20; y += 26) place('waterSource', 10, y, 9999);
+    scatter('saltFlat', 'coast', 14, 14);
+    scatter('fiberPlant', 'coast', 12, 10);
+    scatter('berryBush', 'coast', 8, 12);
 
     // Forests — wood-rich, decent food, and poison-plant danger.
-    scatter('tree', 'forest', 26, 10);
-    scatter('berryBush', 'forest', 14, 14);
-    scatter('tuberPlant', 'forest', 8, 14);
-    scatter('nightshadePlant', 'forest', 5, 6);
-    scatter('fiberPlant', 'forest', 4, 10);
+    scatter('tree', 'forest', 96, 10);
+    scatter('berryBush', 'forest', 40, 14);
+    scatter('tuberPlant', 'forest', 24, 14);
+    scatter('nightshadePlant', 'forest', 16, 6);
+    scatter('mushroomPatch', 'forest', 12, 8);
+    scatter('fiberPlant', 'forest', 12, 10);
 
     // Mountains — resource-rich, FOOD-POOR (no food placed here on purpose).
-    scatter('stoneDeposit', 'mountain', 8, 14);
-    scatter('copperVein', 'mountain', 6, 10);
-    scatter('ironVein', 'mountain', 5, 10);
-    scatter('coalSeam', 'mountain', 5, 12);
-    scatter('tinVein', 'mountain', 4, 8);
-    scatter('gemVein', 'mountain', 3, 4);
-    scatter('silverVein', 'mountain', 2, 4);
-    scatter('goldVein', 'mountain', 1, 3);
+    scatter('stoneDeposit', 'mountain', 26, 14);
+    scatter('copperVein', 'mountain', 18, 10);
+    scatter('ironVein', 'mountain', 15, 10);
+    scatter('coalSeam', 'mountain', 15, 12);
+    scatter('tinVein', 'mountain', 12, 8);
+    scatter('gemVein', 'mountain', 8, 4);
+    scatter('silverVein', 'mountain', 6, 4);
+    scatter('goldVein', 'mountain', 3, 3);
 
     // Hills — stone + clay, a little wood.
-    scatter('stoneDeposit', 'hills', 6, 12);
-    scatter('clayDeposit', 'hills', 4, 16);
-    scatter('tree', 'hills', 4, 8);
+    scatter('stoneDeposit', 'hills', 20, 12);
+    scatter('clayDeposit', 'hills', 12, 16);
+    scatter('tree', 'hills', 12, 8);
 
     // Plains — modest forage so the open ground isn't a death zone.
-    scatter('berryBush', 'plains', 14, 10);
-    scatter('tuberPlant', 'plains', 10, 10);
-    scatter('fiberPlant', 'plains', 6, 8);
-    scatter('mushroomPatch', 'plains', 4, 8);
+    scatter('berryBush', 'plains', 44, 10);
+    scatter('tuberPlant', 'plains', 30, 10);
+    scatter('fiberPlant', 'plains', 20, 8);
+    scatter('mushroomPatch', 'plains', 12, 8);
 
     // Scatter agents across the habitable continent so independent groups can
-    // form under different pressures (river vs forest vs near the mountains).
+    // form under different pressures (river vs forest vs plains vs foothills).
     const agents = spawnGahallians(this.world, agentCount, this.seed, {
-      x: 60,
-      y: 40,
-      width: 235, // habitable lowlands — not born on barren peaks or in the sea
-      height: 320,
+      x: 96,
+      y: 70,
+      width: 560, // habitable lowlands — not born on barren peaks or in the sea
+      height: 760,
     });
     for (const agent of agents) {
       this.agentIds.push(agent.id);
