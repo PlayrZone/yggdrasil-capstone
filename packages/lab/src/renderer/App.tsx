@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Experiment, regionAt, TICKS_PER_DAY, WORLD } from '@yggdrasil/engine';
 import type { Region } from '@yggdrasil/engine';
 import { SimClock, SPEED_PRESETS } from './sim.js';
+import { BridgeBackend } from './bridgeBackend.js';
+import { ActivityView } from './ActivityView.js';
+import { ReportsView } from './ReportsView.js';
 
 const CANVAS = 640;
 const SCALE = CANVAS / WORLD;
@@ -15,6 +18,8 @@ const REGION_COLOR: Record<Region, string> = {
   plains: '#23301c',
 };
 
+type Tab = 'world' | 'activity' | 'reports';
+
 interface FeedItem {
   tick: number;
   kind: 'speech' | 'event';
@@ -24,7 +29,6 @@ interface FeedItem {
 
 interface Stats {
   day: number;
-  tick: number;
   alive: number;
   total: number;
   knowledge: number;
@@ -37,6 +41,7 @@ interface Stats {
   builds: number;
   backend: string;
   deaths: number;
+  pending: number;
   feed: FeedItem[];
 }
 
@@ -64,20 +69,23 @@ export function App(): React.ReactElement {
   const rafRef = useRef<number>(0);
   const lastFrameRef = useRef<number>(0);
   const runningRef = useRef(false);
-  const speedRef = useRef(1);
+  const speedRef = useRef(0);
 
+  const [tab, setTab] = useState<Tab>('world');
   const [seed, setSeed] = useState('genesis-01');
-  const [agentCount, setAgentCount] = useState(120);
+  const [agentCount, setAgentCount] = useState(80);
   const [speedIdx, setSpeedIdx] = useState(0);
   const [running, setRunning] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [idea, setIdea] = useState('');
   const [version, setVersion] = useState('');
   const [updateMsg, setUpdateMsg] = useState('');
+  const [llm, setLlm] = useState<{ hasKey: boolean; model: string }>({ hasKey: false, model: '' });
+  const [keyInput, setKeyInput] = useState('');
 
   const sampleStats = useCallback((exp: Experiment): Stats => {
-    const feed: FeedItem[] = exp.recentEvents(40).map((e) => {
-      const utt = e.payload['utterance'] as { text?: string; speechAct?: string } | undefined;
+    const feed: FeedItem[] = exp.recentEvents(50).map((e) => {
+      const utt = e.payload['utterance'] as { text?: string } | undefined;
       if (e.type === 'UtteranceSpoken' && utt?.text) {
         return { tick: e.tick, kind: 'speech', who: exp.nameOf(e.actorId), text: utt.text };
       }
@@ -85,7 +93,6 @@ export function App(): React.ReactElement {
     });
     return {
       day: exp.day(),
-      tick: exp.tick,
       alive: exp.aliveCount(),
       total: exp.agentIds.length,
       knowledge: exp.totalKnowledge(),
@@ -98,6 +105,7 @@ export function App(): React.ReactElement {
       builds: exp.buildCount,
       backend: exp.backendLabel,
       deaths: Object.values(exp.deathsByCause).reduce((a, b) => a + b, 0),
+      pending: exp.cognitionPending(),
       feed,
     };
   }, []);
@@ -120,20 +128,42 @@ export function App(): React.ReactElement {
   }, []);
 
   const newExperiment = useCallback(() => {
-    const exp = new Experiment({ seed, agentCount });
+    const mindBackend = llm.hasKey ? new BridgeBackend(llm.model) : undefined;
+    const exp = new Experiment({ seed, agentCount, mindBackend });
     clockRef.current = new SimClock(exp, () => performance.now());
     bgRef.current = buildBackground();
     setStats(sampleStats(exp));
-    draw(clockRef.current);
-  }, [seed, agentCount, sampleStats, draw]);
+  }, [seed, agentCount, llm, sampleStats]);
 
+  // Load app version + LLM status once.
   useEffect(() => {
-    newExperiment();
+    const lab = window.lab;
+    if (!lab) {
+      newExperiment();
+      return;
+    }
+    void lab.getVersion().then(setVersion);
+    void lab.llmStatus().then((s) => setLlm(s));
+    const off = lab.onUpdate((channel) => {
+      if (channel === 'updater:checking') setUpdateMsg('Checking for updates…');
+      else if (channel === 'updater:available') setUpdateMsg('Update available — downloading…');
+      else if (channel === 'updater:none') setUpdateMsg('');
+      else if (channel === 'updater:progress') setUpdateMsg('Downloading update…');
+      else if (channel === 'updater:ready') setUpdateMsg('Update ready — installs on quit.');
+      else if (channel === 'updater:error') setUpdateMsg('');
+    });
+    return off;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // One persistent rAF loop; reads running/speed from refs so changing them
-  // never tears down the loop.
+  // Build the first experiment once we know the LLM status (so it uses the
+  // bridge backend when a key is present).
+  useEffect(() => {
+    newExperiment();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [llm.hasKey, llm.model]);
+
+  // One persistent rAF loop reading running/speed from refs.
   useEffect(() => {
     let statTick = 0;
     const loop = (now: number): void => {
@@ -145,7 +175,7 @@ export function App(): React.ReactElement {
           clock.tickFrame(dt, SPEED_PRESETS[speedRef.current]!.mult);
           if (statTick++ % 8 === 0) setStats(sampleStats(clock.exp));
         }
-        draw(clock); // always redraw for smooth interpolation
+        draw(clock);
       }
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -153,26 +183,16 @@ export function App(): React.ReactElement {
     return () => cancelAnimationFrame(rafRef.current);
   }, [draw, sampleStats]);
 
-  useEffect(() => {
-    runningRef.current = running;
-  }, [running]);
-  useEffect(() => {
-    speedRef.current = speedIdx;
-  }, [speedIdx]);
+  useEffect(() => { runningRef.current = running; }, [running]);
+  useEffect(() => { speedRef.current = speedIdx; }, [speedIdx]);
 
-  useEffect(() => {
+  const saveKey = useCallback(async () => {
     const lab = window.lab;
-    if (!lab) return;
-    void lab.getVersion().then(setVersion);
-    return lab.onUpdate((channel) => {
-      if (channel === 'updater:checking') setUpdateMsg('Checking for updates…');
-      else if (channel === 'updater:available') setUpdateMsg('Update available — downloading…');
-      else if (channel === 'updater:none') setUpdateMsg('');
-      else if (channel === 'updater:progress') setUpdateMsg('Downloading update…');
-      else if (channel === 'updater:ready') setUpdateMsg('Update ready — installs on quit.');
-      else if (channel === 'updater:error') setUpdateMsg('');
-    });
-  }, []);
+    if (!lab || !keyInput.trim()) return;
+    const status = await lab.setKey(keyInput.trim());
+    setLlm(status);
+    setKeyInput('');
+  }, [keyInput]);
 
   const sendIdea = useCallback(() => {
     const clock = clockRef.current;
@@ -191,94 +211,98 @@ export function App(): React.ReactElement {
           <span className="dot" /> Yggdrasil Lab
           {version && <span className="ver">v{version}</span>}
         </div>
+        <nav className="tabs">
+          {(['world', 'activity', 'reports'] as Tab[]).map((t) => (
+            <button key={t} className={t === tab ? 'sel' : ''} onClick={() => setTab(t)}>
+              {t === 'world' ? 'World' : t === 'activity' ? 'Live Activity' : 'Reports'}
+            </button>
+          ))}
+        </nav>
         {updateMsg && <div className="update">{updateMsg}</div>}
       </header>
 
-      <div className="body">
-        <div className="stage">
-          <canvas ref={canvasRef} width={CANVAS} height={CANVAS} className="world" />
-          <div className="legend">
-            <span><i style={{ background: '#43d18a' }} /> active</span>
-            <span><i style={{ background: '#e09a3a' }} /> hungry</span>
-            <span><i style={{ background: '#5b8bd0' }} /> sleeping</span>
-            <span><i style={{ background: '#e0524d' }} /> sick</span>
-          </div>
+      {!llm.hasKey && (
+        <div className="keybar">
+          <span>⚠ LLM minds need a Fireworks API key — this is the consciousness the lab trains.</span>
+          <input type="password" value={keyInput} placeholder="fw_…" onChange={(e) => setKeyInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveKey()} />
+          <button className="go" onClick={saveKey}>Save key</button>
         </div>
+      )}
 
-        <aside className="panel">
-          <section className="controls">
-            <div className="row">
-              <button className={running ? 'danger' : 'go'} onClick={() => setRunning((r) => !r)}>
-                {running ? 'Pause' : 'Run'}
-              </button>
-              <button onClick={() => { setRunning(false); newExperiment(); }}>New world</button>
+      {tab === 'world' && (
+        <div className="body">
+          <div className="stage">
+            <canvas ref={canvasRef} width={CANVAS} height={CANVAS} className="world" />
+            <div className="legend">
+              <span><i style={{ background: '#43d18a' }} /> active</span>
+              <span><i style={{ background: '#e09a3a' }} /> hungry</span>
+              <span><i style={{ background: '#5b8bd0' }} /> sleeping</span>
+              <span><i style={{ background: '#e0524d' }} /> sick</span>
             </div>
-            <label>
-              Seed
-              <input value={seed} onChange={(e) => setSeed(e.target.value)} disabled={running} />
-            </label>
-            <label>
-              Population: {agentCount}
-              <input type="range" min={20} max={256} step={4} value={agentCount} disabled={running} onChange={(e) => setAgentCount(Number(e.target.value))} />
-            </label>
-            <label>Speed — {preset.rate}</label>
-            <div className="speeds">
-              {SPEED_PRESETS.map((p, i) => (
-                <button key={p.mult} className={i === speedIdx ? 'sel' : ''} onClick={() => setSpeedIdx(i)}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </section>
+          </div>
 
-          {stats && (
-            <section className="stats">
-              <div className="big">
-                <div><b>{stats.alive}</b><span>/ {stats.total} alive</span></div>
-                <div><b>Day {stats.day}</b><span>{stats.backend}</span></div>
-                <div><b>{stats.knowledge}</b><span>knowledge</span></div>
+          <aside className="panel">
+            <section className="controls">
+              <div className="row">
+                <button className={running ? 'danger' : 'go'} onClick={() => setRunning((r) => !r)}>{running ? 'Pause' : 'Run'}</button>
+                <button onClick={() => { setRunning(false); newExperiment(); }}>New world</button>
               </div>
-              <table>
-                <tbody>
+              <label>Seed<input value={seed} onChange={(e) => setSeed(e.target.value)} disabled={running} /></label>
+              <label>Population: {agentCount}
+                <input type="range" min={20} max={256} step={4} value={agentCount} disabled={running} onChange={(e) => setAgentCount(Number(e.target.value))} />
+              </label>
+              <label>Speed — {preset.rate}</label>
+              <div className="speeds">
+                {SPEED_PRESETS.map((p, i) => (
+                  <button key={p.mult} className={i === speedIdx ? 'sel' : ''} onClick={() => setSpeedIdx(i)}>{p.label}</button>
+                ))}
+              </div>
+            </section>
+
+            {stats && (
+              <section className="stats">
+                <div className="big">
+                  <div><b>{stats.alive}</b><span>/ {stats.total} alive</span></div>
+                  <div><b>Day {stats.day}</b><span>{stats.pending > 0 ? `${stats.pending} thinking` : 'reflex idle'}</span></div>
+                  <div><b>{stats.knowledge}</b><span>knowledge</span></div>
+                </div>
+                <div className="mind">mind: {stats.backend}</div>
+                <table><tbody>
                   <tr><td>Exchanges</td><td>{stats.exchanges}</td><td>Conflicts</td><td>{stats.conflicts}</td></tr>
                   <tr><td>Sickness</td><td>{stats.sickness}</td><td>Shares</td><td>{stats.shares}</td></tr>
                   <tr><td>Seeds sown</td><td>{stats.seedPlants}</td><td>Sprouts</td><td>{stats.sprouts}</td></tr>
                   <tr><td>Builds</td><td>{stats.builds}</td><td>Deaths</td><td>{stats.deaths}</td></tr>
-                </tbody>
-              </table>
+                </tbody></table>
+              </section>
+            )}
+
+            <section className="idea">
+              <label>Give them an idea (only you can)</label>
+              <div className="row">
+                <input value={idea} placeholder="e.g. water is by the river" onChange={(e) => setIdea(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendIdea()} />
+                <button className="go" onClick={sendIdea}>Send</button>
+              </div>
             </section>
-          )}
 
-          <section className="idea">
-            <label>Give them an idea (only you can)</label>
-            <div className="row">
-              <input value={idea} placeholder="e.g. water is by the river" onChange={(e) => setIdea(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendIdea()} />
-              <button className="go" onClick={sendIdea}>Send</button>
-            </div>
-          </section>
-
-          {stats && (
-            <section className="feed">
-              <label>What they're doing & saying</label>
-              <ul>
-                {stats.feed
-                  .slice()
-                  .reverse()
-                  .map((e, i) => (
+            {stats && (
+              <section className="feed">
+                <label>What they're doing & saying</label>
+                <ul>
+                  {stats.feed.slice().reverse().map((e, i) => (
                     <li key={i} className={e.kind}>
                       <span className="t">d{dayOf(e.tick)}</span>{' '}
-                      {e.kind === 'speech' ? (
-                        <span><b>{e.who}</b>: “{e.text}”</span>
-                      ) : (
-                        <span className="ev">{e.who} · {e.text}</span>
-                      )}
+                      {e.kind === 'speech' ? <span><b>{e.who}</b>: “{e.text}”</span> : <span className="ev">{e.who} · {e.text}</span>}
                     </li>
                   ))}
-              </ul>
-            </section>
-          )}
-        </aside>
-      </div>
+                </ul>
+              </section>
+            )}
+          </aside>
+        </div>
+      )}
+
+      {tab === 'activity' && <ActivityView />}
+      {tab === 'reports' && <ReportsView />}
     </div>
   );
 }

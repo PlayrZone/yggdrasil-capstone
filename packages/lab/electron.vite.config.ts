@@ -10,7 +10,10 @@ const REPO_ROOT = here('../..');
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Bundle the engine into main (it's pure TS) so the LLM backend is
+    // available without runtime workspace resolution.
+    plugins: [externalizeDepsPlugin({ exclude: ['@yggdrasil/engine'] })],
+    resolve: { alias: { '@yggdrasil/engine': ENGINE_INDEX } },
     build: {
       outDir: 'out/main',
       rollupOptions: { input: { index: resolve(here('.'), 'src/main/index.ts') } },
