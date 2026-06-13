@@ -56,6 +56,8 @@ export function App(): React.ReactElement {
   const [llm, setLlm] = useState<{ hasKey: boolean; model: string }>({ hasKey: false, model: '' });
   const [keyInput, setKeyInput] = useState('');
   const [analysis, setAnalysis] = useState<AnalysisSnapshot | null>(null);
+  const selectedRef = useRef<number | null>(null);
+  const [selected, setSelected] = useState<ReturnType<Experiment['agentDetail']>>(null);
 
   const sampleStats = useCallback((exp: Experiment): Stats => {
     const feed: FeedItem[] = exp.recentEvents(50).map((e) => {
@@ -93,7 +95,7 @@ export function App(): React.ReactElement {
     for (const p of clock.interpolated()) {
       const a = state.get(p.id);
       const s = a ? (a.sick ? 3 : a.sleeping ? 2 : a.hungerCritical ? 1 : 0) : 0;
-      agents.push({ x: p.x, y: p.y, state: s });
+      agents.push({ id: p.id, x: p.x, y: p.y, state: s });
     }
     world.update(agents);
     world.render();
@@ -102,8 +104,12 @@ export function App(): React.ReactElement {
   // Callback ref: spin up / tear down the WebGL world with the canvas element.
   const canvasCb = useCallback((el: HTMLCanvasElement | null) => {
     if (el) {
-      world3dRef.current = new World3D(el);
-      world3dRef.current.setPopulation(clockRef.current?.exp.agentIds.length ?? 80);
+      const world = new World3D(el, (id) => {
+        selectedRef.current = id;
+        setSelected(id !== null && clockRef.current ? clockRef.current.exp.agentDetail(id) : null);
+      });
+      world.setPopulation(clockRef.current?.exp.agentIds.length ?? 80);
+      world3dRef.current = world;
     } else {
       world3dRef.current?.dispose();
       world3dRef.current = null;
@@ -115,6 +121,9 @@ export function App(): React.ReactElement {
     const exp = new Experiment({ seed, agentCount, mindBackend });
     clockRef.current = new SimClock(exp, () => performance.now());
     world3dRef.current?.setPopulation(exp.agentIds.length);
+    world3dRef.current?.setSelected(null);
+    selectedRef.current = null;
+    setSelected(null);
     setStats(sampleStats(exp));
   }, [seed, agentCount, llm, sampleStats]);
 
@@ -156,7 +165,11 @@ export function App(): React.ReactElement {
         lastFrameRef.current = now;
         if (runningRef.current) {
           clock.tickFrame(dt, SPEED_PRESETS[speedRef.current]!.mult);
-          if (statTick++ % 8 === 0) setStats(sampleStats(clock.exp));
+          if (statTick++ % 8 === 0) {
+            setStats(sampleStats(clock.exp));
+            world3dRef.current?.updateStructures(clock.exp.structures());
+            if (selectedRef.current !== null) setSelected(clock.exp.agentDetail(selectedRef.current));
+          }
         }
         drawWorld(clock); // smooth interpolation + orbit controls every frame
       }
@@ -234,8 +247,32 @@ export function App(): React.ReactElement {
               <span><i style={{ background: '#e09a3a' }} /> hungry</span>
               <span><i style={{ background: '#5b8bd0' }} /> sleeping</span>
               <span><i style={{ background: '#e0524d' }} /> sick</span>
-              <span className="orbit">drag to orbit · scroll to zoom</span>
+              <span className="orbit">drag to orbit · scroll to zoom · click a Gahallian</span>
             </div>
+
+            {selected && (
+              <div className="inspector">
+                <div className="ihead">
+                  <b>{selected.name}</b>
+                  <span>{selected.alive ? selected.region : 'dead'}{selected.archetype ? ` · ${selected.archetype}` : ''}</span>
+                  <button onClick={() => { selectedRef.current = null; setSelected(null); world3dRef.current?.setSelected(null); }}>✕</button>
+                </div>
+                <div className="ineeds">
+                  {Object.entries(selected.needs).map(([k, v]) => (
+                    <div key={k} className="nrow"><span>{k}</span><span className="nbar"><i style={{ width: `${v}%`, background: v >= 75 ? '#e0524d' : v >= 50 ? '#e09a3a' : '#43d18a' }} /></span></div>
+                  ))}
+                </div>
+                <div className="iknow">
+                  <label>What {selected.name.split(' ')[0]} has learned ({selected.knowledge.length})</label>
+                  <ul>
+                    {selected.knowledge.slice(0, 12).map((k, i) => (
+                      <li key={i}>{k.statement} <em>{Math.round(k.confidence * 100)}%</em></li>
+                    ))}
+                    {selected.knowledge.length === 0 && <li className="empty">nothing learned yet</li>}
+                  </ul>
+                </div>
+              </div>
+            )}
           </div>
 
           <aside className="panel">

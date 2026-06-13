@@ -1,6 +1,7 @@
 import { World } from '../core/World.js';
 import type { Entity } from '../core/Entity.js';
 import type { GahallianBody } from '../body/GahallianBody.js';
+import type { Structure } from '../body/PerceptionSystem.js';
 import {
   PerceptionSystem,
   ResourceNodeSystem,
@@ -188,67 +189,67 @@ export class Experiment {
 
     // Great river + tributary — drinking water along the lines + abundant food
     // banks (the continent's breadbasket; supports dense populations).
-    for (let x = 72; x <= 760; x += 16) place('river', x, riverY(x), 9999);
-    for (let x = 340; x <= 740; x += 18) place('river', x, tributaryY(x), 9999);
-    scatter('berryBush', 'river', 70, 18);
-    scatter('tuberPlant', 'river', 55, 18);
-    scatter('clayDeposit', 'river', 16, 20);
-    scatter('fiberPlant', 'river', 12, 10);
+    for (let x = WORLD * 0.06; x <= WORLD * 0.84; x += 30) place('river', x, riverY(x), 9999);
+    for (let x = WORLD * 0.36; x <= WORLD * 0.82; x += 34) place('river', x, tributaryY(x), 9999);
+    scatter('berryBush', 'river', 150, 18);
+    scatter('tuberPlant', 'river', 120, 18);
+    scatter('clayDeposit', 'river', 36, 20);
+    scatter('fiberPlant', 'river', 26, 10);
 
     // Lakes — freshwater at the centre + fertile shores.
     for (const [cx, cy] of LAKE_CENTERS) place('waterSource', cx, cy, 9999);
-    scatter('berryBush', 'lake', 16, 16);
-    scatter('tuberPlant', 'lake', 12, 16);
-    scatter('fiberPlant', 'lake', 10, 10);
+    scatter('berryBush', 'lake', 34, 16);
+    scatter('tuberPlant', 'lake', 26, 16);
+    scatter('fiberPlant', 'lake', 22, 10);
 
     // Wetlands — reeds (fiber), clay, tubers, standing water.
-    scatter('waterSource', 'wetland', 8, 9999);
-    scatter('fiberPlant', 'wetland', 26, 12);
-    scatter('clayDeposit', 'wetland', 16, 18);
-    scatter('tuberPlant', 'wetland', 14, 12);
+    scatter('waterSource', 'wetland', 18, 9999);
+    scatter('fiberPlant', 'wetland', 56, 12);
+    scatter('clayDeposit', 'wetland', 34, 18);
+    scatter('tuberPlant', 'wetland', 30, 12);
 
     // Coast — sea water + salt + reeds + a little shore forage.
-    for (let y = 20; y < WORLD - 20; y += 26) place('waterSource', 10, y, 9999);
-    scatter('saltFlat', 'coast', 14, 14);
-    scatter('fiberPlant', 'coast', 12, 10);
-    scatter('berryBush', 'coast', 8, 12);
+    for (let y = 20; y < WORLD - 20; y += 40) place('waterSource', WORLD * 0.025, y, 9999);
+    scatter('saltFlat', 'coast', 30, 14);
+    scatter('fiberPlant', 'coast', 26, 10);
+    scatter('berryBush', 'coast', 18, 12);
 
     // Forests — wood-rich, decent food, and poison-plant danger.
-    scatter('tree', 'forest', 96, 10);
-    scatter('berryBush', 'forest', 40, 14);
-    scatter('tuberPlant', 'forest', 24, 14);
-    scatter('nightshadePlant', 'forest', 16, 6);
-    scatter('mushroomPatch', 'forest', 12, 8);
-    scatter('fiberPlant', 'forest', 12, 10);
+    scatter('tree', 'forest', 240, 10);
+    scatter('berryBush', 'forest', 90, 14);
+    scatter('tuberPlant', 'forest', 56, 14);
+    scatter('nightshadePlant', 'forest', 36, 6);
+    scatter('mushroomPatch', 'forest', 28, 8);
+    scatter('fiberPlant', 'forest', 28, 10);
 
     // Mountains — resource-rich, FOOD-POOR (no food placed here on purpose).
-    scatter('stoneDeposit', 'mountain', 26, 14);
-    scatter('copperVein', 'mountain', 18, 10);
-    scatter('ironVein', 'mountain', 15, 10);
-    scatter('coalSeam', 'mountain', 15, 12);
-    scatter('tinVein', 'mountain', 12, 8);
-    scatter('gemVein', 'mountain', 8, 4);
-    scatter('silverVein', 'mountain', 6, 4);
-    scatter('goldVein', 'mountain', 3, 3);
+    scatter('stoneDeposit', 'mountain', 60, 14);
+    scatter('copperVein', 'mountain', 42, 10);
+    scatter('ironVein', 'mountain', 34, 10);
+    scatter('coalSeam', 'mountain', 34, 12);
+    scatter('tinVein', 'mountain', 26, 8);
+    scatter('gemVein', 'mountain', 18, 4);
+    scatter('silverVein', 'mountain', 14, 4);
+    scatter('goldVein', 'mountain', 7, 3);
 
     // Hills — stone + clay, a little wood.
-    scatter('stoneDeposit', 'hills', 20, 12);
-    scatter('clayDeposit', 'hills', 12, 16);
-    scatter('tree', 'hills', 12, 8);
+    scatter('stoneDeposit', 'hills', 46, 12);
+    scatter('clayDeposit', 'hills', 28, 16);
+    scatter('tree', 'hills', 28, 8);
 
     // Plains — modest forage so the open ground isn't a death zone.
-    scatter('berryBush', 'plains', 44, 10);
-    scatter('tuberPlant', 'plains', 30, 10);
-    scatter('fiberPlant', 'plains', 20, 8);
-    scatter('mushroomPatch', 'plains', 12, 8);
+    scatter('berryBush', 'plains', 100, 10);
+    scatter('tuberPlant', 'plains', 70, 10);
+    scatter('fiberPlant', 'plains', 46, 8);
+    scatter('mushroomPatch', 'plains', 28, 8);
 
-    // Scatter agents across the habitable continent so independent groups can
-    // form under different pressures (river vs forest vs plains vs foothills).
+    // Spawn in a generous CENTRAL band — dense enough that groups meet and
+    // knowledge spreads, with the whole continent around them to migrate into.
     const agents = spawnGahallians(this.world, agentCount, this.seed, {
-      x: 96,
-      y: 70,
-      width: 560, // habitable lowlands — not born on barren peaks or in the sea
-      height: 760,
+      x: WORLD * 0.14,
+      y: WORLD * 0.2,
+      width: WORLD * 0.5,
+      height: WORLD * 0.6,
     });
     for (const agent of agents) {
       this.agentIds.push(agent.id);
@@ -292,6 +293,8 @@ export class Experiment {
             (output) => {
               const live = this.agentBody(agentId);
               if (!live?.alive) return; // died while thinking
+              // A conscious Gahallian may name itself, once, while still unnamed.
+              if (output.name && live.name === '') live.name = output.name;
               mind.applyOutput(output);
               this.applyPlan(agentId, output);
             },
@@ -364,7 +367,57 @@ export class Experiment {
 
   nameOf(agentId: number): string {
     const body = this.agentBody(agentId);
-    return body ? body.name : agentId === 0 ? 'world' : `#${agentId}`;
+    if (!body) return agentId === 0 ? 'world' : `#${agentId}`;
+    return body.name && body.name.length ? body.name : `Gahallian #${agentId}`;
+  }
+
+  /** Structures the Gahallians have built (shelters, walls, containers, drops). */
+  structures(): { id: number; x: number; y: number; kind: string; builtBy: number }[] {
+    const out: { id: number; x: number; y: number; kind: string; builtBy: number }[] = [];
+    this.world.forEach((e) => {
+      const s = e.components['Structure'] as Structure | undefined;
+      if (!s) return;
+      const t = e.components['Transform2D'] as { x: number; y: number } | undefined;
+      if (t) out.push({ id: e.id, x: t.x, y: t.y, kind: s.kind, builtBy: s.builtBy });
+    });
+    return out;
+  }
+
+  /** Full inspector view of one agent (click-to-select in the lab). */
+  agentDetail(id: number): {
+    id: number;
+    name: string;
+    alive: boolean;
+    x: number;
+    y: number;
+    region: Region;
+    archetype: Archetype | null;
+    needs: Record<string, number>;
+    traits: Record<string, number>;
+    inventory: Record<string, number>;
+    knowledge: { statement: string; confidence: number; status: string }[];
+  } | null {
+    const entity = this.world.getEntity(id);
+    const body = entity?.components['GahallianBody'] as GahallianBody | undefined;
+    if (!entity || !body) return null;
+    const t = entity.components['Transform2D'] as { x: number; y: number };
+    const mind = this.minds.get(id);
+    const arche = this.archetypeOf(id);
+    return {
+      id,
+      name: this.nameOf(id),
+      alive: body.alive,
+      x: t.x,
+      y: t.y,
+      region: regionAt(t.x, t.y),
+      archetype: arche && arche.sampleSize > 0 ? arche.archetype : null,
+      needs: { ...body.needs } as Record<string, number>,
+      traits: { ...body.traits } as Record<string, number>,
+      inventory: { ...body.inventory } as Record<string, number>,
+      knowledge: mind
+        ? mind.knowledge.held().slice(0, 30).map((k) => ({ statement: k.statement, confidence: k.confidence, status: k.status }))
+        : [],
+    };
   }
 
   /** Per-agent held+forming knowledge for the diffusion analyzer. */

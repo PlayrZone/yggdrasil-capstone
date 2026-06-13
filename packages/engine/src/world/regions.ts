@@ -1,53 +1,54 @@
 /**
- * The first world's geography — a medium, deliberately UNEQUAL continent
+ * The first world's geography — a medium-large, deliberately UNEQUAL continent
  * (yggdrasil_world_design.md). Not a game map: a young Earth with the physical
- * ingredients of civilization and none of civilization itself. One source of
- * truth for both the 3D terrain (height) and the sim (resource placement +
- * the elevation the PerceptionSystem reads), so visuals and physics agree.
+ * ingredients of civilization and none of civilization itself. Layout is
+ * expressed as fractions of WORLD, so the continent scales with the map size.
  *
- * West→east on a 0..WORLD square:
- *   coast/sea → coastal wetlands → great river valley + lakes → central
- *   plains & forests → foothills → eastern mountains. Big enough that distant
- *   groups form independently and knowledge spreads slowly.
+ * West→east: coast/sea → coastal wetlands → great river valley + lakes →
+ * central plains & forests → foothills → eastern mountains. A hard boundary
+ * (the world wall) rings the map at the edges; nobody leaves.
  */
-export const WORLD = 900;
+export const WORLD = 2000;
+/** Hard boundary inset — agents are kept inside [EDGE, WORLD-EDGE] (the wall). */
+export const EDGE = 18;
 
 export type Region = 'coast' | 'river' | 'lake' | 'wetland' | 'forest' | 'mountain' | 'hills' | 'plains';
 
-const COAST_X = 70; // west of this: shore / sea
-const HILLS_X = 620; // 620..MTN: foothills
-const MTN_X = 740; // east of this: mountains
+const COAST_X = WORLD * 0.055; // west of this: shore / sea
+const HILLS_X = WORLD * 0.7; // foothills band
+const MTN_X = WORLD * 0.82; // east of this: mountains
+const K = (2 * Math.PI) / WORLD;
 
 /** Great river centre-line — a sinuous valley draining the mountains to the sea. */
 export function riverY(x: number): number {
-  return 400 + Math.sin(x * 0.011) * 86 + Math.sin(x * 0.031) * 22;
+  return WORLD * 0.46 + Math.sin(x * K * 4) * WORLD * 0.1 + Math.sin(x * K * 11) * WORLD * 0.025;
 }
 /** A northern tributary joining from the highlands. */
 export function tributaryY(x: number): number {
-  return 190 + Math.sin(x * 0.02) * 44;
+  return WORLD * 0.22 + Math.sin(x * K * 8) * WORLD * 0.05;
 }
 
 /** Lakes: [centreX, centreY, radius]. Fed by the river system; fertile shores. */
 export const LAKE_CENTERS: readonly [number, number, number][] = [
-  [300, 610, 80],
-  [560, 250, 58],
-  [470, 470, 46],
+  [WORLD * 0.32, WORLD * 0.68, WORLD * 0.085],
+  [WORLD * 0.6, WORLD * 0.27, WORLD * 0.06],
+  [WORLD * 0.5, WORLD * 0.52, WORLD * 0.05],
 ];
 
 const FOREST_CENTERS: readonly [number, number, number][] = [
-  [205, 150, 96],
-  [170, 720, 90],
-  [450, 560, 85],
-  [600, 660, 78],
-  [330, 300, 70],
+  [WORLD * 0.22, WORLD * 0.17, WORLD * 0.11],
+  [WORLD * 0.18, WORLD * 0.8, WORLD * 0.1],
+  [WORLD * 0.5, WORLD * 0.63, WORLD * 0.095],
+  [WORLD * 0.66, WORLD * 0.74, WORLD * 0.088],
+  [WORLD * 0.37, WORLD * 0.33, WORLD * 0.078],
 ];
 
-const RIVER_HALF = 16;
+const RIVER_HALF = WORLD * 0.016;
 
 export function inRiver(x: number, y: number): boolean {
   return (
-    (x >= COAST_X && x <= MTN_X + 40 && Math.abs(y - riverY(x)) < RIVER_HALF) ||
-    (x >= 330 && x <= MTN_X && Math.abs(y - tributaryY(x)) < 12)
+    (x >= COAST_X && x <= MTN_X + WORLD * 0.04 && Math.abs(y - riverY(x)) < RIVER_HALF) ||
+    (x >= WORLD * 0.36 && x <= MTN_X && Math.abs(y - tributaryY(x)) < RIVER_HALF * 0.7)
   );
 }
 
@@ -55,7 +56,7 @@ function lakeAt(x: number, y: number): 'in' | 'edge' | null {
   for (const [cx, cy, r] of LAKE_CENTERS) {
     const d = Math.hypot(x - cx, y - cy);
     if (d < r) return 'in';
-    if (d < r + 22) return 'edge';
+    if (d < r + WORLD * 0.022) return 'edge';
   }
   return null;
 }
@@ -71,7 +72,7 @@ function inForest(x: number, y: number): boolean {
 
 // Marshy strip behind the coast (broken up so it isn't a solid wall).
 function coastalWetland(x: number, y: number): boolean {
-  return x >= COAST_X && x < COAST_X + 64 && Math.sin(y * 0.021) > 0.35;
+  return x >= COAST_X && x < COAST_X + WORLD * 0.06 && Math.sin(y * K * 9) > 0.35;
 }
 
 export function regionAt(x: number, y: number): Region {
@@ -89,8 +90,8 @@ export function regionAt(x: number, y: number): Region {
 
 /** Surface height in world-z (drives the 3D terrain and where feet sit). */
 export function heightAt(x: number, y: number): number {
-  const ripple = Math.sin(x * 0.05) * 0.5 + Math.cos(y * 0.06) * 0.4;
-  if (x < COAST_X) return 0.25 + Math.max(0, (x - 18) / (COAST_X - 18)) * 1.7 + ripple * 0.2; // sea -> shore
+  const ripple = Math.sin(x * 0.02) * 0.5 + Math.cos(y * 0.024) * 0.4;
+  if (x < COAST_X) return 0.25 + Math.max(0, (x - COAST_X * 0.25) / (COAST_X * 0.75)) * 1.7 + ripple * 0.2; // sea -> shore
   const lk = lakeAt(x, y);
   if (lk === 'in') return 0.5; // below sea level -> fills with water
   if (lk === 'edge') return 1.0 + ripple * 0.2;
@@ -99,9 +100,9 @@ export function heightAt(x: number, y: number): number {
   if (x > MTN_X) {
     // A ridged range with peaks and passes, not a wall ramping to the edge.
     const m = (x - MTN_X) / (WORLD - MTN_X); // 0..1 inland
-    const ridge = Math.abs(Math.sin(x * 0.055) * Math.cos(y * 0.05));
-    const ridge2 = Math.abs(Math.sin(x * 0.12 + y * 0.09));
-    return 5 + m * 4 + ridge * 5.5 + ridge2 * 2.5 + ripple * 0.5;
+    const ridge = Math.abs(Math.sin(x * 0.022) * Math.cos(y * 0.02));
+    const ridge2 = Math.abs(Math.sin(x * 0.05 + y * 0.04));
+    return 5 + m * 6 + ridge * 7 + ridge2 * 3 + ripple * 0.5;
   }
   if (x > HILLS_X) return 2.5 + ((x - HILLS_X) / (MTN_X - HILLS_X)) * 3.5 + ripple; // foothills
   return 2.4 + ripple; // plains / forest
@@ -112,4 +113,10 @@ export function elevationBand(x: number, y: number): number {
   if (h >= 8) return 2; // highland (mountains)
   if (h >= 4) return 1; // midland (hills / upper slopes)
   return 0; // lowland
+}
+
+/** Keep a point inside the world wall. */
+export function clampToWorld(p: { x: number; y: number }): void {
+  p.x = Math.min(WORLD - EDGE, Math.max(EDGE, p.x));
+  p.y = Math.min(WORLD - EDGE, Math.max(EDGE, p.y));
 }

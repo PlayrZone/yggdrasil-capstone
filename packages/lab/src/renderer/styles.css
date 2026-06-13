@@ -34,6 +34,24 @@ body {
 .world3d { flex: 1; min-height: 0; width: 100%; background: #0a0e12; border: 1px solid var(--line); border-radius: 6px; display: block; }
 .legend { display: flex; gap: 16px; color: var(--muted); font-size: 12px; align-items: center; justify-content: center; }
 .legend .orbit { margin-left: auto; font-style: italic; }
+
+/* Selected-agent inspector (floats over the 3D view) */
+.stage { position: relative; }
+.inspector { position: absolute; top: 24px; right: 24px; width: 280px; background: rgba(17,23,28,0.95); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; backdrop-filter: blur(4px); }
+.ihead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.ihead b { color: #fff; font-size: 15px; }
+.ihead span { color: var(--muted); font-size: 11px; text-transform: capitalize; flex: 1; }
+.ihead button { background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 0 4px; }
+.ineeds { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.nrow { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.nrow > span:first-child { flex: 0 0 64px; color: var(--muted); text-transform: capitalize; }
+.nbar { flex: 1; height: 7px; background: #0c1216; border-radius: 4px; overflow: hidden; }
+.nbar i { display: block; height: 100%; }
+.iknow label { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+.iknow ul { list-style: none; margin: 0; padding: 0; max-height: 200px; overflow-y: auto; }
+.iknow li { font-size: 12px; color: #cdd8de; padding: 3px 0; border-bottom: 1px solid #161d23; }
+.iknow li em { color: var(--green); font-style: normal; float: right; }
+.iknow li.empty { color: var(--muted); }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
 
 .panel { width: 340px; border-left: 1px solid var(--line); background: var(--panel); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }

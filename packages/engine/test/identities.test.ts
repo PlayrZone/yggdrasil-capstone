@@ -24,14 +24,21 @@ describe('canonical identities', () => {
     expect(identityAt(257)).toBe(CANONICAL_IDENTITIES[1]);
   });
 
-  it('spawns the SAME individuals regardless of world seed', () => {
+  it('spawns the SAME individuals (canonical traits) regardless of world seed', () => {
     const a = new Experiment({ seed: 'world-alpha', agentCount: 50 });
     const b = new Experiment({ seed: 'totally-different', agentCount: 50 });
-    const namesA = a.agentIds.map((id) => a.agentBody(id)!.name);
-    const namesB = b.agentIds.map((id) => b.agentBody(id)!.name);
-    // Same cast, same order — identity is independent of the world seed.
-    expect(namesA).toEqual(namesB);
-    expect(namesA[0]).toBe(CANONICAL_IDENTITIES[0]!.name);
+    const traitsA = a.agentIds.map((id) => JSON.stringify(a.agentBody(id)!.traits));
+    const traitsB = b.agentIds.map((id) => JSON.stringify(b.agentBody(id)!.traits));
+    // Same personalities, same order — identity is independent of the world seed.
+    expect(traitsA).toEqual(traitsB);
+    expect(traitsA[0]).toBe(JSON.stringify(CANONICAL_IDENTITIES[0]!.traits));
+  });
+
+  it('is born UNNAMED — a name is self-chosen later by the conscious mind', () => {
+    const exp = new Experiment({ seed: 'unnamed', agentCount: 10 });
+    for (const id of exp.agentIds) expect(exp.agentBody(id)!.name).toBe('');
+    // The display fallback labels the unnamed by id.
+    expect(exp.nameOf(exp.agentIds[0]!)).toMatch(/Gahallian #/);
   });
 
   it('still places them differently per seed (world differs, people do not)', () => {

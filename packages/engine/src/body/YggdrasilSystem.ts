@@ -17,6 +17,7 @@ import {
   SICKNESS_TICKS,
 } from './WorldRegularities.js';
 import { coldPressure, hungerRateMultiplier } from './Climate.js';
+import { clampToWorld } from '../world/regions.js';
 
 const MOVE_SPEED = 0.5;
 const ARRIVE_DISTANCE = 1.0;
@@ -592,6 +593,7 @@ export class YggdrasilSystem {
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
         t.x += (dx / d) * MOVE_SPEED * 1.5; // Fear is fast.
         t.y += (dy / d) * MOVE_SPEED * 1.5;
+        clampToWorld(t);
         return;
       }
       case 'Idle': {
@@ -607,7 +609,7 @@ export class YggdrasilSystem {
     if (body.planStep >= body.plan.length) body.planDone = true;
   }
 
-  /** Move one tick toward (x, y); true when arrived. */
+  /** Move one tick toward (x, y); true when arrived. Stays inside the world wall. */
   private moveToward(t: Transform2D, x: number, y: number): boolean {
     const dx = x - t.x;
     const dy = y - t.y;
@@ -615,6 +617,7 @@ export class YggdrasilSystem {
     if (d <= ARRIVE_DISTANCE) return true;
     t.x += (dx / d) * MOVE_SPEED;
     t.y += (dy / d) * MOVE_SPEED;
+    clampToWorld(t);
     return false;
   }
 

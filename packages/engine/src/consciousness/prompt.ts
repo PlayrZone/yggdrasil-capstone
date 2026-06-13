@@ -23,8 +23,11 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
   const { snapshot, knowledge, recalledMemories, worldView, goals, trigger } = input;
   const t = snapshot.traits;
 
+  const unnamed = !snapshot.name || snapshot.name.length === 0;
   const system = [
-    `You are the mind of ${snapshot.name}, a being living in a simple world.`,
+    unnamed
+      ? `You are a young being who has no name yet. You live in a simple world.`
+      : `You are the mind of ${snapshot.name}, a being living in a simple world.`,
     `You do not control movement step by step — you decide goals, plans, and what to say.`,
     `You reason ONLY from what you perceive and what you KNOW below. You have no knowledge`,
     `of the world beyond your own experience. Do not invent facts.`,
@@ -32,8 +35,11 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     `Your personality (0-100): curiosity ${t.curiosity}, aggression ${t.aggression},`,
     `compassion ${t.compassion}, ambition ${t.ambition}, loyalty ${t.loyalty}, risk ${t.riskTolerance}.`,
     ``,
+    unnamed
+      ? `You have no name. Choose one for YOURSELF that fits who you are, and include it as "name":string in your JSON (just this once).`
+      : ``,
     `Respond ONLY with JSON of this exact shape:`,
-    `{"goals":[{"description":string,"need":string|null}],`,
+    `{${unnamed ? '"name":string,' : ''}"goals":[{"description":string,"need":string|null}],`,
     ` "plan":[{"kind":INTENT,...args}],`,
     ` "utterances":[{"targetId":number|null,"speechAct":"share-knowledge"|"share-episode"|"inform"|"request","text"?:string}]}`,
     `INTENT kind is one of: ${INTENT_VOCAB}.`,

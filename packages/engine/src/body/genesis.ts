@@ -7,10 +7,10 @@ import { identityAt } from './identities.js';
 
 /**
  * Genesis: the canonical Gahallians scattered across terrain with nothing but
- * their bodies. WHO they are (name + personality) is fixed — they are the same
- * individuals in every run (see identities.ts). The world seed decides only
- * WHERE each is born, so identical seeds still produce identical populations
- * (determinism requirement) while the cast stays constant across worlds.
+ * their bodies. Their PERSONALITIES are fixed — the same individuals (same
+ * traits) in every run (see identities.ts) — but they are born UNNAMED. A name
+ * is not assigned; a Gahallian chooses its own once it is conscious (the LLM
+ * mind may name itself). The world seed decides only WHERE each is born.
  */
 
 export interface GenesisArea {
@@ -36,7 +36,8 @@ export function spawnGahallians(
     agents.push(
       world.createEntity({
         Transform2D: { x, y } satisfies Transform2D,
-        GahallianBody: createGahallianBody(identity.name, identity.traits, birthTick),
+        // Born unnamed ('') — a conscious Gahallian names itself later.
+        GahallianBody: createGahallianBody('', identity.traits, birthTick),
       }),
     );
   }

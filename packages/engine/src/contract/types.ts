@@ -404,4 +404,6 @@ export interface MindOutput {
   goals: Goal[];
   plan: Intent[];
   utterances: Utterance[];
+  /** A name the Gahallian chooses for itself (only meaningful while unnamed). */
+  name?: string;
 }
