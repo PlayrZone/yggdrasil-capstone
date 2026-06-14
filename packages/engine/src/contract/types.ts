@@ -407,6 +407,10 @@ export interface ThinkInput {
   worldView: WorldView;
   goals: Goal[];
   trigger: ThinkTrigger;
+  /** A place a held story draws this being to (a founder/hero site) — belief steering behaviour. */
+  sacredPlace?: { x: number; y: number };
+  /** Places a held tragedy makes this being shun. */
+  tragedyPlaces?: { x: number; y: number }[];
 }
 
 /**

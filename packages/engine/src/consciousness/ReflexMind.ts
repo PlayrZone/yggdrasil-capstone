@@ -107,12 +107,18 @@ export class ReflexMind implements IMind {
         plan.push(wander(input));
       }
     } else {
-      // Nothing pressing — so the choice is shaped by RELATIONSHIPS, not
-      // survival. A being drifts toward a trusted individual (social gravity)
-      // rather than dispersing; loyalty deepens the pull. This is what lets
-      // stable clusters, families, and tribes cohere instead of scattering.
+      // Nothing pressing — so the choice is shaped by BELIEF and RELATIONSHIPS,
+      // not survival. Periodically a being makes a PILGRIMAGE to the place of
+      // its oldest founder/hero story (belief steering behaviour, and the seed
+      // of a sacred place); otherwise it drifts toward trusted individuals.
+      const sacred = input.sacredPlace;
+      const onPilgrimage = !!sacred && input.worldView.tick % 1600 < 480 && Math.hypot(sacred.x - snapshot.x, sacred.y - snapshot.y) > 6;
       const friend = preferredAgent(input);
-      if (friend && snapshot.traits.loyalty >= 35) {
+      if (onPilgrimage) {
+        goals.push(goal(input, 'return to the place of the story', undefined));
+        plan.push({ kind: 'MoveTo', x: sacred!.x, y: sacred!.y });
+        plan.push({ kind: 'Idle', durationTicks: 40 });
+      } else if (friend && snapshot.traits.loyalty >= 35) {
         goals.push(goal(input, 'stay near kin & friends', undefined));
         plan.push({ kind: 'MoveTo', x: friend.x, y: friend.y });
         // DIRECTED TEACHING: pass knowledge to your bonded individual. Social
@@ -333,9 +339,22 @@ function wander(input: ThinkInput): Intent {
   // so roaming actually traverses ground to find sparse food, rather than
   // jittering in place. Curiosity lengthens the stride.
   const h = hash2(id, Math.floor(input.worldView.tick / 240));
-  const angle = h * Math.PI * 2;
+  let angle = h * Math.PI * 2;
   const stride = 22 + (traits.curiosity / 100) * 26;
-  return { kind: 'MoveTo', x: x + Math.cos(angle) * stride, y: y + Math.sin(angle) * stride };
+  let tx = x + Math.cos(angle) * stride;
+  let ty = y + Math.sin(angle) * stride;
+  // Shun the places where tragedy is remembered — belief steering avoidance.
+  if (input.tragedyPlaces) {
+    for (const t of input.tragedyPlaces) {
+      if ((tx - t.x) ** 2 + (ty - t.y) ** 2 < 35 * 35) {
+        angle += Math.PI * 0.8;
+        tx = x + Math.cos(angle) * stride;
+        ty = y + Math.sin(angle) * stride;
+        break;
+      }
+    }
+  }
+  return { kind: 'MoveTo', x: tx, y: ty };
 }
 
 function hash2(a: number, b: number): number {

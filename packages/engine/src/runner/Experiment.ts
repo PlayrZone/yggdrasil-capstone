@@ -14,6 +14,8 @@ import {
   spawnGahallians,
   TICKS_PER_DAY,
   TICKS_PER_SEASON,
+  TICKS_PER_YEAR,
+  seasonAt,
 } from '../body/index.js';
 import type { Animal } from '../body/index.js';
 import type { ResourceNode } from '../body/index.js';
@@ -54,6 +56,8 @@ export interface ExperimentOptions {
   seed: string;
   agentCount?: number;
   mindBackend?: IMindBackend;
+  /** A/B control for Cycle 10: when false, held stories don't steer movement. Default true. */
+  mythBehavior?: boolean;
 }
 
 const EVENT_LOG_CAP = 400;
@@ -103,6 +107,8 @@ export class Experiment {
   readonly body = new YggdrasilSystem(this.perception);
   readonly minds = new Map<number, AgentMind>();
   readonly agentIds: number[] = [];
+  /** Cycle 10 A/B: do held stories steer movement? (pilgrimage + tragedy-avoidance) */
+  private readonly mythBehavior: boolean;
 
   tick = 0;
   eventCount = 0;
@@ -127,6 +133,7 @@ export class Experiment {
   constructor(options: ExperimentOptions) {
     const { seed, agentCount = 100, mindBackend } = options;
     this.seed = seed;
+    this.mythBehavior = options.mythBehavior ?? true;
     if (mindBackend) {
       this.cognitionLog = new CognitionLog();
       this.llm = new LlmMind(mindBackend, {
@@ -161,9 +168,9 @@ export class Experiment {
         const memory = memoryFromEvent(event, witnessId, context);
         if (memory) mind.observe(memory);
         // A memorable event becomes a STORY the witness carries.
-        if (story) mind.narratives.remember(story.id, story.text, event.tick, true);
+        if (story) mind.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
       }
-      if (story) this.minds.get(event.actorId)?.narratives.remember(story.id, story.text, event.tick, true);
+      if (story) this.minds.get(event.actorId)?.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
     });
   }
 
@@ -173,24 +180,25 @@ export class Experiment {
    * a home — the things a people would actually retell. Keyed so every witness
    * of the same event remembers the same story.
    */
-  private storyFor(event: SimEvent): { id: string; text: string } | null {
+  private storyFor(event: SimEvent): { id: string; text: string; x: number; y: number } | null {
     const bucket = Math.floor(event.tick / 300);
     const region = regionAt(event.x, event.y);
     const who = this.nameOf(event.actorId);
+    const at = { x: event.x, y: event.y };
     switch (event.type) {
       case 'KilledPredator':
-        return { id: `slew:${event.actorId}:${bucket}`, text: `${who} slew a ${event.payload['predator'] ?? 'beast'} in the ${region}` };
+        return { id: `slew:${event.actorId}:${bucket}`, text: `${who} slew a ${event.payload['predator'] ?? 'beast'} in the ${region}`, ...at };
       case 'AgentDied': {
         const cause = String(event.payload['cause'] ?? '');
         if (cause !== 'violence') return null; // only a dramatic death is a story
-        return { id: `fell:${event.actorId}:${bucket}`, text: `${who} fell to violence in the ${region}` };
+        return { id: `fell:${event.actorId}:${bucket}`, text: `${who} fell to violence in the ${region}`, ...at };
       }
       case 'BuiltStructure':
         if (event.payload['buildKind'] !== 'shelter') return null;
-        return { id: `home:${event.actorId}:${bucket}`, text: `${who} raised a home in the ${region}` };
+        return { id: `home:${event.actorId}:${bucket}`, text: `${who} raised a home in the ${region}`, ...at };
       case 'AttackedAgent': {
         const victim = this.nameOf(event.targetIds[0] ?? 0);
-        return { id: `attack:${event.actorId}:${bucket}`, text: `${who} attacked ${victim} in the ${region}` };
+        return { id: `attack:${event.actorId}:${bucket}`, text: `${who} attacked ${victim} in the ${region}`, ...at };
       }
       default:
         return null;
@@ -337,7 +345,7 @@ export class Experiment {
     for (const agent of agents) {
       this.agentIds.push(agent.id);
       const tr = (agent.components['GahallianBody'] as GahallianBody).traits;
-      this.minds.set(agent.id, new AgentMind(agent.id, mindOptions(tr)));
+      this.minds.set(agent.id, new AgentMind(agent.id, { ...mindOptions(tr), mythBehavior: this.mythBehavior }));
     }
     this.reproRng = mulberry32(hashSeed(`${this.seed}:repro`));
 
@@ -439,9 +447,9 @@ export class Experiment {
           // telling different versions of the same event.
           if ((tick + a.id + b.id) % 3 === 0) {
             const sa = a.mind.narratives.pickToRetell(tick);
-            if (sa) b.mind.narratives.remember(sa.id, mutateNarrative(sa.text, (b.id * 31 + sa.text.length) >>> 0), tick, false);
+            if (sa) b.mind.narratives.remember(sa.id, mutateNarrative(sa.text, (b.id * 31 + sa.text.length) >>> 0), sa.x, sa.y, tick, false);
             const sb = b.mind.narratives.pickToRetell(tick);
-            if (sb) a.mind.narratives.remember(sb.id, mutateNarrative(sb.text, (a.id * 31 + sb.text.length) >>> 0), tick, false);
+            if (sb) a.mind.narratives.remember(sb.id, mutateNarrative(sb.text, (a.id * 31 + sb.text.length) >>> 0), sb.x, sb.y, tick, false);
           }
         }
       }
@@ -506,7 +514,7 @@ export class Experiment {
       GahallianBody: createGahallianBody('', traits, tick), // unnamed, age 0
     });
     this.agentIds.push(child.id);
-    this.minds.set(child.id, new AgentMind(child.id, mindOptions(traits)));
+    this.minds.set(child.id, new AgentMind(child.id, { ...mindOptions(traits), mythBehavior: this.mythBehavior }));
     this.birthCount++;
     this.births.push({ child: child.id, parents: [a.id, b.id], tick });
     a.body.reproCooldownUntil = tick + REPRO_COOLDOWN;
@@ -559,6 +567,21 @@ export class Experiment {
 
   day(): number {
     return Math.floor(this.tick / TICKS_PER_DAY) + 1;
+  }
+
+  /** Year of the sim, 1-based — the unit cultural phenomena actually live at. */
+  year(): number {
+    return Math.floor(this.tick / TICKS_PER_YEAR) + 1;
+  }
+
+  /** Current season name (winter is the real challenge). */
+  season(): string {
+    return seasonAt(this.tick);
+  }
+
+  /** Fractional years elapsed — for year-scale checkpoints and reporting. */
+  yearsElapsed(): number {
+    return this.tick / TICKS_PER_YEAR;
   }
 
   recentEvents(limit: number): SimEvent[] {
@@ -728,6 +751,66 @@ export class Experiment {
       if (mind) narratives.set(id, mind.narratives.all().map((n) => ({ id: n.id, text: n.text })));
     }
     return analyzeMyth(narratives, tribes, names, this.tick);
+  }
+
+  /**
+   * CYCLE 10 — Belief → Behavior. Do held stories steer where beings physically
+   * are? For each widely-shared story we measure CONGREGATION: how many living
+   * beings stand within R of the place the story remembers, divided by how many
+   * a uniform spread would put there. >1 = beings gather there; <1 = they shun
+   * it. A founder/hero site with congregation >1 and a tragedy site with
+   * congregation <1, in the SAME run, is belief steering behaviour. The
+   * mythBehavior:false control run (no pilgrimage/avoidance) is the baseline:
+   * if congregation collapses to ~1 there, the effect is the belief, not the
+   * terrain. Pure measurement — never read back into the sim.
+   */
+  beliefBehavior(): {
+    founderSites: { text: string; holders: number; near: number; congregation: number }[];
+    tragedySites: { text: string; holders: number; near: number; congregation: number }[];
+    avgFounderCongregation: number;
+    avgTragedyCongregation: number;
+  } {
+    const sites = new Map<string, { x: number; y: number; kind: string; text: string; holders: number }>();
+    const positions: { x: number; y: number }[] = [];
+    for (const id of this.agentIds) {
+      if (!this.agentBody(id)?.alive) continue;
+      const t = this.agentEntity(id)!.components['Transform2D'] as { x: number; y: number };
+      positions.push({ x: t.x, y: t.y });
+      const mind = this.minds.get(id);
+      if (!mind) continue;
+      for (const n of mind.narratives.all()) {
+        let s = sites.get(n.id);
+        if (!s) sites.set(n.id, (s = { x: n.x, y: n.y, kind: n.id.slice(0, n.id.indexOf(':')), text: n.text, holders: 0 }));
+        s.holders++;
+      }
+    }
+    const alive = positions.length || 1;
+    const R = 60;
+    const expected = (alive / (WORLD * WORLD)) * Math.PI * R * R; // uniform-density baseline within R
+    const measure = (s: { x: number; y: number; text: string; holders: number }) => {
+      let near = 0;
+      for (const p of positions) if ((p.x - s.x) ** 2 + (p.y - s.y) ** 2 <= R * R) near++;
+      return { text: s.text, holders: s.holders, near, congregation: Math.round((near / Math.max(0.01, expected)) * 100) / 100 };
+    };
+    const founderSites: { text: string; holders: number; near: number; congregation: number }[] = [];
+    const tragedySites: { text: string; holders: number; near: number; congregation: number }[] = [];
+    for (const s of sites.values()) {
+      if (s.holders < 8) continue; // only widely-shared stories count as belief
+      if (s.x === 0 && s.y === 0) continue; // location-less (LLM-retold) stories
+      const m = measure(s);
+      if (s.kind === 'home' || s.kind === 'slew') founderSites.push(m);
+      else if (s.kind === 'fell' || s.kind === 'attack') tragedySites.push(m);
+    }
+    founderSites.sort((a, b) => b.congregation - a.congregation);
+    tragedySites.sort((a, b) => a.congregation - b.congregation);
+    const avg = (arr: { congregation: number }[]) =>
+      arr.length ? Math.round((arr.reduce((x, m) => x + m.congregation, 0) / arr.length) * 100) / 100 : 0;
+    return {
+      founderSites: founderSites.slice(0, 12),
+      tragedySites: tragedySites.slice(0, 12),
+      avgFounderCongregation: avg(founderSites),
+      avgTragedyCongregation: avg(tragedySites),
+    };
   }
 
   /** Per-agent held+forming knowledge for the diffusion analyzer. */

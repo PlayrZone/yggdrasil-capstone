@@ -9,6 +9,9 @@
 export interface Narrative {
   id: string;
   text: string;
+  /** Where the event happened — so a story can draw beings to, or away from, a place. */
+  x: number;
+  y: number;
   firstTick: number;
   /** True if this being witnessed it; false if it was only retold to them. */
   firsthand: boolean;
@@ -67,13 +70,13 @@ export function mutateNarrative(text: string, h: number): string {
 export class NarrativeStore {
   private readonly stories = new Map<string, Narrative>();
 
-  remember(id: string, text: string, tick: number, firsthand: boolean): void {
+  remember(id: string, text: string, x: number, y: number, tick: number, firsthand: boolean): void {
     const existing = this.stories.get(id);
     if (existing) {
       if (firsthand) existing.firsthand = true; // hearing then witnessing upgrades it
       return;
     }
-    this.stories.set(id, { id, text, firstTick: tick, firsthand, retellable: 0 });
+    this.stories.set(id, { id, text, x, y, firstTick: tick, firsthand, retellable: 0 });
   }
 
   has(id: string): boolean {

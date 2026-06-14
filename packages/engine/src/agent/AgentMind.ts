@@ -26,6 +26,8 @@ export interface AgentMindOptions {
   consolidateInterval?: number;
   mind?: IMind;
   memoryHotCapacity?: number;
+  /** When false, held stories do NOT steer movement (the A/B control). Default true. */
+  mythBehavior?: boolean;
 }
 
 /**
@@ -46,6 +48,7 @@ export class AgentMind {
   private readonly mind: IMind;
   private readonly thinkInterval: number;
   private readonly consolidateInterval: number;
+  private readonly mythBehavior: boolean;
 
   constructor(
     readonly agentId: number,
@@ -56,6 +59,7 @@ export class AgentMind {
     this.mind = options.mind ?? new ReflexMind();
     this.thinkInterval = options.thinkInterval ?? 120;
     this.consolidateInterval = options.consolidateInterval ?? 300;
+    this.mythBehavior = options.mythBehavior ?? true;
   }
 
   /**
@@ -75,7 +79,10 @@ export class AgentMind {
     }
     // A story retold to you — you carry it now too (shared narrative → identity).
     if (stored.utterance?.speechAct === 'share-episode' && stored.utterance.narrativeId && stored.utterance.narrativeText) {
-      this.narratives.remember(stored.utterance.narrativeId, stored.utterance.narrativeText, stored.tick, false);
+      // The LLM share path carries no location; reflex retelling (coPresencePass)
+      // carries the real place. First write wins, so this only matters when an
+      // LLM hears a story it has no other source for.
+      this.narratives.remember(stored.utterance.narrativeId, stored.utterance.narrativeText, 0, 0, stored.tick, false);
     }
     if (stored.utterance?.speechAct === 'share-knowledge' && stored.utterance.rule && stored.toldBy) {
       const trust = (this.relationships.recordFor(stored.toldBy, stored.tick).trust ?? 50) / 100;
@@ -111,6 +118,24 @@ export class AgentMind {
 
   /** Assemble the think input — shared by the reflex and LLM paths. */
   buildThinkInput(snapshot: AgentSnapshot, worldView: WorldView, trigger: ThinkTrigger): ThinkInput {
+    // Belief → behaviour: the place of the being's oldest founder/hero story is
+    // a place it is drawn to; the places of tragedies it shuns.
+    let sacredPlace: { x: number; y: number } | undefined;
+    let oldest = Infinity;
+    const tragedyPlaces: { x: number; y: number }[] = [];
+    if (this.mythBehavior) {
+      for (const n of this.narratives.all()) {
+        const kind = n.id.slice(0, n.id.indexOf(':'));
+        if (kind === 'home' || kind === 'slew') {
+          if (n.firstTick < oldest) {
+            oldest = n.firstTick;
+            sacredPlace = { x: n.x, y: n.y };
+          }
+        } else if ((kind === 'fell' || kind === 'attack') && tragedyPlaces.length < 4) {
+          tragedyPlaces.push({ x: n.x, y: n.y });
+        }
+      }
+    }
     return {
       snapshot,
       recalledMemories: this.memory.retrieve({ tick: worldView.tick, limit: 24 }),
@@ -119,6 +144,8 @@ export class AgentMind {
       worldView,
       goals: this.goals,
       trigger,
+      ...(sacredPlace ? { sacredPlace } : {}),
+      ...(tragedyPlaces.length ? { tragedyPlaces } : {}),
     };
   }
 
