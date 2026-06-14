@@ -17,3 +17,6 @@ tools/_*.png
 
 # scratch / engineer session scripts
 packages/*/_*.mjs
+
+# scratch progress files
+packages/*/_*.txt
