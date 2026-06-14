@@ -32,7 +32,12 @@ export function parseMindOutput(raw: string): MindOutput {
   const utterances = parseUtterances(obj['utterances']);
   const rawName = obj['name'];
   const name = typeof rawName === 'string' && rawName.trim() ? rawName.trim().slice(0, 24) : undefined;
-  return name === undefined ? { goals, plan, utterances } : { goals, plan, utterances, name };
+  const rawThought = obj['thought'];
+  const thought = typeof rawThought === 'string' && rawThought.trim() ? rawThought.trim().slice(0, 600) : undefined;
+  const out: MindOutput = { goals, plan, utterances };
+  if (name !== undefined) out.name = name;
+  if (thought !== undefined) out.thought = thought;
+  return out;
 }
 
 /** Tolerate models that wrap JSON in prose or ```json fences. */

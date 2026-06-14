@@ -10,9 +10,11 @@
  * Doctrine reminders enforced by these shapes (yggdrasil_civilization_design V2):
  * - No role/job/class/faction/rank field exists anywhere. Ever.
  * - Genesis carries zero social identity and zero knowledge.
- * - MindOutput carries ONLY goals, plan, utterances — no belief updates,
- *   no relationship deltas, no reflections. Knowledge formation is the
- *   learning system's job.
+ * - MindOutput carries goals, plan, utterances, and (Phase 2) an OBSERVED-ONLY
+ *   `thought`. It still carries no belief updates and no relationship deltas:
+ *   `thought` is logged to the observatory and the civilization corpus but is
+ *   never read back into knowledge or relationships. Consciousness EXPRESSES;
+ *   the learning system alone FORMS belief.
  */
 
 // ─── Needs & traits ──────────────────────────────────────────────────────────
@@ -398,6 +400,26 @@ export interface RelationshipRecord {
   lastInteractionTick: number;
 }
 
+/** A story this being carries — its myths and history. Label-free. */
+export interface KnownStory {
+  text: string;
+  /** True if it witnessed the event; false if it was only told the story. */
+  firsthand: boolean;
+}
+
+/** Family this being knows it has. */
+export interface KinTie {
+  name: string;
+  relation: 'parent' | 'child';
+}
+
+/** A person this being knows, with how it FEELS — never a role label. */
+export interface KnownPerson {
+  name: string;
+  /** Felt, plain-language: "you trust them", "you have long kept their company". */
+  feeling: string;
+}
+
 export interface ThinkInput {
   snapshot: AgentSnapshot;
   recalledMemories: MemoryRecord[];
@@ -411,6 +433,13 @@ export interface ThinkInput {
   sacredPlace?: { x: number; y: number };
   /** Places a held tragedy makes this being shun. */
   tragedyPlaces?: { x: number; y: number }[];
+  // ─── Phase 2: the culture a conscious being is born into (LLM path only) ───
+  /** Stories/myths this being carries. */
+  stories?: KnownStory[];
+  /** Family this being knows it has. */
+  kin?: KinTie[];
+  /** People this being knows and how it feels about them (no role labels). */
+  social?: KnownPerson[];
 }
 
 /**
@@ -423,4 +452,11 @@ export interface MindOutput {
   utterances: Utterance[];
   /** A name the Gahallian chooses for itself (only meaningful while unnamed). */
   name?: string;
+  /**
+   * Phase 2: the being's own first-person thought — what it is thinking and WHY
+   * it chose this, in its own words (incl. how it reads a story or another
+   * being). OBSERVED ONLY: surfaced in the observatory and the civilization
+   * corpus, never read back into knowledge or relationships.
+   */
+  thought?: string;
 }

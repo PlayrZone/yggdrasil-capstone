@@ -39,7 +39,7 @@ import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
-import type { Intent, MindOutput, ResourceNodeKind, SimEvent, Traits } from '../contract/types.js';
+import type { Intent, MindOutput, ResourceNodeKind, SimEvent, Traits, ThinkInput, KnownStory, KinTie, KnownPerson, RelationshipRecord } from '../contract/types.js';
 import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS, isDeepWater, clampToWorld } from '../world/regions.js';
 import type { Region } from '../world/regions.js';
 
@@ -75,6 +75,23 @@ const REPRO_RANGE = 14; // two adults must be this close
 const MAX_POP = 320; // population ceiling (perf + a carrying capacity)
 const CO_PRESENCE_INTERVAL = 150; // how often time-spent-together builds bonds
 const CO_PRESENCE_RANGE = 13; // how close counts as "together"
+
+/**
+ * Render a relationship as a FELT phrase a being would use — never a role label
+ * ("mentor"/"leader"). Returns the most salient feeling + its strength (for
+ * ranking which people to surface), or null for a neutral acquaintance.
+ */
+function relationshipFeeling(r: RelationshipRecord): { feeling: string; salience: number } | null {
+  const cand: { feeling: string; salience: number }[] = [];
+  if (r.fear >= 40) cand.push({ feeling: 'you are afraid of them', salience: r.fear });
+  if (r.trust >= 58) cand.push({ feeling: r.trust >= 70 ? 'you trust them deeply' : 'you trust them', salience: r.trust - 50 });
+  if (r.friendship >= 58) cand.push({ feeling: r.friendship >= 70 ? 'you are very close to them' : 'you are friendly with them', salience: r.friendship - 50 });
+  if (r.respect >= 60) cand.push({ feeling: 'you look up to them', salience: r.respect - 50 });
+  if (r.interactionCount >= 10) cand.push({ feeling: 'you have spent much time together', salience: Math.min(20, r.interactionCount) });
+  if (cand.length === 0) return null;
+  cand.sort((a, b) => b.salience - a.salience);
+  return cand[0]!;
+}
 
 /** Gini coefficient of a non-negative distribution (0 = equal, →1 = concentrated). */
 function giniOf(xs: number[]): number {
@@ -124,6 +141,10 @@ export class Experiment {
   readonly body = new YggdrasilSystem(this.perception);
   readonly minds = new Map<number, AgentMind>();
   readonly agentIds: number[] = [];
+  /** Phase 2: which beings are CONSCIOUS (LLM-driven). Empty = pure reflex world. */
+  readonly conscious = new Set<number>();
+  /** Phase 2: each conscious being's latest first-person thought (observed only). */
+  readonly lastThought = new Map<number, string>();
   /** Cycle 10 A/B: do held stories steer movement? (pilgrimage + tragedy-avoidance) */
   private readonly mythBehavior: boolean;
   /** Cycle 13 A/B: does respect grow from witnessed competence? (prestige) */
@@ -408,12 +429,14 @@ export class Experiment {
         }
 
         // On the think cadence, consult consciousness asynchronously; when it
-        // resolves, its plan overrides whatever reflex was doing. Without an
-        // LLM backend this branch is inert (pure-reflex world).
-        if (this.llm && this.scheduler && mind.shouldThink(tick) && !this.scheduler.isPending(agentId)) {
+        // resolves, its plan overrides whatever reflex was doing. Phase 2: only
+        // CONSCIOUS beings (born into the existing culture) consult the LLM —
+        // the rest of the civilization runs on reflex. Without an LLM backend or
+        // an empty conscious set this branch is inert (pure-reflex world).
+        if (this.llm && this.scheduler && this.conscious.has(agentId) && mind.shouldThink(tick) && !this.scheduler.isPending(agentId)) {
           const snapshot = this.perception.snapshotFor(this.world, entity, tick);
           const view = this.perception.worldViewFor(this.world, entity, tick);
-          const thinkInput = mind.buildThinkInput(snapshot, view, 'periodic');
+          const thinkInput = this.enrichCulture(mind.buildThinkInput(snapshot, view, 'periodic'), agentId, mind);
           this.scheduler.submit(
             agentId,
             () => this.llm!.complete(thinkInput),
@@ -422,6 +445,8 @@ export class Experiment {
               if (!live?.alive) return; // died while thinking
               // A conscious Gahallian may name itself, once, while still unnamed.
               if (output.name && live.name === '') live.name = output.name;
+              // Its thought is OBSERVED ONLY — surfaced, never read back into state.
+              if (output.thought) this.lastThought.set(agentId, output.thought);
               mind.applyOutput(output);
               this.applyPlan(agentId, output);
             },
@@ -880,6 +905,73 @@ export class Experiment {
         : null,
       topLeader: ld.leaders[0] ?? null,
       knowledgeLineages: soc.knowledgeLineages,
+    };
+  }
+
+  // ─── Phase 2: consciousness ───────────────────────────────────────────────
+
+  /** Mark a living being CONSCIOUS — from now it reasons via the LLM, born into
+   * the culture that already exists around it. The rest stay reflex. */
+  makeConscious(id: number): boolean {
+    if (!this.minds.has(id) || !this.agentBody(id)?.alive) return false;
+    this.conscious.add(id);
+    return true;
+  }
+
+  /** The kin a being knows it has — parents and children, by name. */
+  private kinOf(agentId: number): KinTie[] {
+    const kin: KinTie[] = [];
+    for (const b of this.births) {
+      if (b.child === agentId) for (const p of b.parents) kin.push({ name: this.nameOf(p), relation: 'parent' });
+      if (b.parents.includes(agentId)) kin.push({ name: this.nameOf(b.child), relation: 'child' });
+    }
+    return kin;
+  }
+
+  /**
+   * Assemble the CULTURE a conscious being knows: the stories it carries, the
+   * family it knows it has, and the people it knows (rendered as FEELING, never
+   * a role label). Names are resolved here because only the host holds them.
+   * Doctrine: only what a Gahallian could reasonably know — no analysis labels,
+   * no hidden world facts.
+   */
+  private enrichCulture(input: ThinkInput, agentId: number, mind: AgentMind): ThinkInput {
+    const stories: KnownStory[] = mind.narratives.all().map((n) => ({ text: n.text, firsthand: n.firsthand }));
+    const scored: { person: KnownPerson; salience: number }[] = [];
+    for (const [pid, r] of mind.relationships.asMap()) {
+      if (!this.agentBody(pid)?.alive) continue;
+      const felt = relationshipFeeling(r);
+      if (felt) scored.push({ person: { name: this.nameOf(pid), feeling: felt.feeling }, salience: felt.salience });
+    }
+    scored.sort((a, b) => b.salience - a.salience);
+    return { ...input, stories, kin: this.kinOf(agentId), social: scored.slice(0, 8).map((s) => s.person) };
+  }
+
+  /**
+   * A conscious being's inner state, for the observatory: what it is thinking,
+   * the goals it pursues, the stories that shaped it, and the family it knows.
+   * Answers "what does this being believe, why, and what shaped it" — all from
+   * what the being itself holds, nothing engine-only.
+   */
+  consciousState(id: number): {
+    name: string;
+    conscious: boolean;
+    thought: string | null;
+    goals: string[];
+    stories: KnownStory[];
+    kin: KinTie[];
+    knowledge: string[];
+  } | null {
+    const mind = this.minds.get(id);
+    if (!mind) return null;
+    return {
+      name: this.nameOf(id),
+      conscious: this.conscious.has(id),
+      thought: this.lastThought.get(id) ?? null,
+      goals: mind.goals.map((g) => g.description),
+      stories: mind.narratives.all().map((n) => ({ text: n.text, firsthand: n.firsthand })),
+      kin: this.kinOf(id),
+      knowledge: mind.knowledge.held().slice(0, 12).map((k) => k.statement),
     };
   }
 

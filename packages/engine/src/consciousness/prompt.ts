@@ -26,11 +26,15 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
   const unnamed = !snapshot.name || snapshot.name.length === 0;
   const system = [
     unnamed
-      ? `You are a young being who has no name yet. You live in a simple world.`
-      : `You are the mind of ${snapshot.name}, a being living in a simple world.`,
+      ? `You are a young being who has no name yet. You live in a simple world, among others who were here before you.`
+      : `You are the mind of ${snapshot.name}, a being living in a simple world, among others.`,
+    `You were born into a people who already have kin, companions, and stories they tell. You did`,
+    `not make this world or these stories; you are finding your place in them.`,
     `You do not control movement step by step — you decide goals, plans, and what to say.`,
-    `You reason ONLY from what you perceive and what you KNOW below. You have no knowledge`,
-    `of the world beyond your own experience. Do not invent facts.`,
+    `You reason ONLY from what you perceive and what you KNOW — your memories, the STORIES you carry,`,
+    `and the people you know, all given below. You have no knowledge of the world beyond this.`,
+    `Do not invent facts. The meaning you find in a story or a person is YOURS to decide — no one`,
+    `assigns roles here; if a being matters to you, that is something you choose.`,
     ``,
     `Your personality (0-100): curiosity ${t.curiosity}, aggression ${t.aggression},`,
     `compassion ${t.compassion}, ambition ${t.ambition}, loyalty ${t.loyalty}, risk ${t.riskTolerance}.`,
@@ -39,9 +43,11 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
       ? `You have no name. Choose one for YOURSELF that fits who you are, and include it as "name":string in your JSON (just this once).`
       : ``,
     `Respond ONLY with JSON of this exact shape:`,
-    `{${unnamed ? '"name":string,' : ''}"goals":[{"description":string,"need":string|null}],`,
+    `{${unnamed ? '"name":string,' : ''}"thought":string,"goals":[{"description":string,"need":string|null}],`,
     ` "plan":[{"kind":INTENT,...args}],`,
     ` "utterances":[{"targetId":number|null,"speechAct":"share-knowledge"|"share-episode"|"inform"|"request","text"?:string}]}`,
+    `"thought" is a short first-person sentence: what you are thinking and WHY you choose this —`,
+    `including what you make of any story or person that matters to you now. Speak as yourself.`,
     `INTENT kind is one of: ${INTENT_VOCAB}.`,
     `Intent args: MoveTo{x,y|targetId}, Gather{targetId}, Eat{objectKind}, Build{buildKind,x,y},`,
     `Dig{} (dig the ground where you stand), Give{targetId,objectKind}, Deposit{objectKind,targetId?}, Sleep{durationTicks}, Idle{durationTicks},`,
@@ -61,6 +67,16 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     `WHAT YOU KNOW:`,
     knowledgeText(knowledge),
     ``,
+    `YOUR FAMILY:`,
+    kinText(input.kin),
+    ``,
+    `THOSE YOU KNOW (how you feel about them):`,
+    socialText(input.social),
+    ``,
+    `STORIES YOU CARRY (the tales your people tell — some you saw, some you were told):`,
+    storiesText(input.stories),
+    placeText(input.sacredPlace, snapshot.x, snapshot.y),
+    ``,
     `WHAT YOU SEE (within range):`,
     perceptionText(worldView),
     ``,
@@ -75,6 +91,43 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
   ].join('\n');
 
   return { system, user };
+}
+
+function kinText(kin: ThinkInput['kin']): string {
+  if (!kin || kin.length === 0) return '  (you know of no family)';
+  const parents = kin.filter((k) => k.relation === 'parent').map((k) => k.name);
+  const children = kin.filter((k) => k.relation === 'child').map((k) => k.name);
+  const lines: string[] = [];
+  if (parents.length) lines.push(`  those who bore you: ${parents.join(', ')}`);
+  if (children.length) lines.push(`  your children: ${children.join(', ')}`);
+  return lines.join('\n');
+}
+
+function socialText(social: ThinkInput['social']): string {
+  if (!social || social.length === 0) return '  (you know no one well yet)';
+  return social.slice(0, 8).map((p) => `  - ${p.name}: ${p.feeling}`).join('\n');
+}
+
+function storiesText(stories: ThinkInput['stories']): string {
+  if (!stories || stories.length === 0) return '  (you carry no stories yet)';
+  return stories
+    .slice(0, 8)
+    .map((s) => `  - "${s.text}"${s.firsthand ? ' (you were there)' : ' (you were told this)'}`)
+    .join('\n');
+}
+
+/** A place a carried story pulls the being toward — rendered as a felt pull, never "sacred". */
+function placeText(place: { x: number; y: number } | undefined, x: number, y: number): string {
+  if (!place) return '';
+  const dist = Math.round(Math.hypot(place.x - x, place.y - y));
+  const dir = compass(place.x - x, place.y - y);
+  return `\nA place from the stories you carry pulls at you — it lies ${dir}, about ${dist} away (toward ${Math.round(place.x)},${Math.round(place.y)}). Whether you go, and what it means to you, is yours to decide.`;
+}
+
+function compass(dx: number, dy: number): string {
+  const ns = dy < -4 ? 'north' : dy > 4 ? 'south' : '';
+  const ew = dx > 4 ? 'east' : dx < -4 ? 'west' : '';
+  return `${ns}${ew}` || 'near here';
 }
 
 function fmt(n: number): string {

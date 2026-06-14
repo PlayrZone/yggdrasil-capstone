@@ -30,3 +30,15 @@ export function reportsDir(): string {
   mkdirSync(dir, { recursive: true });
   return dir;
 }
+
+/**
+ * The Yggdrasil Civilization Corpus — Phase 2. Every conscious act (thought,
+ * speech, interpretation, mentorship/leadership/tradition moment) is appended
+ * here as JSONL. This is the eventual training data for a dedicated Yggdrasil
+ * model — collected first, trained only once enough civilization-scale data exists.
+ */
+export function corpusDir(): string {
+  const dir = join(yggHome(), 'corpus');
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
