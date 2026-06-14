@@ -157,3 +157,6 @@ export { analyzeSociety } from './analysis/society.js';
 export type { SocietySignals, SocietyReport } from './analysis/society.js';
 export { analyzeCulture } from './analysis/culture.js';
 export type { CultureReport, TribeBelief } from './analysis/culture.js';
+export { analyzeMyth } from './analysis/myth.js';
+export type { MythReport } from './analysis/myth.js';
+export { mutateNarrative } from './narrative/NarrativeStore.js';

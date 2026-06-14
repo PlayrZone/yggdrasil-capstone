@@ -28,6 +28,9 @@ import { analyzeSociety } from '../analysis/society.js';
 import type { SocietyReport } from '../analysis/society.js';
 import { analyzeCulture } from '../analysis/culture.js';
 import type { CultureReport } from '../analysis/culture.js';
+import { analyzeMyth } from '../analysis/myth.js';
+import type { MythReport } from '../analysis/myth.js';
+import { mutateNarrative } from '../narrative/NarrativeStore.js';
 import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
@@ -185,6 +188,10 @@ export class Experiment {
       case 'BuiltStructure':
         if (event.payload['buildKind'] !== 'shelter') return null;
         return { id: `home:${event.actorId}:${bucket}`, text: `${who} raised a home in the ${region}` };
+      case 'AttackedAgent': {
+        const victim = this.nameOf(event.targetIds[0] ?? 0);
+        return { id: `attack:${event.actorId}:${bucket}`, text: `${who} attacked ${victim} in the ${region}` };
+      }
       default:
         return null;
     }
@@ -426,13 +433,15 @@ export class Experiment {
         if (dx * dx + dy * dy <= r2) {
           a.mind.relationships.coPresence(b.id, tick);
           b.mind.relationships.coPresence(a.id, tick);
-          // Companions retell their stories — how a narrative becomes shared,
-          // and a shared narrative becomes a people's identity.
+          // Companions retell their stories — and a retelling can DISTORT
+          // (a detail lost, a beast made greater). Drift accumulates along the
+          // chain, so a memory drifts toward myth, and different tribes end up
+          // telling different versions of the same event.
           if ((tick + a.id + b.id) % 3 === 0) {
             const sa = a.mind.narratives.pickToRetell(tick);
-            if (sa) b.mind.narratives.remember(sa.id, sa.text, tick, false);
+            if (sa) b.mind.narratives.remember(sa.id, mutateNarrative(sa.text, (b.id * 31 + sa.text.length) >>> 0), tick, false);
             const sb = b.mind.narratives.pickToRetell(tick);
-            if (sb) a.mind.narratives.remember(sb.id, sb.text, tick, false);
+            if (sb) a.mind.narratives.remember(sb.id, mutateNarrative(sb.text, (a.id * 31 + sb.text.length) >>> 0), tick, false);
           }
         }
       }
@@ -701,6 +710,24 @@ export class Experiment {
       narratives.set(id, mind.narratives.all().map((n) => ({ id: n.id, text: n.text })));
     }
     return analyzeCulture(tribes, beliefs, narratives);
+  }
+
+  /**
+   * MYTH FORMATION: how stories distort as they spread — how many versions a
+   * story has fractured into, which beings became heroes or villains in the
+   * retelling, and whether tribes now tell the same event differently. Analysis.
+   */
+  myth(): MythReport {
+    const tribes = this.society().tribes;
+    const narratives = new Map<number, { id: string; text: string }[]>();
+    const names = new Map<number, string>();
+    for (const id of this.agentIds) {
+      names.set(id, this.nameOf(id));
+      if (!this.agentBody(id)?.alive) continue;
+      const mind = this.minds.get(id);
+      if (mind) narratives.set(id, mind.narratives.all().map((n) => ({ id: n.id, text: n.text })));
+    }
+    return analyzeMyth(narratives, tribes, names);
   }
 
   /** Per-agent held+forming knowledge for the diffusion analyzer. */

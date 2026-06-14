@@ -390,13 +390,15 @@ server.registerTool(
     const s = sessions.get(runId);
     if (!s) return text(`no live session for run ${runId}`);
     const c = s.exp.culture();
+    const m = s.exp.myth();
     return json({
-      detections: c.labels,
+      detections: [...c.labels, ...m.labels],
       divergence: c.divergence,
       mostDivergent: c.mostDivergent,
       tribes: c.tribes.slice(0, 10),
       sharedStories: c.tribeStories.filter((t) => t.stories.length).slice(0, 8),
       topStory: c.topStory,
+      myth: { drifted: m.driftedStories, total: m.totalStories, mostVaried: m.mostVaried, heroes: m.heroes.slice(0, 5), villains: m.villains.slice(0, 5), tribeVersions: m.tribeVersions },
     });
   },
 );

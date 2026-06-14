@@ -1,12 +1,12 @@
 import React from 'react';
-import type { CultureReport } from '@yggdrasil/engine';
+import type { CultureReport, MythReport } from '@yggdrasil/engine';
 
 /**
  * Culture: not how MUCH a tribe knows, but WHAT — its shared beliefs, its
  * superstitions, and its stories. Two tribes in one world, believing different
  * things. Analysis only; the simulation never contains a "culture".
  */
-export function CultureView({ culture }: { culture: CultureReport | null }): React.ReactElement {
+export function CultureView({ culture, myth }: { culture: CultureReport | null; myth: MythReport | null }): React.ReactElement {
   if (!culture) {
     return <div className="analysis"><div className="aempty">Culture needs tribes that have lived and learned a while — run the world, then return.</div></div>;
   }
@@ -66,6 +66,42 @@ export function CultureView({ culture }: { culture: CultureReport | null }): Rea
           </ul>
         </section>
       </div>
+
+      {myth && (
+        <>
+          <section className="detections" style={{ marginTop: 16 }}>
+            <label>Myth formation — how stories distort as they spread</label>
+            {myth.labels.length ? <ul>{myth.labels.map((l, i) => <li key={i}>{l}</li>)}</ul> : <p className="empty">Stories are still told faithfully.</p>}
+          </section>
+          <div className="acols">
+            <section className="abeliefs">
+              <label>One event, many versions {myth.mostVaried ? `(${myth.mostVaried.variants})` : ''}</label>
+              <ul className="culture-list">
+                {myth.mostVaried?.examples.map((e, i) => <li key={i}>“{e}”</li>)}
+                {!myth.mostVaried && <li>no drift yet</li>}
+              </ul>
+              {myth.tribeVersions && (
+                <>
+                  <label style={{ marginTop: 12 }}>Tribes remember it differently</label>
+                  <ul className="culture-list">{myth.tribeVersions.versions.map((v, i) => <li key={i}><b>tribe of {v.tribeSize}:</b> “{v.text}”</li>)}</ul>
+                </>
+              )}
+            </section>
+            <section className="aarche">
+              <label>Heroes (deeds retold)</label>
+              <ul>
+                {myth.heroes.slice(0, 5).map((h, i) => <li key={i}><span className="aname">{h.name}</span><span className="anum">{h.mentions}</span></li>)}
+                {myth.heroes.length === 0 && <li className="empty">none yet</li>}
+              </ul>
+              <label style={{ marginTop: 12 }}>Villains (attacks remembered)</label>
+              <ul>
+                {myth.villains.slice(0, 5).map((v, i) => <li key={i}><span className="aname" style={{ color: '#e0524d' }}>{v.name}</span><span className="anum">{v.mentions}</span></li>)}
+                {myth.villains.length === 0 && <li className="empty">none yet</li>}
+              </ul>
+            </section>
+          </div>
+        </>
+      )}
     </div>
   );
 }

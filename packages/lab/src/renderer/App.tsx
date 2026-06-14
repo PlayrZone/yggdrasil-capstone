@@ -8,7 +8,7 @@ import { ReportsView } from './ReportsView.js';
 import { AnalysisView, type AnalysisSnapshot } from './AnalysisView.js';
 import { SocietyView } from './SocietyView.js';
 import { CultureView } from './CultureView.js';
-import type { SocietyReport, CultureReport } from '@yggdrasil/engine';
+import type { SocietyReport, CultureReport, MythReport } from '@yggdrasil/engine';
 
 type Tab = 'world' | 'activity' | 'analysis' | 'society' | 'culture' | 'reports';
 
@@ -88,6 +88,7 @@ export function App(): React.ReactElement {
   const [analysis, setAnalysis] = useState<AnalysisSnapshot | null>(null);
   const [society, setSociety] = useState<SocietyReport | null>(null);
   const [culture, setCulture] = useState<CultureReport | null>(null);
+  const [myth, setMyth] = useState<MythReport | null>(null);
   const selectedRef = useRef<number | null>(null);
   const [selected, setSelected] = useState<ReturnType<Experiment['agentDetail']>>(null);
 
@@ -252,7 +253,10 @@ export function App(): React.ReactElement {
     if (tab !== 'culture') return;
     const compute = (): void => {
       const exp = clockRef.current?.exp;
-      if (exp) setCulture(exp.culture());
+      if (exp) {
+        setCulture(exp.culture());
+        setMyth(exp.myth());
+      }
     };
     compute();
     const id = setInterval(compute, 3500);
@@ -410,7 +414,7 @@ export function App(): React.ReactElement {
       {tab === 'activity' && <ActivityView />}
       {tab === 'analysis' && <AnalysisView snap={analysis} />}
       {tab === 'society' && <SocietyView society={society} />}
-      {tab === 'culture' && <CultureView culture={culture} />}
+      {tab === 'culture' && <CultureView culture={culture} myth={myth} />}
       {tab === 'reports' && <ReportsView />}
     </div>
   );

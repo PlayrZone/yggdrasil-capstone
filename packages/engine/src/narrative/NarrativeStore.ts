@@ -15,6 +15,34 @@ export interface Narrative {
   retellable: number; // ticks before it can be retold again (rate-limit per teller)
 }
 
+// Believable embellishments — what a teller adds to make a tale grander.
+const EMBELLISH: [string, string][] = [
+  ['a bear', 'a great bear'],
+  ['a wolf', 'a fierce wolf'],
+  ['a crocodile', 'a monstrous crocodile'],
+  ['a beast', 'a terrible beast'],
+  ['slew', 'single-handedly slew'],
+  ['raised a home', 'raised a great hall'],
+  ['fell to violence', 'was struck down in battle'],
+  ['attacked', 'turned on'],
+];
+
+/**
+ * How a story changes in one retelling. Most retellings are faithful (a story
+ * isn't noise); a minority lose a detail (the place is forgotten) or gain an
+ * embellishment (the bear becomes a great bear). Deterministic in `h`, so a
+ * given teller→listener pair always drifts the same way — but because the
+ * teller's text already carries prior drift, distortion ACCUMULATES along a
+ * chain of retellings. That accumulation is how a memory becomes a myth.
+ */
+export function mutateNarrative(text: string, h: number): string {
+  const r = h % 100;
+  if (r < 72) return text; // faithfully retold
+  if (r < 86) return text.replace(/ in the \w+$/, ''); // a detail is lost (the place)
+  for (const [from, to] of EMBELLISH) if (text.includes(from)) return text.replace(from, to); // embellished
+  return text.includes('they say') ? text : `${text}, they say`;
+}
+
 export class NarrativeStore {
   private readonly stories = new Map<string, Narrative>();
 
