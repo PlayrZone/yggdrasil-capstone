@@ -115,6 +115,21 @@ export class ReflexMind implements IMind {
       if (friend && snapshot.traits.loyalty >= 35) {
         goals.push(goal(input, 'stay near kin & friends', undefined));
         plan.push({ kind: 'MoveTo', x: friend.x, y: friend.y });
+        // DIRECTED TEACHING: pass knowledge to your bonded individual. Social
+        // gravity keeps you together across many meetings, and the belief
+        // taught rotates through your whole repertoire — so over time a child
+        // or close friend inherits what you know. This is how knowledge flows
+        // down a relationship (mentorship) and a family line (lineage).
+        if (snapshot.traits.compassion >= 45 && knowledge.length > 0) {
+          const teach = knowledge[Math.floor(input.worldView.tick / 600) % knowledge.length]!;
+          utterances.push({
+            targetId: friend.id,
+            speechAct: 'share-knowledge',
+            rule: teach.rule,
+            ruleConfidence: teach.confidence,
+            text: phraseKnowledge(teach.statement, teach.confidence),
+          });
+        }
         plan.push({ kind: 'Idle', durationTicks: 50 });
       } else {
         // Curiosity-scaled wandering keeps experience (and learning) flowing.

@@ -25,6 +25,8 @@ export interface SocietySignals {
   specialists: { id: number; archetype: string; dominance: number }[];
   /** A high-trust edge: `holder` strongly trusts `toward`. */
   trust: { holder: number; toward: number }[];
+  /** Held-belief count per being (for per-tribe knowledge levels). */
+  knowledge: { id: number; count: number }[];
 }
 
 export interface SocietyReport {
@@ -46,6 +48,10 @@ export interface SocietyReport {
   trustedSources: { id: number; name: string; trusters: number }[];
   /** Count of teachings that flowed PARENT → CHILD — knowledge lineages. */
   knowledgeLineages: number;
+  /** Repeated teacher→SAME-student pairs — actual mentor–student bonds. */
+  mentorBonds: { teacher: number; teacherName: string; student: number; studentName: string; lessons: number }[];
+  /** Per-tribe average knowledge — do some tribes become more knowledgeable? */
+  tribeKnowledge: { size: number; avgKnowledge: number }[];
   /** Human-readable "possible …" detections (never assertions). */
   labels: string[];
 }
@@ -198,6 +204,32 @@ export function analyzeSociety(s: SocietySignals): SocietyReport {
   let knowledgeLineages = 0;
   for (const { teacher, student } of s.teaching) if (kinPairs.has(`${teacher}>${student}`)) knowledgeLineages++;
 
+  // ── Mentor–student bonds (the SAME teacher teaching the SAME student) ─────
+  const pairCount = new Map<string, number>();
+  for (const { teacher, student } of s.teaching) {
+    const key = `${teacher}>${student}`;
+    pairCount.set(key, (pairCount.get(key) ?? 0) + 1);
+  }
+  const mentorBonds = [...pairCount.entries()]
+    .filter(([, n]) => n >= 3)
+    .map(([key, lessons]) => {
+      const [teacher, student] = key.split('>').map(Number) as [number, number];
+      return { teacher, teacherName: nm(teacher), student, studentName: nm(student), lessons };
+    })
+    .filter((m) => aliveSet.has(m.teacher) && aliveSet.has(m.student))
+    .sort((a, b) => b.lessons - a.lessons)
+    .slice(0, 12);
+
+  // ── Per-tribe knowledge (do some tribes become more knowledgeable?) ───────
+  const kCount = new Map(s.knowledge.map((k) => [k.id, k.count]));
+  const tribeKnowledge = tribes
+    .map((t) => {
+      const counts = t.members.map((id) => kCount.get(id) ?? 0);
+      const avg = counts.length ? counts.reduce((a, b) => a + b, 0) / counts.length : 0;
+      return { size: t.size, avgKnowledge: Math.round(avg * 10) / 10 };
+    })
+    .sort((a, b) => b.avgKnowledge - a.avgKnowledge);
+
   // ── Detections (never assertions) ────────────────────────────────────────
   const labels: string[] = [];
   if (mentors[0]) labels.push(`Possible mentor: ${mentors[0].name} taught ${mentors[0].lessons} lessons to ${mentors[0].students} others`);
@@ -208,6 +240,12 @@ export function analyzeSociety(s: SocietySignals): SocietyReport {
   if (propertyHolders[0]) labels.push(`Possible resource control: ${propertyHolders[0].name} keeps ${propertyHolders[0].caches} caches`);
   if (trustedSources[0]) labels.push(`Possible trusted source: ${trustedSources[0].name} is trusted by ${trustedSources[0].trusters} others`);
   if (knowledgeLineages > 0) labels.push(`Knowledge lineages: ${knowledgeLineages} teachings passed down a family line`);
+  if (mentorBonds[0]) labels.push(`Possible mentorship: ${mentorBonds[0].teacherName} taught ${mentorBonds[0].studentName} ${mentorBonds[0].lessons} times`);
+  if (tribeKnowledge.length >= 2) {
+    const hi = tribeKnowledge[0]!;
+    const lo = tribeKnowledge[tribeKnowledge.length - 1]!;
+    if (hi.avgKnowledge > lo.avgKnowledge * 1.3) labels.push(`Knowledge clusters by tribe: a tribe of ${hi.size} averages ${hi.avgKnowledge} beliefs vs ${lo.avgKnowledge} elsewhere`);
+  }
 
-  return { influence, mentors, innovators, families, tribes, propertyHolders, specialists, trustedSources, knowledgeLineages, labels };
+  return { influence, mentors, innovators, families, tribes, propertyHolders, specialists, trustedSources, knowledgeLineages, mentorBonds, tribeKnowledge, labels };
 }

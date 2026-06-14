@@ -10,6 +10,7 @@ const base: SocietySignals = {
   caches: [],
   specialists: [],
   trust: [],
+  knowledge: [],
 };
 
 describe('society analysis (the influence layer)', () => {
@@ -82,6 +83,22 @@ describe('society analysis (the influence layer)', () => {
     expect(s.trustedSources[0]?.id).toBe(1);
     expect(s.trustedSources[0]?.trusters).toBe(3);
     expect(s.knowledgeLineages).toBe(1);
+  });
+
+  it('detects a mentor–student bond from repeated teaching of the same student', () => {
+    const s = analyzeSociety({
+      ...base,
+      teaching: [
+        { teacher: 1, student: 2 },
+        { teacher: 1, student: 2 },
+        { teacher: 1, student: 2 }, // 3 lessons to the SAME student = a bond
+        { teacher: 1, student: 3 }, // one-off — not a bond
+      ],
+    });
+    expect(s.mentorBonds).toHaveLength(1);
+    expect(s.mentorBonds[0]?.teacher).toBe(1);
+    expect(s.mentorBonds[0]?.student).toBe(2);
+    expect(s.mentorBonds[0]?.lessons).toBe(3);
   });
 
   it('never invents institutions when there is no signal', () => {

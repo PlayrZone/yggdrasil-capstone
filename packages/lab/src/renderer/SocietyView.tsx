@@ -10,7 +10,7 @@ export function SocietyView({ society }: { society: SocietyReport | null }): Rea
   if (!society) {
     return <div className="analysis"><div className="aempty">Run the world a while — institutions need repeated social interaction to form before they can be detected.</div></div>;
   }
-  const { influence, mentors, innovators, families, tribes, propertyHolders, specialists, trustedSources, knowledgeLineages, labels } = society;
+  const { influence, mentors, innovators, families, tribes, propertyHolders, specialists, trustedSources, knowledgeLineages, mentorBonds, tribeKnowledge, labels } = society;
 
   return (
     <div className="analysis society">
@@ -38,10 +38,16 @@ export function SocietyView({ society }: { society: SocietyReport | null }): Rea
         </section>
 
         <section className="aarche">
-          <label>Possible mentors (taught repeatedly)</label>
+          <label>Mentor–student bonds (taught the SAME student repeatedly)</label>
           <ul>
-            {mentors.map((m) => <li key={m.id}><span className="aname">{m.name}</span><span className="anum">{m.lessons}L · {m.students}s</span></li>)}
-            {mentors.length === 0 && <li className="empty">none yet</li>}
+            {mentorBonds.slice(0, 6).map((m, i) => <li key={i}><span className="aname">{m.teacherName} → {m.studentName}</span><span className="anum">{m.lessons}×</span></li>)}
+            {mentorBonds.length === 0 && <li className="empty">none yet — teaching not yet directed</li>}
+          </ul>
+
+          <label style={{ marginTop: 14 }}>Tribe knowledge (avg beliefs per tribe)</label>
+          <ul>
+            {tribeKnowledge.slice(0, 6).map((t, i) => <li key={i}><span className="aname">tribe of {t.size}</span><span className="anum">{t.avgKnowledge}</span></li>)}
+            {tribeKnowledge.length === 0 && <li className="empty">no tribes yet</li>}
           </ul>
 
           <label style={{ marginTop: 14 }}>Possible innovators (discoveries that spread)</label>

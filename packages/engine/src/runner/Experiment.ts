@@ -635,11 +635,13 @@ export class Experiment {
     }
     const caches = this.structures().filter((s) => s.kind === 'container').map((s) => ({ owner: s.builtBy }));
     const specialists: { id: number; archetype: string; dominance: number }[] = [];
+    const knowledge: { id: number; count: number }[] = [];
     for (const a of alive) {
       const r = this.archetypeOf(a.id);
       if (r && r.sampleSize > 0) specialists.push({ id: a.id, archetype: r.archetype, dominance: r.dominance });
+      knowledge.push({ id: a.id, count: this.minds.get(a.id)?.knowledge.held().length ?? 0 });
     }
-    return analyzeSociety({ alive, teaching, origination, bonds, kin, caches, specialists, trust });
+    return analyzeSociety({ alive, teaching, origination, bonds, kin, caches, specialists, trust, knowledge });
   }
 
   /** Per-agent held+forming knowledge for the diffusion analyzer. */

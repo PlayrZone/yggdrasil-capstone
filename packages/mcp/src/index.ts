@@ -370,6 +370,8 @@ server.registerTool(
       tribes: r.tribes.map((t) => t.size),
       trustedSources: r.trustedSources.slice(0, 6),
       knowledgeLineages: r.knowledgeLineages,
+      mentorBonds: r.mentorBonds.slice(0, 8),
+      tribeKnowledge: r.tribeKnowledge.slice(0, 8),
       propertyHolders: r.propertyHolders.slice(0, 6),
       specialists: r.specialists.slice(0, 8),
     });
