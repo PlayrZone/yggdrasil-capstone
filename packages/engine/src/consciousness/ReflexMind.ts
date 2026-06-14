@@ -279,11 +279,16 @@ function nearestAgent(input: ThinkInput) {
   return nearest(input, input.worldView.agents);
 }
 
-/** How much this being is DRAWN to another — friendship + trust, less fear. */
+/**
+ * How much this being is DRAWN to another — friendship + trust, less fear, plus
+ * RESPECT (prestige). The respect term is what lets a few competent individuals
+ * accrue followers and emerge as de-facto leaders; when respect never grows
+ * (the Cycle 13 control) it sits at neutral and contributes nothing.
+ */
 function affinityToward(input: ThinkInput, id: number): number {
   const r = input.relationships.get(id);
   if (!r) return 0;
-  return r.friendship - 50 + (r.trust - 50) * 0.5 - r.fear;
+  return r.friendship - 50 + (r.trust - 50) * 0.5 - r.fear + (r.respect - 50) * 0.6;
 }
 
 /**

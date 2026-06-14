@@ -60,6 +60,9 @@ export interface ExperimentOptions {
   mindBackend?: IMindBackend;
   /** A/B control for Cycle 10: when false, held stories don't steer movement. Default true. */
   mythBehavior?: boolean;
+  /** A/B control for Cycle 13: when false, respect doesn't grow from witnessed
+   * competence, so no prestige hierarchy can form. Default true. */
+  leadership?: boolean;
 }
 
 const EVENT_LOG_CAP = 400;
@@ -72,6 +75,18 @@ const REPRO_RANGE = 14; // two adults must be this close
 const MAX_POP = 320; // population ceiling (perf + a carrying capacity)
 const CO_PRESENCE_INTERVAL = 150; // how often time-spent-together builds bonds
 const CO_PRESENCE_RANGE = 13; // how close counts as "together"
+
+/** Gini coefficient of a non-negative distribution (0 = equal, →1 = concentrated). */
+function giniOf(xs: number[]): number {
+  if (xs.length === 0) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const n = s.length;
+  const sum = s.reduce((a, b) => a + b, 0);
+  if (sum === 0) return 0;
+  let cum = 0;
+  for (let i = 0; i < n; i++) cum += (i + 1) * s[i]!;
+  return (2 * cum) / (n * sum) - (n + 1) / n;
+}
 
 /** Cognition parameters derived from a being's personality (inherited by kids). */
 function mindOptions(tr: Traits): { thinkInterval: number; consolidateInterval: number; memoryHotCapacity: number } {
@@ -111,6 +126,8 @@ export class Experiment {
   readonly agentIds: number[] = [];
   /** Cycle 10 A/B: do held stories steer movement? (pilgrimage + tragedy-avoidance) */
   private readonly mythBehavior: boolean;
+  /** Cycle 13 A/B: does respect grow from witnessed competence? (prestige) */
+  private readonly leadershipOn: boolean;
 
   tick = 0;
   eventCount = 0;
@@ -136,6 +153,7 @@ export class Experiment {
     const { seed, agentCount = 100, mindBackend } = options;
     this.seed = seed;
     this.mythBehavior = options.mythBehavior ?? true;
+    this.leadershipOn = options.leadership ?? true;
     if (mindBackend) {
       this.cognitionLog = new CognitionLog();
       this.llm = new LlmMind(mindBackend, {
@@ -171,6 +189,14 @@ export class Experiment {
         if (memory) mind.observe(memory);
         // A memorable event becomes a STORY the witness carries.
         if (story) mind.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
+        // PRESTIGE (Cycle 13): seeing a being do something competent — slay a
+        // predator, raise a shelter — earns it respect. Nothing assigns a leader;
+        // respect simply accrues to the visibly capable, and (via the social pull)
+        // others come to orbit them. Respect decays, so prestige must be re-earned.
+        if (this.leadershipOn && witnessId !== event.actorId) {
+          if (event.type === 'KilledPredator') mind.relationships.gainRespect(event.actorId, 5, event.tick);
+          else if (event.type === 'BuiltStructure' && event.payload['buildKind'] === 'shelter') mind.relationships.gainRespect(event.actorId, 3, event.tick);
+        }
       }
       if (story) this.minds.get(event.actorId)?.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
     });
@@ -774,6 +800,55 @@ export class Experiment {
       }
     }
     return analyzeSacredPlaces([...sites.values()]);
+  }
+
+  /**
+   * CYCLE 13 — Leadership. Nobody is assigned a role. But if respect accrues to
+   * the visibly competent and beings are drawn to the respected, a few should end
+   * up with many "followers" — beings whose strongest social pull points at them.
+   * For each living being we find the individual it is most drawn to (latent, by
+   * relationship — friendship/trust/respect/fear, ignoring sight), tally inbound
+   * followers, and measure how CONCENTRATED followership is (a flat distribution =
+   * no leaders; a skewed one = emergent leaders). Analysis only — never read back.
+   */
+  leadership(): {
+    leaders: { name: string; followers: number }[];
+    maxFollowers: number;
+    leaderCount: number;
+    gini: number;
+    followerShareTop: number;
+  } {
+    const aliveIds = this.agentIds.filter((id) => this.agentBody(id)?.alive);
+    const aliveSet = new Set(aliveIds);
+    const followers = new Map<number, number>();
+    for (const i of aliveIds) {
+      const mind = this.minds.get(i);
+      if (!mind) continue;
+      let best = 0; // require a positive pull
+      let bestId = -1;
+      for (const [pid, r] of mind.relationships.asMap()) {
+        if (pid === i || !aliveSet.has(pid)) continue;
+        const aff = r.friendship - 50 + (r.trust - 50) * 0.5 - r.fear + (r.respect - 50) * 0.6;
+        if (aff > best) {
+          best = aff;
+          bestId = pid;
+        }
+      }
+      if (bestId >= 0) followers.set(bestId, (followers.get(bestId) ?? 0) + 1);
+    }
+    const list = [...followers.entries()]
+      .map(([id, f]) => ({ name: this.nameOf(id), followers: f }))
+      .sort((a, b) => b.followers - a.followers);
+    const counts = aliveIds.map((id) => followers.get(id) ?? 0);
+    const totalLinks = counts.reduce((a, b) => a + b, 0) || 1;
+    const maxFollowers = list.length ? list[0]!.followers : 0;
+    return {
+      leaders: list.slice(0, 8),
+      maxFollowers,
+      leaderCount: list.filter((l) => l.followers >= 5).length,
+      gini: Math.round(giniOf(counts) * 1000) / 1000,
+      followerShareTop: Math.round((maxFollowers / totalLinks) * 1000) / 1000,
+    };
   }
 
   /**

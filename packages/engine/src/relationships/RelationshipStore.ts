@@ -68,6 +68,17 @@ export class RelationshipStore {
     r.lastInteractionTick = tick;
   }
 
+  /**
+   * Prestige (Cycle 13): respect earned by witnessing someone's competence. Not
+   * an interaction with them — you can respect someone from afar — so this does
+   * NOT touch interactionCount; respect decays toward neutral like everything
+   * else, so prestige fades unless re-earned.
+   */
+  gainRespect(partnerId: number, amount: number, tick: number): void {
+    const r = this.recordFor(partnerId, tick);
+    r.respect = clamp(r.respect + amount);
+  }
+
   /** Call on a coarse cadence; relationships need maintenance. */
   decay(tick: number): void {
     for (const r of this.pairs.values()) {
