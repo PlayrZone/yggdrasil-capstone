@@ -159,4 +159,6 @@ export { analyzeCulture } from './analysis/culture.js';
 export type { CultureReport, TribeBelief } from './analysis/culture.js';
 export { analyzeMyth } from './analysis/myth.js';
 export type { MythReport } from './analysis/myth.js';
+export { analyzeSacredPlaces } from './analysis/sacredPlaces.js';
+export type { SacredPlace, SacredPlacesReport, StorySite } from './analysis/sacredPlaces.js';
 export { mutateNarrative } from './narrative/NarrativeStore.js';

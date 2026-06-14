@@ -32,6 +32,8 @@ import { analyzeCulture } from '../analysis/culture.js';
 import type { CultureReport } from '../analysis/culture.js';
 import { analyzeMyth } from '../analysis/myth.js';
 import type { MythReport } from '../analysis/myth.js';
+import { analyzeSacredPlaces } from '../analysis/sacredPlaces.js';
+import type { SacredPlacesReport } from '../analysis/sacredPlaces.js';
 import { mutateNarrative } from '../narrative/NarrativeStore.js';
 import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
@@ -751,6 +753,27 @@ export class Experiment {
       if (mind) narratives.set(id, mind.narratives.all().map((n) => ({ id: n.id, text: n.text })));
     }
     return analyzeMyth(narratives, tribes, names, this.tick);
+  }
+
+  /**
+   * CYCLE 12 — Sacred places. Where do many distinct widely-held stories cluster
+   * at one LOCATION, making it multivalent (a founding AND a slaying AND a death
+   * at one spot)? Aggregates each story's living-holder count + place, then finds
+   * spatial clusters of ≥2 distinct stories. Analysis only — never read back.
+   */
+  sacredPlaces(): SacredPlacesReport {
+    const sites = new Map<string, { x: number; y: number; kind: string; text: string; holders: number }>();
+    for (const id of this.agentIds) {
+      if (!this.agentBody(id)?.alive) continue;
+      const mind = this.minds.get(id);
+      if (!mind) continue;
+      for (const n of mind.narratives.all()) {
+        let s = sites.get(n.id);
+        if (!s) sites.set(n.id, (s = { x: n.x, y: n.y, kind: n.id.slice(0, n.id.indexOf(':')), text: n.text, holders: 0 }));
+        s.holders++;
+      }
+    }
+    return analyzeSacredPlaces([...sites.values()]);
   }
 
   /**
