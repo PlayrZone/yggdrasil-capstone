@@ -15,31 +15,52 @@ export interface Narrative {
   retellable: number; // ticks before it can be retold again (rate-limit per teller)
 }
 
-// Believable embellishments — what a teller adds to make a tale grander.
-const EMBELLISH: [string, string][] = [
-  ['a bear', 'a great bear'],
-  ['a wolf', 'a fierce wolf'],
-  ['a crocodile', 'a monstrous crocodile'],
-  ['a beast', 'a terrible beast'],
-  ['slew', 'single-handedly slew'],
+/**
+ * The ESCALATION LADDER. Each step is a single believable exaggeration; applied
+ * one rung at a time over many retellings, a humble event climbs into legend:
+ *   raised a home → a great hall → founded a settlement → founded our people →
+ *   was chosen by the spirits.
+ * A slaying and a death have their own ladders. This is how, across generations,
+ * "Karendo raised a home" becomes "Karendo was chosen by the spirits."
+ */
+const LADDER: [string, string][] = [
+  // home → founder myth
   ['raised a home', 'raised a great hall'],
-  ['fell to violence', 'was struck down in battle'],
+  ['raised a great hall', 'founded a settlement'],
+  ['founded a settlement', 'founded our people'],
+  ['founded our people', 'was chosen by the spirits to lead us'],
+  // slaying → champion myth
+  ['slew a bear', 'slew a great bear'],
+  ['slew a wolf', 'slew a fierce wolf'],
+  ['slew a crocodile', 'slew a monstrous crocodile'],
+  ['slew a beast', 'slew a terrible beast'],
+  ['slew a great bear', 'slew the dread beast of the wild'],
+  ['slew a fierce wolf', 'slew the dread beast of the wild'],
+  ['slew a monstrous crocodile', 'slew the dread beast of the wild'],
+  ['slew a terrible beast', 'slew the dread beast of the wild'],
+  ['slew the dread beast of the wild', 'was our champion against the wild'],
+  ['was our champion against the wild', 'was sent by the spirits to shield us'],
+  // death → legend of loss
+  ['fell to violence', 'was lost to us'],
+  ['was lost to us', 'was taken by the darkness'],
+  // attack → villain myth
   ['attacked', 'turned on'],
+  ['turned on', 'betrayed'],
 ];
 
 /**
  * How a story changes in one retelling. Most retellings are faithful (a story
- * isn't noise); a minority lose a detail (the place is forgotten) or gain an
- * embellishment (the bear becomes a great bear). Deterministic in `h`, so a
- * given teller→listener pair always drifts the same way — but because the
- * teller's text already carries prior drift, distortion ACCUMULATES along a
- * chain of retellings. That accumulation is how a memory becomes a myth.
+ * isn't noise); a minority lose a detail (the place is forgotten) or climb ONE
+ * rung of the escalation ladder (the home becomes a great hall). Deterministic
+ * in `h`. Because the teller passes their ALREADY-drifted text, distortion
+ * ACCUMULATES — over hundreds of retellings across generations a memory becomes
+ * a myth, and a myth becomes a legend.
  */
 export function mutateNarrative(text: string, h: number): string {
   const r = h % 100;
-  if (r < 72) return text; // faithfully retold
-  if (r < 86) return text.replace(/ in the \w+$/, ''); // a detail is lost (the place)
-  for (const [from, to] of EMBELLISH) if (text.includes(from)) return text.replace(from, to); // embellished
+  if (r < 75) return text; // faithfully retold
+  if (r < 87) return text.replace(/ in the \w+$/, ''); // a detail is lost (the place)
+  for (const [from, to] of LADDER) if (text.includes(from)) return text.replace(from, to); // one rung grander
   return text.includes('they say') ? text : `${text}, they say`;
 }
 

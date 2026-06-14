@@ -727,7 +727,7 @@ export class Experiment {
       const mind = this.minds.get(id);
       if (mind) narratives.set(id, mind.narratives.all().map((n) => ({ id: n.id, text: n.text })));
     }
-    return analyzeMyth(narratives, tribes, names);
+    return analyzeMyth(narratives, tribes, names, this.tick);
   }
 
   /** Per-agent held+forming knowledge for the diffusion analyzer. */

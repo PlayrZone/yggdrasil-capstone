@@ -19,7 +19,20 @@ export interface MythReport {
   villains: { name: string; mentions: number }[];
   /** One event two tribes remember differently — same id, different words. */
   tribeVersions: { versions: { tribeSize: number; text: string }[] } | null;
+  /** The longest-surviving story — how many ticks since the event, + its current words. */
+  oldestSurviving: { ageTicks: number; holders: number; text: string; grandeur: number } | null;
+  /** The story that has climbed highest up the legend ladder. */
+  grandest: { grandeur: number; text: string; ageTicks: number } | null;
   labels: string[];
+}
+
+/** 0 = a plain memory; 4 = full legend (chosen by spirits / taken by darkness). */
+export function grandeur(text: string): number {
+  if (/chosen by the spirits|sent by the spirits|taken by the darkness/.test(text)) return 4;
+  if (/founded our people|our champion|betrayed/.test(text)) return 3;
+  if (/founded a settlement|dread beast|was lost to us/.test(text)) return 2;
+  if (/great hall|great bear|fierce wolf|monstrous crocodile|terrible beast|turned on/.test(text)) return 1;
+  return 0;
 }
 
 interface NarrativeRef {
@@ -37,6 +50,7 @@ export function analyzeMyth(
   narratives: Map<number, NarrativeRef[]>,
   tribes: { members: number[]; size: number }[],
   names: Map<number, string>,
+  currentTick = 0,
 ): MythReport {
   // id → (text → holders)
   const byId = new Map<string, Map<string, number>>();
@@ -100,6 +114,24 @@ export function analyzeMyth(
     }
   }
 
+  // Survival across time + escalation into legend. The id's last field is the
+  // event's original time-bucket (tick/300), so age = now − original.
+  let oldestSurviving: MythReport['oldestSurviving'] = null;
+  let grandest: MythReport['grandest'] = null;
+  for (const [id, variants] of byId) {
+    const bucket = Number(id.split(':')[2] ?? 0);
+    const ageTicks = currentTick - bucket * 300;
+    const holders = [...variants.values()].reduce((a, b) => a + b, 0);
+    const dominant = [...variants.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+    if (holders >= 3 && (!oldestSurviving || ageTicks > oldestSurviving.ageTicks)) {
+      oldestSurviving = { ageTicks, holders, text: dominant, grandeur: grandeur(dominant) };
+    }
+    for (const text of variants.keys()) {
+      const g = grandeur(text);
+      if (!grandest || g > grandest.grandeur) grandest = { grandeur: g, text, ageTicks };
+    }
+  }
+
   const driftRate = totalStories ? Math.round((driftedStories / totalStories) * 100) / 100 : 0;
   const labels: string[] = [];
   if (driftedStories > 0) labels.push(`Stories drift: ${driftedStories}/${totalStories} have fractured into multiple versions (${Math.round(driftRate * 100)}%)`);
@@ -107,6 +139,7 @@ export function analyzeMyth(
   if (heroes[0]) labels.push(`A hero emerges: ${heroes[0].name}'s deeds are retold ${heroes[0].mentions} times`);
   if (villains[0]) labels.push(`A villain emerges: ${villains[0].name} is remembered for attacks (${villains[0].mentions})`);
   if (tribeVersions) labels.push(`Tribes disagree: the same event is remembered differently by different tribes`);
+  if (grandest && grandest.grandeur >= 3) labels.push(`A legend is born: "${grandest.text}" (grandeur ${grandest.grandeur}/4)`);
 
-  return { totalStories, driftedStories, driftRate, mostVaried, heroes, villains, tribeVersions, labels };
+  return { totalStories, driftedStories, driftRate, mostVaried, heroes, villains, tribeVersions, oldestSurviving, grandest, labels };
 }
