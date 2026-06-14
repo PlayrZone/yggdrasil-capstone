@@ -10,7 +10,7 @@ export function SocietyView({ society }: { society: SocietyReport | null }): Rea
   if (!society) {
     return <div className="analysis"><div className="aempty">Run the world a while — institutions need repeated social interaction to form before they can be detected.</div></div>;
   }
-  const { influence, mentors, innovators, families, tribes, propertyHolders, specialists, labels } = society;
+  const { influence, mentors, innovators, families, tribes, propertyHolders, specialists, trustedSources, knowledgeLineages, labels } = society;
 
   return (
     <div className="analysis society">
@@ -50,6 +50,12 @@ export function SocietyView({ society }: { society: SocietyReport | null }): Rea
             {innovators.length === 0 && <li className="empty">none yet</li>}
           </ul>
 
+          <label style={{ marginTop: 14 }}>Possible trusted sources</label>
+          <ul>
+            {trustedSources.slice(0, 6).map((t) => <li key={t.id}><span className="aname">{t.name}</span><span className="anum">{t.trusters} trust</span></li>)}
+            {trustedSources.length === 0 && <li className="empty">none yet</li>}
+          </ul>
+
           <label style={{ marginTop: 14 }}>Possible specialists</label>
           <ul>
             {specialists.slice(0, 6).map((s) => <li key={s.id}><span className="aname">{s.name}</span><span className="anum">{s.archetype}</span></li>)}
@@ -61,7 +67,7 @@ export function SocietyView({ society }: { society: SocietyReport | null }): Rea
       <div className="acards" style={{ marginTop: 16 }}>
         <div className="acard"><b>{families.length}</b><span>possible families {families[0] ? `(largest ${families[0].size})` : ''}</span></div>
         <div className="acard"><b>{tribes.length}</b><span>possible tribes {tribes[0] ? `(largest ${tribes[0].size})` : ''}</span></div>
-        <div className="acard"><b>{propertyHolders.length}</b><span>possible resource-holders</span></div>
+        <div className="acard"><b>{knowledgeLineages}</b><span>knowledge lineages (taught down a family line)</span></div>
         <div className="acard culture"><b>{influence[0]?.name ?? '—'}</b><span>most influential</span></div>
       </div>
     </div>

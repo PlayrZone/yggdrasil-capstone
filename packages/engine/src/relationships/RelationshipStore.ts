@@ -54,16 +54,35 @@ export class RelationshipStore {
     r.lastInteractionTick = tick;
   }
 
+  /**
+   * Familiarity from simply spending time near someone — the slow, ambient way
+   * a bond actually forms. Without this, relationships only moved on rare
+   * discrete acts (a gift, an attack), so beings could cluster for days and
+   * stay strangers; co-presence is what turns proximity into social identity.
+   */
+  coPresence(partnerId: number, tick: number): void {
+    const r = this.recordFor(partnerId, tick);
+    r.friendship = clamp(r.friendship + 0.4);
+    r.trust = clamp(r.trust + 0.25);
+    r.interactionCount++;
+    r.lastInteractionTick = tick;
+  }
+
   /** Call on a coarse cadence; relationships need maintenance. */
   decay(tick: number): void {
     for (const r of this.pairs.values()) {
       const idle = tick - r.lastInteractionTick;
       if (idle < DECAY_INTERVAL) continue;
       const steps = Math.floor(idle / DECAY_INTERVAL);
-      r.trust = drift(r.trust, NEUTRAL, DECAY_STEP * steps);
-      r.respect = drift(r.respect, NEUTRAL, DECAY_STEP * steps);
-      r.friendship = drift(r.friendship, NEUTRAL, DECAY_STEP * steps);
-      r.fear = drift(r.fear, 0, DECAY_STEP * steps);
+      // RELATIONSHIP MEMORY PERSISTENCE: an established bond (many shared
+      // interactions) fades far more slowly than a passing acquaintance — the
+      // memory of who someone is to you persists, which is what lets a social
+      // identity outlast the moment.
+      const amount = (DECAY_STEP * steps) / (1 + r.interactionCount * 0.06);
+      r.trust = drift(r.trust, NEUTRAL, amount);
+      r.respect = drift(r.respect, NEUTRAL, amount);
+      r.friendship = drift(r.friendship, NEUTRAL, amount);
+      r.fear = drift(r.fear, 0, amount);
       r.lastInteractionTick = tick;
     }
   }

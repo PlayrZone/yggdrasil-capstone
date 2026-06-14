@@ -9,6 +9,7 @@ const base: SocietySignals = {
   kin: [],
   caches: [],
   specialists: [],
+  trust: [],
 };
 
 describe('society analysis (the influence layer)', () => {
@@ -67,12 +68,30 @@ describe('society analysis (the influence layer)', () => {
     expect(s.tribes[0]?.size).toBe(3);
   });
 
+  it('detects trusted sources + knowledge lineages', () => {
+    const s = analyzeSociety({
+      ...base,
+      trust: [
+        { holder: 2, toward: 1 },
+        { holder: 3, toward: 1 },
+        { holder: 4, toward: 1 },
+      ],
+      kin: [{ parent: 1, child: 2 }],
+      teaching: [{ teacher: 1, student: 2 }], // a parent teaching a child = lineage
+    });
+    expect(s.trustedSources[0]?.id).toBe(1);
+    expect(s.trustedSources[0]?.trusters).toBe(3);
+    expect(s.knowledgeLineages).toBe(1);
+  });
+
   it('never invents institutions when there is no signal', () => {
     const s = analyzeSociety(base);
     expect(s.mentors).toHaveLength(0);
     expect(s.innovators).toHaveLength(0);
     expect(s.families).toHaveLength(0);
     expect(s.tribes).toHaveLength(0);
+    expect(s.trustedSources).toHaveLength(0);
+    expect(s.knowledgeLineages).toBe(0);
     expect(s.labels).toHaveLength(0);
   });
 });

@@ -23,6 +23,8 @@ export interface SocietySignals {
   caches: { owner: number }[];
   /** Behavioral specialization (dominant archetype + how dominant). */
   specialists: { id: number; archetype: string; dominance: number }[];
+  /** A high-trust edge: `holder` strongly trusts `toward`. */
+  trust: { holder: number; toward: number }[];
 }
 
 export interface SocietyReport {
@@ -40,6 +42,10 @@ export interface SocietyReport {
   propertyHolders: { id: number; name: string; caches: number }[];
   /** Strongly specialized beings. */
   specialists: { id: number; name: string; archetype: string; dominance: number }[];
+  /** Beings trusted by many — possible trusted information sources. */
+  trustedSources: { id: number; name: string; trusters: number }[];
+  /** Count of teachings that flowed PARENT → CHILD — knowledge lineages. */
+  knowledgeLineages: number;
   /** Human-readable "possible …" detections (never assertions). */
   labels: string[];
 }
@@ -173,6 +179,25 @@ export function analyzeSociety(s: SocietySignals): SocietyReport {
     .sort((a, b) => b.dominance - a.dominance)
     .slice(0, 12);
 
+  // ── Trusted information sources (inbound trust) ──────────────────────────
+  const trusters = new Map<number, Set<number>>();
+  for (const { holder, toward } of s.trust) {
+    if (!aliveSet.has(toward)) continue;
+    let set = trusters.get(toward);
+    if (!set) trusters.set(toward, (set = new Set()));
+    set.add(holder);
+  }
+  const trustedSources = [...trusters.entries()]
+    .map(([id, set]) => ({ id, name: nm(id), trusters: set.size }))
+    .filter((t) => t.trusters >= 3)
+    .sort((a, b) => b.trusters - a.trusters)
+    .slice(0, 12);
+
+  // ── Knowledge lineages (teaching that flows parent → child) ──────────────
+  const kinPairs = new Set(s.kin.map((k) => `${k.parent}>${k.child}`));
+  let knowledgeLineages = 0;
+  for (const { teacher, student } of s.teaching) if (kinPairs.has(`${teacher}>${student}`)) knowledgeLineages++;
+
   // ── Detections (never assertions) ────────────────────────────────────────
   const labels: string[] = [];
   if (mentors[0]) labels.push(`Possible mentor: ${mentors[0].name} taught ${mentors[0].lessons} lessons to ${mentors[0].students} others`);
@@ -181,6 +206,8 @@ export function analyzeSociety(s: SocietySignals): SocietyReport {
   if (families[0]) labels.push(`Possible family of ${families[0].size}`);
   if (tribes[0]) labels.push(`Possible tribe of ${tribes[0].size}`);
   if (propertyHolders[0]) labels.push(`Possible resource control: ${propertyHolders[0].name} keeps ${propertyHolders[0].caches} caches`);
+  if (trustedSources[0]) labels.push(`Possible trusted source: ${trustedSources[0].name} is trusted by ${trustedSources[0].trusters} others`);
+  if (knowledgeLineages > 0) labels.push(`Knowledge lineages: ${knowledgeLineages} teachings passed down a family line`);
 
-  return { influence, mentors, innovators, families, tribes, propertyHolders, specialists, labels };
+  return { influence, mentors, innovators, families, tribes, propertyHolders, specialists, trustedSources, knowledgeLineages, labels };
 }

@@ -59,6 +59,8 @@ const REPRO_COOLDOWN = TICKS_PER_SEASON; // a season between births
 const REPRO_INTERVAL = 300; // how often the population is checked for births
 const REPRO_RANGE = 14; // two adults must be this close
 const MAX_POP = 320; // population ceiling (perf + a carrying capacity)
+const CO_PRESENCE_INTERVAL = 150; // how often time-spent-together builds bonds
+const CO_PRESENCE_RANGE = 13; // how close counts as "together"
 
 /** Cognition parameters derived from a being's personality (inherited by kids). */
 function mindOptions(tr: Traits): { thinkInterval: number; consolidateInterval: number; memoryHotCapacity: number } {
@@ -312,6 +314,7 @@ export class Experiment {
       this.wildlife.step(this.world, tick, this.bus);
       this.regularities.step(this.world, tick, this.bus);
       this.body.step(this.world, tick, this.bus);
+      if (tick % CO_PRESENCE_INTERVAL === 0 && tick > 0) this.coPresencePass(tick);
       if (tick % REPRO_INTERVAL === 0 && tick > 0) this.reproduce(tick);
 
       for (const [agentId, mind] of this.minds) {
@@ -372,6 +375,30 @@ export class Experiment {
    * child learns by observation + testimony (existing channels) — the vertical
    * transmission civilization needs.
    */
+  /** Bonds form from time spent together — preferred individuals, then clusters. */
+  private coPresencePass(tick: number): void {
+    const live: { id: number; mind: AgentMind; x: number; y: number }[] = [];
+    for (const id of this.agentIds) {
+      const mind = this.minds.get(id);
+      if (!mind || !this.agentBody(id)?.alive) continue;
+      const t = this.agentEntity(id)!.components['Transform2D'] as { x: number; y: number };
+      live.push({ id, mind, x: t.x, y: t.y });
+    }
+    const r2 = CO_PRESENCE_RANGE * CO_PRESENCE_RANGE;
+    for (let i = 0; i < live.length; i++) {
+      const a = live[i]!;
+      for (let j = i + 1; j < live.length; j++) {
+        const b = live[j]!;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        if (dx * dx + dy * dy <= r2) {
+          a.mind.relationships.coPresence(b.id, tick);
+          b.mind.relationships.coPresence(a.id, tick);
+        }
+      }
+    }
+  }
+
   private reproduce(tick: number): void {
     if (this.aliveCount() >= MAX_POP) return;
     const eligible: { id: number; body: GahallianBody; x: number; y: number }[] = [];
@@ -579,6 +606,7 @@ export class Experiment {
     const alive = this.agentIds.filter((id) => this.agentBody(id)?.alive).map((id) => ({ id, name: this.nameOf(id) }));
     const teaching: { teacher: number; student: number }[] = [];
     const bonds: { a: number; b: number }[] = [];
+    const trust: { holder: number; toward: number }[] = [];
     const seenBond = new Set<string>();
     for (const a of alive) {
       const mind = this.minds.get(a.id);
@@ -594,6 +622,7 @@ export class Experiment {
             bonds.push({ a: a.id, b: pid });
           }
         }
+        if (r.trust > 62 && r.interactionCount >= 8) trust.push({ holder: a.id, toward: pid });
       }
     }
     const origination = analyzeDiffusion(this.agentKnowledge())
@@ -610,7 +639,7 @@ export class Experiment {
       const r = this.archetypeOf(a.id);
       if (r && r.sampleSize > 0) specialists.push({ id: a.id, archetype: r.archetype, dominance: r.dominance });
     }
-    return analyzeSociety({ alive, teaching, origination, bonds, kin, caches, specialists });
+    return analyzeSociety({ alive, teaching, origination, bonds, kin, caches, specialists, trust });
   }
 
   /** Per-agent held+forming knowledge for the diffusion analyzer. */

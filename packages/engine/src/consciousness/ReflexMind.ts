@@ -83,7 +83,9 @@ export class ReflexMind implements IMind {
       }
     } else if (need === 'socialConnection') {
       goals.push(goal(input, 'seek company', 'socialConnection'));
-      const other = nearestAgent(input);
+      // Seek a PREFERRED individual (a friend) over just the nearest stranger —
+      // company is about who, not proximity.
+      const other = preferredAgent(input) ?? nearestAgent(input);
       if (other) {
         plan.push({ kind: 'MoveTo', x: other.x, y: other.y });
         // Compassionate agents pass their best knowledge along — the
@@ -105,11 +107,21 @@ export class ReflexMind implements IMind {
         plan.push(wander(input));
       }
     } else {
-      // Nothing pressing: curiosity-scaled wandering keeps experience
-      // (and therefore learning) flowing.
-      goals.push(goal(input, 'explore', undefined));
-      plan.push(wander(input));
-      plan.push({ kind: 'Idle', durationTicks: 60 });
+      // Nothing pressing — so the choice is shaped by RELATIONSHIPS, not
+      // survival. A being drifts toward a trusted individual (social gravity)
+      // rather than dispersing; loyalty deepens the pull. This is what lets
+      // stable clusters, families, and tribes cohere instead of scattering.
+      const friend = preferredAgent(input);
+      if (friend && snapshot.traits.loyalty >= 35) {
+        goals.push(goal(input, 'stay near kin & friends', undefined));
+        plan.push({ kind: 'MoveTo', x: friend.x, y: friend.y });
+        plan.push({ kind: 'Idle', durationTicks: 50 });
+      } else {
+        // Curiosity-scaled wandering keeps experience (and learning) flowing.
+        goals.push(goal(input, 'explore', undefined));
+        plan.push(wander(input));
+        plan.push({ kind: 'Idle', durationTicks: 60 });
+      }
     }
 
     return { goals, plan, utterances };
@@ -241,6 +253,35 @@ function nearestStructure(input: ThinkInput, kind: 'shelter' | 'wall' | 'contain
 
 function nearestAgent(input: ThinkInput) {
   return nearest(input, input.worldView.agents);
+}
+
+/** How much this being is DRAWN to another — friendship + trust, less fear. */
+function affinityToward(input: ThinkInput, id: number): number {
+  const r = input.relationships.get(id);
+  if (!r) return 0;
+  return r.friendship - 50 + (r.trust - 50) * 0.5 - r.fear;
+}
+
+/**
+ * The being you'd choose to be near: the most-liked visible individual,
+ * weighted by closeness. The seed of preferred neighbours/teachers and — once
+ * relationships persist — stable social clusters. Undefined if no one in sight
+ * is positively regarded.
+ */
+function preferredAgent(input: ThinkInput) {
+  let best: (typeof input.worldView.agents)[number] | undefined;
+  let bestScore = 0;
+  for (const a of input.worldView.agents) {
+    const aff = affinityToward(input, a.id);
+    if (aff <= 0) continue;
+    const d = Math.hypot(a.x - input.snapshot.x, a.y - input.snapshot.y) || 1;
+    const score = aff - d * 0.1;
+    if (score > bestScore) {
+      bestScore = score;
+      best = a;
+    }
+  }
+  return best;
 }
 
 function nearestFearedAgent(input: ThinkInput) {

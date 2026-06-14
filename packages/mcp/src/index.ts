@@ -368,6 +368,8 @@ server.registerTool(
       innovators: r.innovators.slice(0, 6),
       families: r.families.map((f) => f.size),
       tribes: r.tribes.map((t) => t.size),
+      trustedSources: r.trustedSources.slice(0, 6),
+      knowledgeLineages: r.knowledgeLineages,
       propertyHolders: r.propertyHolders.slice(0, 6),
       specialists: r.specialists.slice(0, 8),
     });
