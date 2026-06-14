@@ -108,11 +108,14 @@ export class ReflexMind implements IMind {
       }
     } else {
       // Nothing pressing — so the choice is shaped by BELIEF and RELATIONSHIPS,
-      // not survival. Periodically a being makes a PILGRIMAGE to the place of
-      // its oldest founder/hero story (belief steering behaviour, and the seed
-      // of a sacred place); otherwise it drifts toward trusted individuals.
+      // not survival. Periodically a being makes a PILGRIMAGE to its sacred
+      // place — the site of a founding/heroic legend it was TOLD of but never
+      // saw, so the place is genuinely elsewhere. Travelling there is belief
+      // steering behaviour with the habitat confound removed. The window is wide
+      // enough (~40% of the cycle) that the journey to a distant site can finish
+      // before survival reclaims the being; otherwise it drifts toward kin.
       const sacred = input.sacredPlace;
-      const onPilgrimage = !!sacred && input.worldView.tick % 1600 < 480 && Math.hypot(sacred.x - snapshot.x, sacred.y - snapshot.y) > 6;
+      const onPilgrimage = !!sacred && input.worldView.tick % 1600 < 640 && Math.hypot(sacred.x - snapshot.x, sacred.y - snapshot.y) > 6;
       const friend = preferredAgent(input);
       if (onPilgrimage) {
         goals.push(goal(input, 'return to the place of the story', undefined));

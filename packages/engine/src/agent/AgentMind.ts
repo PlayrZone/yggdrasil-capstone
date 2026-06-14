@@ -118,13 +118,19 @@ export class AgentMind {
 
   /** Assemble the think input — shared by the reflex and LLM paths. */
   buildThinkInput(snapshot: AgentSnapshot, worldView: WorldView, trigger: ThinkTrigger): ThinkInput {
-    // Belief → behaviour: the place of the being's oldest founder/hero story is
-    // a place it is drawn to; the places of tragedies it shuns.
+    // Belief → behaviour (Cycle 11): a being's sacred place is the oldest
+    // founder/hero story it was TOLD but did not witness — a legend whose place
+    // it knows only through the telling, NOT where it lives. This separates the
+    // sacred from the dwelling: pilgrimage means travelling to a place you've
+    // only heard of, which is the clean test of belief steering behaviour.
+    // Tragedy places are likewise ones it only heard of. Selection uses intrinsic
+    // story properties only (age, firsthand) — never an analysis label.
     let sacredPlace: { x: number; y: number } | undefined;
     let oldest = Infinity;
     const tragedyPlaces: { x: number; y: number }[] = [];
     if (this.mythBehavior) {
       for (const n of this.narratives.all()) {
+        if (n.firsthand) continue; // a place you witnessed is not a place you make pilgrimage to
         const kind = n.id.slice(0, n.id.indexOf(':'));
         if (kind === 'home' || kind === 'slew') {
           if (n.firstTick < oldest) {
