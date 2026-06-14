@@ -24,6 +24,8 @@ import { CognitionScheduler } from '../scheduler/CognitionScheduler.js';
 import { LlmMind } from '../consciousness/LlmMind.js';
 import { classifyArchetype } from '../analysis/archetype.js';
 import { analyzeDiffusion, analyzeBeliefAccuracy } from '../analysis/diffusion.js';
+import { analyzeSociety } from '../analysis/society.js';
+import type { SocietyReport } from '../analysis/society.js';
 import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
@@ -89,6 +91,8 @@ export class Experiment {
   private wildlife!: WildlifeSystem;
   private reproRng!: () => number;
   birthCount = 0;
+  /** Kinship ledger (persisted — the event log is capped). Enables family detection. */
+  readonly births: { child: number; parents: [number, number]; tick: number }[] = [];
   readonly body = new YggdrasilSystem(this.perception);
   readonly minds = new Map<number, AgentMind>();
   readonly agentIds: number[] = [];
@@ -428,6 +432,7 @@ export class Experiment {
     this.agentIds.push(child.id);
     this.minds.set(child.id, new AgentMind(child.id, mindOptions(traits)));
     this.birthCount++;
+    this.births.push({ child: child.id, parents: [a.id, b.id], tick });
     a.body.reproCooldownUntil = tick + REPRO_COOLDOWN;
     b.body.reproCooldownUntil = tick + REPRO_COOLDOWN;
     this.bus.emit({ tick, type: 'ChildBorn', actorId: child.id, targetIds: [a.id, b.id], x: pos.x, y: pos.y, payload: { parents: [a.id, b.id] } });
@@ -562,6 +567,50 @@ export class Experiment {
         ? mind.knowledge.held().slice(0, 30).map((k) => ({ statement: k.statement, confidence: k.confidence, status: k.status }))
         : [],
     };
+  }
+
+  /**
+   * The INFLUENCE / social-structure read-out: detects possible mentors,
+   * innovators, families, tribes, and resource-holders from who taught whom,
+   * whose discoveries spread, who is bonded to whom, and who descends from
+   * whom. Pure analysis — never read back into the sim.
+   */
+  society(): SocietyReport {
+    const alive = this.agentIds.filter((id) => this.agentBody(id)?.alive).map((id) => ({ id, name: this.nameOf(id) }));
+    const teaching: { teacher: number; student: number }[] = [];
+    const bonds: { a: number; b: number }[] = [];
+    const seenBond = new Set<string>();
+    for (const a of alive) {
+      const mind = this.minds.get(a.id);
+      if (!mind) continue;
+      for (const k of mind.knowledge.all()) {
+        if (k.origin === 'testimony' && k.testimonyFrom != null) teaching.push({ teacher: k.testimonyFrom, student: a.id });
+      }
+      for (const [pid, r] of mind.relationships.asMap()) {
+        if (r.friendship > 62 && r.interactionCount >= 8) {
+          const key = a.id < pid ? `${a.id}-${pid}` : `${pid}-${a.id}`;
+          if (!seenBond.has(key)) {
+            seenBond.add(key);
+            bonds.push({ a: a.id, b: pid });
+          }
+        }
+      }
+    }
+    const origination = analyzeDiffusion(this.agentKnowledge())
+      .filter((c) => c.originatorId != null)
+      .map((c) => ({ originator: c.originatorId!, reach: c.livingHolders }));
+    const kin: { parent: number; child: number }[] = [];
+    for (const b of this.births) {
+      kin.push({ parent: b.parents[0], child: b.child });
+      kin.push({ parent: b.parents[1], child: b.child });
+    }
+    const caches = this.structures().filter((s) => s.kind === 'container').map((s) => ({ owner: s.builtBy }));
+    const specialists: { id: number; archetype: string; dominance: number }[] = [];
+    for (const a of alive) {
+      const r = this.archetypeOf(a.id);
+      if (r && r.sampleSize > 0) specialists.push({ id: a.id, archetype: r.archetype, dominance: r.dominance });
+    }
+    return analyzeSociety({ alive, teaching, origination, bonds, kin, caches, specialists });
   }
 
   /** Per-agent held+forming knowledge for the diffusion analyzer. */

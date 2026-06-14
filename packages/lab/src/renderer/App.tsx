@@ -6,8 +6,10 @@ import { World3D, type Agent3D } from './World3D.js';
 import { ActivityView } from './ActivityView.js';
 import { ReportsView } from './ReportsView.js';
 import { AnalysisView, type AnalysisSnapshot } from './AnalysisView.js';
+import { SocietyView } from './SocietyView.js';
+import type { SocietyReport } from '@yggdrasil/engine';
 
-type Tab = 'world' | 'activity' | 'analysis' | 'reports';
+type Tab = 'world' | 'activity' | 'analysis' | 'society' | 'reports';
 
 interface FeedItem {
   tick: number;
@@ -83,6 +85,7 @@ export function App(): React.ReactElement {
   const [llm, setLlm] = useState<{ hasKey: boolean; model: string }>({ hasKey: false, model: '' });
   const [keyInput, setKeyInput] = useState('');
   const [analysis, setAnalysis] = useState<AnalysisSnapshot | null>(null);
+  const [society, setSociety] = useState<SocietyReport | null>(null);
   const selectedRef = useRef<number | null>(null);
   const [selected, setSelected] = useState<ReturnType<Experiment['agentDetail']>>(null);
 
@@ -230,6 +233,19 @@ export function App(): React.ReactElement {
     return () => clearInterval(id);
   }, [tab]);
 
+  // The society/influence read-out — also walks all agents, so compute it only
+  // while its tab is open.
+  useEffect(() => {
+    if (tab !== 'society') return;
+    const compute = (): void => {
+      const exp = clockRef.current?.exp;
+      if (exp) setSociety(exp.society());
+    };
+    compute();
+    const id = setInterval(compute, 3000);
+    return () => clearInterval(id);
+  }, [tab]);
+
   const saveKey = useCallback(async () => {
     const lab = window.lab;
     if (!lab || !keyInput.trim()) return;
@@ -257,9 +273,9 @@ export function App(): React.ReactElement {
           {version && <span className="ver">v{version}</span>}
         </div>
         <nav className="tabs">
-          {(['world', 'activity', 'analysis', 'reports'] as Tab[]).map((t) => (
+          {(['world', 'activity', 'analysis', 'society', 'reports'] as Tab[]).map((t) => (
             <button key={t} className={t === tab ? 'sel' : ''} onClick={() => setTab(t)}>
-              {t === 'world' ? 'World' : t === 'activity' ? 'Live Activity' : t === 'analysis' ? 'Analysis' : 'Reports'}
+              {t === 'world' ? 'World' : t === 'activity' ? 'Live Activity' : t === 'analysis' ? 'Analysis' : t === 'society' ? 'Society' : 'Reports'}
             </button>
           ))}
         </nav>
@@ -380,6 +396,7 @@ export function App(): React.ReactElement {
 
       {tab === 'activity' && <ActivityView />}
       {tab === 'analysis' && <AnalysisView snap={analysis} />}
+      {tab === 'society' && <SocietyView society={society} />}
       {tab === 'reports' && <ReportsView />}
     </div>
   );

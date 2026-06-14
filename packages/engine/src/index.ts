@@ -153,3 +153,5 @@ export { analyzeDiffusion, analyzeBeliefAccuracy } from './analysis/diffusion.js
 export type { AgentKnowledge, BeliefHolder, BeliefCluster, BeliefAccuracy } from './analysis/diffusion.js';
 export { classifyArchetype } from './analysis/archetype.js';
 export type { Archetype, ArchetypeResult } from './analysis/archetype.js';
+export { analyzeSociety } from './analysis/society.js';
+export type { SocietySignals, SocietyReport } from './analysis/society.js';

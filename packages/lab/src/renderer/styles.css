@@ -165,3 +165,6 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 .asuper li { justify-content: space-between; color: #e6c98a; }
 .asuper b { color: #e0524d; }
 .analysis .empty { color: var(--muted); font-size: 12px; }
+.society .detections { margin-bottom: 16px; }
+.society .detections ul { list-style: none; margin: 0; padding: 0; }
+.society .detections li { padding: 7px 12px; margin-bottom: 6px; background: var(--panel2); border-left: 3px solid var(--accent); border-radius: 4px; color: #e7eef2; font-size: 13px; }

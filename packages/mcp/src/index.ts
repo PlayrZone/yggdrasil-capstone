@@ -349,6 +349,31 @@ server.registerTool(
   },
 );
 
+// ── get_society (emergent institutions — analysis only) ─────────────────────────
+server.registerTool(
+  'get_society',
+  {
+    title: 'Detect emergent institutions',
+    description: 'The INFLUENCE layer for a LIVE run: detects POSSIBLE mentors, innovators, leaders (most influential), families (kinship), tribes (social clusters), and resource-holders from who taught whom, whose discoveries spread, who is bonded, and who descends from whom. Pure analysis — it labels patterns, never creates institutions.',
+    inputSchema: { runId: z.number().int().positive() },
+  },
+  async ({ runId }) => {
+    const s = sessions.get(runId);
+    if (!s) return text(`no live session for run ${runId}`);
+    const r = s.exp.society();
+    return json({
+      detections: r.labels,
+      topInfluence: r.influence.slice(0, 8),
+      mentors: r.mentors.slice(0, 6),
+      innovators: r.innovators.slice(0, 6),
+      families: r.families.map((f) => f.size),
+      tribes: r.tribes.map((t) => t.size),
+      propertyHolders: r.propertyHolders.slice(0, 6),
+      specialists: r.specialists.slice(0, 8),
+    });
+  },
+);
+
 // ── query_db (read-only SELECT escape hatch) ────────────────────────────────────
 server.registerTool(
   'query_db',
