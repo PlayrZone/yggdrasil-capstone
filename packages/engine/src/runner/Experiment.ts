@@ -852,6 +852,38 @@ export class Experiment {
   }
 
   /**
+   * CYCLE 14 — Institutions. A snapshot of the candidate institutions right now:
+   * the principal sacred site, the oldest surviving myth, the top leader, and the
+   * count of knowledge lineages — plus how many generations have elapsed. Sampling
+   * this over a run (and seeing which of these PERSIST as individuals turn over) is
+   * how we tell an institution (a pattern that outlives its founders) from a
+   * transient. Composes existing analyzers; analysis only, never read back.
+   */
+  institutions(): {
+    generations: number;
+    topSacredSite: { x: number; y: number; distinctStories: number; multivalent: boolean; maxGrandeur: number } | null;
+    oldestMyth: { ageTicks: number; holders: number; text: string } | null;
+    topLeader: { name: string; followers: number } | null;
+    knowledgeLineages: number;
+  } {
+    const sp = this.sacredPlaces();
+    const m = this.myth();
+    const ld = this.leadership();
+    const soc = this.society();
+    return {
+      generations: Math.round((this.tick / TICKS_PER_SEASON) * 10) / 10,
+      topSacredSite: sp.richest
+        ? { x: sp.richest.x, y: sp.richest.y, distinctStories: sp.richest.distinctStories, multivalent: sp.richest.multivalent, maxGrandeur: sp.richest.maxGrandeur }
+        : null,
+      oldestMyth: m.oldestSurviving
+        ? { ageTicks: m.oldestSurviving.ageTicks, holders: m.oldestSurviving.holders, text: m.oldestSurviving.text }
+        : null,
+      topLeader: ld.leaders[0] ?? null,
+      knowledgeLineages: soc.knowledgeLineages,
+    };
+  }
+
+  /**
    * CYCLE 10/11 — Belief → Behavior. Do held stories steer where beings are?
    *
    * Two measures, both seed-paired against a mythBehavior:false control:
