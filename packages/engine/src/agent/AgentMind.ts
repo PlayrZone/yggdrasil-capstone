@@ -15,6 +15,7 @@ import { SocialMiner } from '../learning/SocialMiner.js';
 import { OutcomeMiner } from '../learning/OutcomeMiner.js';
 import { KnowledgeStore } from '../knowledge/KnowledgeStore.js';
 import { RelationshipStore } from '../relationships/RelationshipStore.js';
+import { NarrativeStore } from '../narrative/NarrativeStore.js';
 import type { IMind } from '../consciousness/IMind.js';
 import { ReflexMind } from '../consciousness/ReflexMind.js';
 
@@ -38,6 +39,7 @@ export class AgentMind {
   readonly memory: MemoryStream;
   readonly knowledge = new KnowledgeStore();
   readonly relationships = new RelationshipStore();
+  readonly narratives = new NarrativeStore();
   readonly learners: ILearner[];
   goals: Goal[] = [];
 
@@ -70,6 +72,10 @@ export class AgentMind {
       for (const partnerId of stored.subjects) {
         this.relationships.applyEvent(partnerId, stored.type, stored.tick);
       }
+    }
+    // A story retold to you — you carry it now too (shared narrative → identity).
+    if (stored.utterance?.speechAct === 'share-episode' && stored.utterance.narrativeId && stored.utterance.narrativeText) {
+      this.narratives.remember(stored.utterance.narrativeId, stored.utterance.narrativeText, stored.tick, false);
     }
     if (stored.utterance?.speechAct === 'share-knowledge' && stored.utterance.rule && stored.toldBy) {
       const trust = (this.relationships.recordFor(stored.toldBy, stored.tick).trust ?? 50) / 100;

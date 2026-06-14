@@ -183,6 +183,9 @@ export interface Utterance {
   ruleConfidence?: number;
   /** share-episode / inform / request: free-ish summary text. */
   text?: string;
+  /** share-episode: a shared story — stable id (so retellings cluster) + words. */
+  narrativeId?: string;
+  narrativeText?: string;
 }
 
 // ─── Events ──────────────────────────────────────────────────────────────────

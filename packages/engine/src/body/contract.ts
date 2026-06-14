@@ -124,6 +124,8 @@ export interface EngineUtterance {
   rule?: unknown;
   ruleConfidence?: number;
   text?: string;
+  narrativeId?: string;
+  narrativeText?: string;
 }
 
 export interface Intent {

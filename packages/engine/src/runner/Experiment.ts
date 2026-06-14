@@ -26,6 +26,8 @@ import { classifyArchetype } from '../analysis/archetype.js';
 import { analyzeDiffusion, analyzeBeliefAccuracy } from '../analysis/diffusion.js';
 import { analyzeSociety } from '../analysis/society.js';
 import type { SocietyReport } from '../analysis/society.js';
+import { analyzeCulture } from '../analysis/culture.js';
+import type { CultureReport } from '../analysis/culture.js';
 import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
@@ -145,6 +147,7 @@ export class Experiment {
       if (this.eventLog.length > EVENT_LOG_CAP) this.eventLog.shift();
       this.tallyEvent(event);
 
+      const story = this.storyFor(event);
       for (const witnessId of this.perception.witnessesOf(this.world, event)) {
         const mind = this.minds.get(witnessId);
         if (!mind) continue;
@@ -154,8 +157,37 @@ export class Experiment {
         const context = this.perception.contextAt(this.world, t.x, t.y, event.tick);
         const memory = memoryFromEvent(event, witnessId, context);
         if (memory) mind.observe(memory);
+        // A memorable event becomes a STORY the witness carries.
+        if (story) mind.narratives.remember(story.id, story.text, event.tick, true);
       }
+      if (story) this.minds.get(event.actorId)?.narratives.remember(story.id, story.text, event.tick, true);
     });
+  }
+
+  /**
+   * Turn a memorable event into a STORY (or null). Only dramatic, relatively
+   * rare events become narratives — a slaying, a violent death, the raising of
+   * a home — the things a people would actually retell. Keyed so every witness
+   * of the same event remembers the same story.
+   */
+  private storyFor(event: SimEvent): { id: string; text: string } | null {
+    const bucket = Math.floor(event.tick / 300);
+    const region = regionAt(event.x, event.y);
+    const who = this.nameOf(event.actorId);
+    switch (event.type) {
+      case 'KilledPredator':
+        return { id: `slew:${event.actorId}:${bucket}`, text: `${who} slew a ${event.payload['predator'] ?? 'beast'} in the ${region}` };
+      case 'AgentDied': {
+        const cause = String(event.payload['cause'] ?? '');
+        if (cause !== 'violence') return null; // only a dramatic death is a story
+        return { id: `fell:${event.actorId}:${bucket}`, text: `${who} fell to violence in the ${region}` };
+      }
+      case 'BuiltStructure':
+        if (event.payload['buildKind'] !== 'shelter') return null;
+        return { id: `home:${event.actorId}:${bucket}`, text: `${who} raised a home in the ${region}` };
+      default:
+        return null;
+    }
   }
 
   private tallyEvent(event: SimEvent): void {
@@ -394,6 +426,14 @@ export class Experiment {
         if (dx * dx + dy * dy <= r2) {
           a.mind.relationships.coPresence(b.id, tick);
           b.mind.relationships.coPresence(a.id, tick);
+          // Companions retell their stories — how a narrative becomes shared,
+          // and a shared narrative becomes a people's identity.
+          if ((tick + a.id + b.id) % 3 === 0) {
+            const sa = a.mind.narratives.pickToRetell(tick);
+            if (sa) b.mind.narratives.remember(sa.id, sa.text, tick, false);
+            const sb = b.mind.narratives.pickToRetell(tick);
+            if (sb) a.mind.narratives.remember(sb.id, sb.text, tick, false);
+          }
         }
       }
     }
@@ -642,6 +682,25 @@ export class Experiment {
       knowledge.push({ id: a.id, count: this.minds.get(a.id)?.knowledge.held().length ?? 0 });
     }
     return analyzeSociety({ alive, teaching, origination, bonds, kin, caches, specialists, trust, knowledge });
+  }
+
+  /**
+   * CULTURE: what each tribe believes (not how much) — shared beliefs, how far
+   * tribes diverge, and the superstition test (competing false beliefs). Pure
+   * analysis; never read back.
+   */
+  culture(): CultureReport {
+    const tribes = this.society().tribes;
+    const beliefs = new Map<number, { key: string; statement: string; rule: import('../contract/types.js').KnowledgeRule }[]>();
+    const narratives = new Map<number, { id: string; text: string }[]>();
+    for (const id of this.agentIds) {
+      if (!this.agentBody(id)?.alive) continue;
+      const mind = this.minds.get(id);
+      if (!mind) continue;
+      beliefs.set(id, mind.knowledge.held().map((k) => ({ key: k.ruleKey, statement: k.statement, rule: k.rule })));
+      narratives.set(id, mind.narratives.all().map((n) => ({ id: n.id, text: n.text })));
+    }
+    return analyzeCulture(tribes, beliefs, narratives);
   }
 
   /** Per-agent held+forming knowledge for the diffusion analyzer. */

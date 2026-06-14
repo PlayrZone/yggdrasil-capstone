@@ -378,6 +378,29 @@ server.registerTool(
   },
 );
 
+// ── get_culture (what each tribe believes + shared stories) ─────────────────────
+server.registerTool(
+  'get_culture',
+  {
+    title: 'Detect emergent culture',
+    description: 'For a LIVE run: WHAT each tribe believes (not how much) — shared beliefs, cultural divergence between tribes, the superstition test (competing FALSE beliefs), and each tribe\'s shared STORIES (narrative identity). Analysis only; never written back.',
+    inputSchema: { runId: z.number().int().positive() },
+  },
+  async ({ runId }) => {
+    const s = sessions.get(runId);
+    if (!s) return text(`no live session for run ${runId}`);
+    const c = s.exp.culture();
+    return json({
+      detections: c.labels,
+      divergence: c.divergence,
+      mostDivergent: c.mostDivergent,
+      tribes: c.tribes.slice(0, 10),
+      sharedStories: c.tribeStories.filter((t) => t.stories.length).slice(0, 8),
+      topStory: c.topStory,
+    });
+  },
+);
+
 // ── query_db (read-only SELECT escape hatch) ────────────────────────────────────
 server.registerTool(
   'query_db',

@@ -7,9 +7,10 @@ import { ActivityView } from './ActivityView.js';
 import { ReportsView } from './ReportsView.js';
 import { AnalysisView, type AnalysisSnapshot } from './AnalysisView.js';
 import { SocietyView } from './SocietyView.js';
-import type { SocietyReport } from '@yggdrasil/engine';
+import { CultureView } from './CultureView.js';
+import type { SocietyReport, CultureReport } from '@yggdrasil/engine';
 
-type Tab = 'world' | 'activity' | 'analysis' | 'society' | 'reports';
+type Tab = 'world' | 'activity' | 'analysis' | 'society' | 'culture' | 'reports';
 
 interface FeedItem {
   tick: number;
@@ -86,6 +87,7 @@ export function App(): React.ReactElement {
   const [keyInput, setKeyInput] = useState('');
   const [analysis, setAnalysis] = useState<AnalysisSnapshot | null>(null);
   const [society, setSociety] = useState<SocietyReport | null>(null);
+  const [culture, setCulture] = useState<CultureReport | null>(null);
   const selectedRef = useRef<number | null>(null);
   const [selected, setSelected] = useState<ReturnType<Experiment['agentDetail']>>(null);
 
@@ -246,6 +248,17 @@ export function App(): React.ReactElement {
     return () => clearInterval(id);
   }, [tab]);
 
+  useEffect(() => {
+    if (tab !== 'culture') return;
+    const compute = (): void => {
+      const exp = clockRef.current?.exp;
+      if (exp) setCulture(exp.culture());
+    };
+    compute();
+    const id = setInterval(compute, 3500);
+    return () => clearInterval(id);
+  }, [tab]);
+
   const saveKey = useCallback(async () => {
     const lab = window.lab;
     if (!lab || !keyInput.trim()) return;
@@ -273,9 +286,9 @@ export function App(): React.ReactElement {
           {version && <span className="ver">v{version}</span>}
         </div>
         <nav className="tabs">
-          {(['world', 'activity', 'analysis', 'society', 'reports'] as Tab[]).map((t) => (
+          {(['world', 'activity', 'analysis', 'society', 'culture', 'reports'] as Tab[]).map((t) => (
             <button key={t} className={t === tab ? 'sel' : ''} onClick={() => setTab(t)}>
-              {t === 'world' ? 'World' : t === 'activity' ? 'Live Activity' : t === 'analysis' ? 'Analysis' : t === 'society' ? 'Society' : 'Reports'}
+              {t === 'world' ? 'World' : t === 'activity' ? 'Live Activity' : t === 'analysis' ? 'Analysis' : t === 'society' ? 'Society' : t === 'culture' ? 'Culture' : 'Reports'}
             </button>
           ))}
         </nav>
@@ -397,6 +410,7 @@ export function App(): React.ReactElement {
       {tab === 'activity' && <ActivityView />}
       {tab === 'analysis' && <AnalysisView snap={analysis} />}
       {tab === 'society' && <SocietyView society={society} />}
+      {tab === 'culture' && <CultureView culture={culture} />}
       {tab === 'reports' && <ReportsView />}
     </div>
   );
