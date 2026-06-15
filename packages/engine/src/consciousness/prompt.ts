@@ -53,6 +53,7 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     `Dig{} (dig the ground where you stand), Give{targetId,objectKind}, Deposit{objectKind,targetId?}, Sleep{durationTicks}, Idle{durationTicks},`,
     `Craft{} (try combining the raw materials you carry — whether anything useful results, and what, is for you to DISCOVER through trying),`,
     `Flee{x,y}, Follow{targetId}, Speak{} (put speech in utterances).`,
+    `To ASK someone something — to seek what they know — use a "request" utterance addressed to them.`,
     `Keep the plan short (1-4 intents). The world validates every intent; impossible ones fail.`,
   ].join('\n');
 
@@ -89,6 +90,10 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
       : '  (nothing notable)',
     ``,
     `CURRENT GOALS: ${goals.length > 0 ? goals.map((g) => g.description).join('; ') : '(none)'}`,
+    ``,
+    `Some of what you carry you were TOLD but never saw, and some things you cannot explain.`,
+    `If no need presses you, you are free to pursue what you wish to UNDERSTAND — ask someone who`,
+    `might know, seek out an elder, or go and find out for yourself. Or simply live. The choice is yours.`,
     ``,
     `Decide what to do. Respond with JSON only.`,
   ].join('\n');
