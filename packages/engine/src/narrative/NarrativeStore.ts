@@ -47,6 +47,12 @@ const LADDER: [string, string][] = [
   ['slew a terrible beast', 'slew the dread beast of the wild'],
   ['slew the dread beast of the wild', 'was our champion against the wild'],
   ['was our champion against the wild', 'was sent by the spirits to shield us'],
+  // maker → ideology of making (Exp 13: does "made the first spear" drift, across
+  // generations, into a claim about WHO SHOULD RULE? one believable step at a time)
+  ['made the first spear', 'forged the great spears'],
+  ['forged the great spears', 'was the greatest of the makers'],
+  ['was the greatest of the makers', 'the makers were chosen to arm us'],
+  ['the makers were chosen to arm us', 'the makers are sacred and should lead us'],
   // death → legend of loss
   ['fell to violence', 'was lost to us'],
   ['was lost to us', 'was taken by the darkness'],

@@ -26,12 +26,13 @@ export interface MythReport {
   labels: string[];
 }
 
-/** 0 = a plain memory; 4 = full legend (chosen by spirits / taken by darkness). */
+/** 0 = a plain memory; 4 = full legend (chosen by spirits / taken by darkness /
+ * makers should lead — the top rung of each ladder). */
 export function grandeur(text: string): number {
-  if (/chosen by the spirits|sent by the spirits|taken by the darkness/.test(text)) return 4;
-  if (/founded our people|our champion|betrayed/.test(text)) return 3;
-  if (/founded a settlement|dread beast|was lost to us/.test(text)) return 2;
-  if (/great hall|great bear|fierce wolf|monstrous crocodile|terrible beast|turned on/.test(text)) return 1;
+  if (/chosen by the spirits|sent by the spirits|taken by the darkness|sacred and should lead/.test(text)) return 4;
+  if (/founded our people|our champion|betrayed|chosen to arm/.test(text)) return 3;
+  if (/founded a settlement|dread beast|was lost to us|greatest of the makers/.test(text)) return 2;
+  if (/great hall|great bear|fierce wolf|monstrous crocodile|terrible beast|turned on|great spears/.test(text)) return 1;
   return 0;
 }
 
