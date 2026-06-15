@@ -442,6 +442,10 @@ export interface ThinkInput {
   kin?: KinTie[];
   /** People this being knows and how it feels about them (no role labels). */
   social?: KnownPerson[];
+  /** When false, the prompt does NOT offer "try making something" — used to test
+   * whether CULTURE (a seeded myth) steers curiosity toward making, with no
+   * engine-side crafting incentive present. Default (undefined) offers it. */
+  offerMaking?: boolean;
 }
 
 /**

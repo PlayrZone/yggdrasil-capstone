@@ -63,6 +63,10 @@ export interface ExperimentOptions {
   /** A/B control for Cycle 13: when false, respect doesn't grow from witnessed
    * competence, so no prestige hierarchy can form. Default true. */
   leadership?: boolean;
+  /** Phase 2 Exp 10: when false, the consciousness prompt does NOT offer "try
+   * making" — so a seeded culture, not an engine incentive, must steer making.
+   * Default true. */
+  offerMaking?: boolean;
 }
 
 const EVENT_LOG_CAP = 400;
@@ -149,6 +153,8 @@ export class Experiment {
   private readonly mythBehavior: boolean;
   /** Cycle 13 A/B: does respect grow from witnessed competence? (prestige) */
   private readonly leadershipOn: boolean;
+  /** Exp 10: does the prompt offer "try making"? When false, only culture can steer it. */
+  private readonly offerMaking: boolean;
 
   tick = 0;
   eventCount = 0;
@@ -175,6 +181,7 @@ export class Experiment {
     this.seed = seed;
     this.mythBehavior = options.mythBehavior ?? true;
     this.leadershipOn = options.leadership ?? true;
+    this.offerMaking = options.offerMaking ?? true;
     if (mindBackend) {
       this.cognitionLog = new CognitionLog();
       this.llm = new LlmMind(mindBackend, {
@@ -955,7 +962,26 @@ export class Experiment {
       ...(mostTold ? { mostTold } : {}),
       kin: this.kinOf(agentId),
       social: scored.slice(0, 8).map((s) => s.person),
+      offerMaking: this.offerMaking,
     };
+  }
+
+  /**
+   * CULTURAL SEEDING (Exp 10): inject one shared myth into a people, as if long
+   * told. `timesHeard` sets its familiarity (high → it becomes the tale told
+   * most). It is a STORY the minds then interpret — no behavioural instruction,
+   * no role, no incentive. The experiment of whether culture can steer curiosity.
+   */
+  seedMyth(text: string, opts: { id?: string; x?: number; y?: number; timesHeard?: number; toAgentIds?: number[] } = {}): void {
+    const id = opts.id ?? 'seed:myth';
+    const x = opts.x ?? WORLD / 2;
+    const y = opts.y ?? WORLD / 2;
+    const timesHeard = opts.timesHeard ?? 6;
+    const ids = opts.toAgentIds ?? this.agentIds;
+    for (const aid of ids) {
+      const mind = this.minds.get(aid);
+      if (mind) mind.narratives.seed(id, text, x, y, this.tick, timesHeard);
+    }
   }
 
   /**

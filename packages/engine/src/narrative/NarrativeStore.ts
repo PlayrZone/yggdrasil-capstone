@@ -84,6 +84,16 @@ export class NarrativeStore {
     this.stories.set(id, { id, text, x, y, firstTick: tick, firsthand, timesHeard: 1, retellable: 0 });
   }
 
+  /**
+   * Seed a known tale directly — for CULTURAL SEEDING experiments: injecting a
+   * shared myth into a people, as if it had long been told (so `timesHeard` sets
+   * its familiarity). The seeded story is a cultural artifact the minds then
+   * interpret; it carries no behavioural instruction.
+   */
+  seed(id: string, text: string, x: number, y: number, tick: number, timesHeard: number): void {
+    this.stories.set(id, { id, text, x, y, firstTick: tick, firsthand: false, timesHeard, retellable: 0 });
+  }
+
   has(id: string): boolean {
     return this.stories.has(id);
   }
