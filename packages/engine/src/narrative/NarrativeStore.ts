@@ -103,8 +103,11 @@ export class NarrativeStore {
     let best: Narrative | undefined;
     for (const n of this.stories.values()) {
       if (tick < n.retellable) continue;
-      // Prefer the oldest, most-established stories — the ones worth repeating.
-      if (!best || n.firstTick < best.firstTick) best = n;
+      // Prefer the tale this being knows BEST — the one it has heard most — and
+      // among equally-familiar ones, the oldest. The most-told story is the one a
+      // people repeats most (rich-get-richer: a dominant cultural myth emerges, and
+      // a deliberately-told myth can spread instead of being buried by its newness).
+      if (!best || n.timesHeard > best.timesHeard || (n.timesHeard === best.timesHeard && n.firstTick < best.firstTick)) best = n;
     }
     if (best) best.retellable = tick + 900;
     return best;
