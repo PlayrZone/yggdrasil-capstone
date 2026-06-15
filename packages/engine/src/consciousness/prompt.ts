@@ -93,7 +93,8 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     ``,
     `Some of what you carry you were TOLD but never saw, and some things you cannot explain.`,
     `If no need presses you, you are free to pursue what you wish to UNDERSTAND — ask someone who`,
-    `might know, seek out an elder, or go and find out for yourself. Or simply live. The choice is yours.`,
+    `might know, seek out an elder, go and find out for yourself, or TRY MAKING something from the`,
+    `materials you carry to discover what can be made. Or simply live. The choice is yours.`,
     ``,
     `Decide what to do. Respond with JSON only.`,
   ].join('\n');
