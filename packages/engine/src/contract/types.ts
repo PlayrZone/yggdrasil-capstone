@@ -434,8 +434,10 @@ export interface ThinkInput {
   /** Places a held tragedy makes this being shun. */
   tragedyPlaces?: { x: number; y: number }[];
   // ─── Phase 2: the culture a conscious being is born into (LLM path only) ───
-  /** Stories/myths this being carries. */
+  /** Stories/myths this being carries (most-told first). */
   stories?: KnownStory[];
+  /** The single tale this being has heard most — its people's best-known story. */
+  mostTold?: string;
   /** Family this being knows it has. */
   kin?: KinTie[];
   /** People this being knows and how it feels about them (no role labels). */

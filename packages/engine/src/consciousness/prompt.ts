@@ -73,6 +73,9 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     `THOSE YOU KNOW (how you feel about them):`,
     socialText(input.social),
     ``,
+    input.mostTold
+      ? `THE TALE YOUR PEOPLE TELL MOST (you have heard it many times): "${input.mostTold}"\n  What this tale MEANS to you is yours alone to decide.`
+      : ``,
     `STORIES YOU CARRY (the tales your people tell — some you saw, some you were told):`,
     storiesText(input.stories),
     placeText(input.sacredPlace, snapshot.x, snapshot.y),

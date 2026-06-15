@@ -936,7 +936,12 @@ export class Experiment {
    * no hidden world facts.
    */
   private enrichCulture(input: ThinkInput, agentId: number, mind: AgentMind): ThinkInput {
-    const stories: KnownStory[] = mind.narratives.all().map((n) => ({ text: n.text, firsthand: n.firsthand }));
+    // Stories ordered by how often the being has HEARD each (intrinsic salience) —
+    // so the tale its people tell most leads, instead of being buried in the list.
+    const held = [...mind.narratives.all()].sort((a, b) => b.timesHeard - a.timesHeard);
+    const stories: KnownStory[] = held.map((n) => ({ text: n.text, firsthand: n.firsthand }));
+    const top = held[0];
+    const mostTold = top && top.timesHeard >= 2 ? top.text : undefined; // a tale actually retold
     const scored: { person: KnownPerson; salience: number }[] = [];
     for (const [pid, r] of mind.relationships.asMap()) {
       if (!this.agentBody(pid)?.alive) continue;
@@ -944,7 +949,13 @@ export class Experiment {
       if (felt) scored.push({ person: { name: this.nameOf(pid), feeling: felt.feeling }, salience: felt.salience });
     }
     scored.sort((a, b) => b.salience - a.salience);
-    return { ...input, stories, kin: this.kinOf(agentId), social: scored.slice(0, 8).map((s) => s.person) };
+    return {
+      ...input,
+      stories,
+      ...(mostTold ? { mostTold } : {}),
+      kin: this.kinOf(agentId),
+      social: scored.slice(0, 8).map((s) => s.person),
+    };
   }
 
   /**

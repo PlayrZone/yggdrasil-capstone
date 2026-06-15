@@ -15,6 +15,10 @@ export interface Narrative {
   firstTick: number;
   /** True if this being witnessed it; false if it was only retold to them. */
   firsthand: boolean;
+  /** How many times this being has heard/witnessed it — intrinsic salience. A tale
+   * told to you again and again is the one your people tell most; the most-heard
+   * story is what a being would call its people's best-known tale. */
+  timesHeard: number;
   retellable: number; // ticks before it can be retold again (rate-limit per teller)
 }
 
@@ -73,10 +77,11 @@ export class NarrativeStore {
   remember(id: string, text: string, x: number, y: number, tick: number, firsthand: boolean): void {
     const existing = this.stories.get(id);
     if (existing) {
+      existing.timesHeard++; // heard again — it grows more familiar/told
       if (firsthand) existing.firsthand = true; // hearing then witnessing upgrades it
       return;
     }
-    this.stories.set(id, { id, text, x, y, firstTick: tick, firsthand, retellable: 0 });
+    this.stories.set(id, { id, text, x, y, firstTick: tick, firsthand, timesHeard: 1, retellable: 0 });
   }
 
   has(id: string): boolean {
