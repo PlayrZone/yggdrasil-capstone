@@ -25,13 +25,59 @@ export class SessionManager {
     private readonly makeBackend: () => IMindBackend | null = () => null,
   ) {}
 
-  create(seed: string, agentCount: number, startedAt: number): number {
+  create(seed: string, agentCount: number, startedAt: number, craftLearning = false): number {
     const mindBackend = this.makeBackend() ?? undefined;
-    const exp = new Experiment({ seed, agentCount, mindBackend });
+    const exp = new Experiment({ seed, agentCount, mindBackend, craftLearning });
     const runId = this.db.createRun({ seed, agentCount, backend: exp.backendLabel, startedAt });
     this.sessions.set(runId, { exp, runId, agentCount, lastRecordedEventCount: 0, startedAt });
     this.snapshotMetrics(runId);
     return runId;
+  }
+
+  /**
+   * Phase 3 setup: give the craft of `output` to the `count` most-central
+   * founders (their kin cluster around them, so descendants can apprentice).
+   * Returns the maker ids. Logged to the audit trail as an MCP action.
+   */
+  seedRecipe(runId: number, output: string, count = 1): number[] {
+    const s = this.require(runId);
+    const exp = s.exp;
+    const founders = exp.agentIds
+      .map((id) => {
+        const t = exp.agentEntity(id)?.components['Transform2D'] as { x: number; y: number } | undefined;
+        return t ? { id, x: t.x, y: t.y } : null;
+      })
+      .filter((a): a is { id: number; x: number; y: number } => a !== null);
+    const cx = founders.reduce((a, f) => a + f.x, 0) / founders.length;
+    const cy = founders.reduce((a, f) => a + f.y, 0) / founders.length;
+    founders.sort((a, b) => (a.x - cx) ** 2 + (a.y - cy) ** 2 - ((b.x - cx) ** 2 + (b.y - cy) ** 2));
+    const makers = founders.slice(0, Math.max(1, count)).map((f) => f.id);
+    exp.seedRecipe(output as never, makers);
+    // (The tool handler logs this mutation via logMutation; no double-record here.)
+    return makers;
+  }
+
+  /** Phase 3 measure: makers (beings who completed a craft) by generation, plus
+   *  living recipe-holders — the spread of a learned technology. */
+  craftStats(runId: number, output = 'spear'): {
+    makersByGeneration: Record<number, number>;
+    recipeHolders: number;
+    totalMakers: number;
+    totalCrafts: number;
+  } {
+    const exp = this.require(runId).exp;
+    const byGen: Record<number, number> = {};
+    let totalCrafts = 0;
+    let totalMakers = 0;
+    for (const [id, c] of exp.craftsByAgent) {
+      totalCrafts += c;
+      if (c > 0) {
+        totalMakers++;
+        const g = exp.generationOf(id);
+        byGen[g] = (byGen[g] ?? 0) + 1;
+      }
+    }
+    return { makersByGeneration: byGen, recipeHolders: exp.recipeHolders(output as never).length, totalMakers, totalCrafts };
   }
 
   get(runId: number): Session | undefined {

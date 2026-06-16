@@ -45,7 +45,7 @@ const text = (s: string): { content: { type: 'text'; text: string }[] } => ({
 });
 const json = (v: unknown): { content: { type: 'text'; text: string }[] } => text(JSON.stringify(v, null, 2));
 
-const MUTATING = new Set(['create_experiment', 'advance', 'give_idea', 'finish_run', 'run_experiment', 'write_report']);
+const MUTATING = new Set(['create_experiment', 'advance', 'give_idea', 'finish_run', 'run_experiment', 'write_report', 'seed_recipe']);
 function logMutation(tool: string, detail: unknown, runId?: number): void {
   if (!MUTATING.has(tool)) return;
   db.recordAction('mcp', tool, detail, runId);
@@ -154,14 +154,55 @@ server.registerTool(
     inputSchema: {
       seed: z.string().describe('Seed string — same seed reproduces the same world.'),
       agentCount: z.number().int().positive().max(400).optional().describe('Gahallians to spawn (default 100).'),
+      craftLearning: z
+        .boolean()
+        .optional()
+        .describe('Phase 3: when true, a craft-recipe can be LEARNED by watching it done (apprenticeship). Default false.'),
     },
   },
-  async ({ seed, agentCount }) => {
+  async ({ seed, agentCount, craftLearning }) => {
     const n = agentCount ?? 100;
-    const runId = sessions.create(seed, n, 0);
-    logMutation('create_experiment', { seed, agentCount: n }, runId);
-    announce('create', `Created experiment "${seed}" with ${n} Gahallians`, { runId, data: { seed, agentCount: n }, withAgents: true });
-    return json({ runId, seed, agentCount: n, message: 'created (tick 0). Use advance to run it.' });
+    const runId = sessions.create(seed, n, 0, craftLearning ?? false);
+    logMutation('create_experiment', { seed, agentCount: n, craftLearning: craftLearning ?? false }, runId);
+    announce('create', `Created experiment "${seed}" with ${n} Gahallians${craftLearning ? ' (craft-learning ON)' : ''}`, { runId, data: { seed, agentCount: n }, withAgents: true });
+    return json({ runId, seed, agentCount: n, craftLearning: craftLearning ?? false, message: 'created (tick 0). Use advance to run it.' });
+  },
+);
+
+// ── seed_recipe (MUTATING — Phase 3 setup) ──────────────────────────────────────
+server.registerTool(
+  'seed_recipe',
+  {
+    title: 'Seed a craft into a maker',
+    description:
+      'Give the craft of `output` (e.g. "spear") to the most-central founder(s) — the seeded maker(s) of a technology. Whether the skill then SPREADS is the experiment; this only creates the first maker. Returns the maker ids.',
+    inputSchema: {
+      runId: z.number().int().positive(),
+      output: z.string().describe('What the recipe makes, e.g. "spear".'),
+      count: z.number().int().positive().max(20).optional().describe('How many makers to seed (default 1).'),
+    },
+  },
+  async ({ runId, output, count }) => {
+    const makers = sessions.seedRecipe(runId, output, count ?? 1);
+    logMutation('seed_recipe', { output, makers }, runId);
+    announce('idea', `Seeded the ${output}-craft into ${makers.length} maker(s): ${makers.join(', ')}`, { runId, data: { output, makers } });
+    return json({ runId, output, makers });
+  },
+);
+
+// ── craft_stats (read — Phase 3 measure) ────────────────────────────────────────
+server.registerTool(
+  'craft_stats',
+  {
+    title: 'Technological inheritance measure',
+    description: 'How far a seeded craft has spread: makers (beings who completed a craft) by generation, living recipe-holders, totals.',
+    inputSchema: {
+      runId: z.number().int().positive(),
+      output: z.string().optional().describe('Recipe output to measure (default "spear").'),
+    },
+  },
+  async ({ runId, output }) => {
+    return json({ runId, output: output ?? 'spear', ...sessions.craftStats(runId, output ?? 'spear') });
   },
 );
 
