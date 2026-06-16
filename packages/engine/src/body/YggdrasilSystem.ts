@@ -38,7 +38,7 @@ const BUILD_COST: Record<BuildKind, number> = { shelter: 3, wall: 1, container: 
  * knows this, the Gahallians must discover it by trying Craft with the right
  * things in hand. First match wins, so richer combinations take precedence.
  */
-const CRAFT_RECIPES: { inputs: Partial<Record<ObjectKind, number>>; output: ObjectKind }[] = [
+export const CRAFT_RECIPES: { inputs: Partial<Record<ObjectKind, number>>; output: ObjectKind }[] = [
   { inputs: { wood: 1, stone: 1 }, output: 'spear' }, // a point on a shaft — the best weapon
   { inputs: { stone: 1, fiber: 1 }, output: 'handaxe' }, // a bound edge — weapon + tool
   { inputs: { wood: 2 }, output: 'club' }, // a heavy length of wood
@@ -484,7 +484,9 @@ export class YggdrasilSystem {
             targetIds: [],
             x: t.x,
             y: t.y,
-            payload: { made: recipe.output, objectKind: recipe.output },
+            // inputs ride the event so a witness sees WHAT went in, not just
+            // what came out — the demonstration a learner mines into a recipe.
+            payload: { made: recipe.output, objectKind: recipe.output, inputs: recipe.inputs },
           });
           this.advance(body);
           return;

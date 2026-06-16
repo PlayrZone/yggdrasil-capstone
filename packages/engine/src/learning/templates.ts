@@ -65,6 +65,11 @@ export function renderStatement(rule: KnowledgeRule): string {
       const effect = rule.direction === 'relieves' ? 'eases' : 'worsens';
       return `${capitalize(phrase(rule.actionType))}${where} ${effect} ${rule.need}`;
     }
+    case 'craft-recipe': {
+      const parts = Object.entries(rule.inputs).map(([k, n]) => (n && n > 1 ? `${n} ${k}` : k));
+      const mats = parts.length ? parts.join(' and ') : 'the right materials';
+      return `A ${rule.output} can be made by working ${mats} together`;
+    }
   }
   return '';
 }

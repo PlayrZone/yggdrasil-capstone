@@ -15,5 +15,9 @@ export function ruleKey(rule: KnowledgeRule): string {
       return `soc:${rule.partnerId}:${rule.pattern}`;
     case 'outcome-association':
       return `out:${rule.actionType}:${rule.feature ?? '*'}:${rule.need}:${rule.direction}`;
+    case 'craft-recipe':
+      // Keyed by output only: "the spear recipe" is one belief however its
+      // inputs are remembered, so demonstrations and tellings reinforce it.
+      return `craft:${rule.output}`;
   }
 }

@@ -29,6 +29,7 @@ export function memoryFromEvent(
   const targetNeedDeltas =
     (isTarget ? (event.payload['targetNeedDeltas'] as Partial<Needs> | undefined) : undefined) ?? {};
   const objectKind = event.payload['objectKind'] as ObjectKind | undefined;
+  const craftInputs = event.payload['inputs'] as Partial<Record<ObjectKind, number>> | undefined;
   const utterance = event.payload['utterance'] as Utterance | undefined;
 
   let type: SimEventType = event.type;
@@ -90,6 +91,7 @@ export function memoryFromEvent(
     type,
     subjects,
     objectKind,
+    craftInputs,
     context,
     needDeltas: deltas,
     outcome:

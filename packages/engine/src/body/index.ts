@@ -68,7 +68,7 @@ export {
 export type { Structure, TerrainField } from './PerceptionSystem.js';
 export { PerceptionSystem } from './PerceptionSystem.js';
 
-export { YggdrasilSystem } from './YggdrasilSystem.js';
+export { YggdrasilSystem, CRAFT_RECIPES } from './YggdrasilSystem.js';
 
 export { WildlifeSystem } from './WildlifeSystem.js';
 export type { Animal, AnimalKind } from './WildlifeSystem.js';

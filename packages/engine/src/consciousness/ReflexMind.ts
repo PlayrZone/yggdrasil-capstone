@@ -33,6 +33,8 @@ export class ReflexMind implements IMind {
   think(input: ThinkInput): MindOutput {
     const { snapshot, worldView, knowledge } = input;
     const need = mostPressingNeed(input);
+    // When no need presses, a being who holds a craft-recipe practises it.
+    const craftSteps = need === undefined ? craftPlan(input, heldRecipe(knowledge)) : undefined;
     const goals: Goal[] = [];
     const plan: Intent[] = [];
     const utterances: MindOutput['utterances'] = [];
@@ -106,6 +108,17 @@ export class ReflexMind implements IMind {
       } else {
         plan.push(wander(input));
       }
+    } else if (craftSteps) {
+      // Nothing presses, and this being KNOWS how to make a tool — so it works
+      // at its craft: gathering the materials, then combining them. Each making
+      // is a demonstration its kin can watch and learn from. A learned skill,
+      // practised in the open, is how a technology propagates. (Only fires for
+      // a being that holds a craft-recipe — seeded in the first maker, learned
+      // by observation thereafter; everyone else falls through to the usual
+      // idle behaviour below.)
+      goals.push(goal(input, 'work the materials into a tool', undefined));
+      for (const step of craftSteps) plan.push(step);
+      plan.push({ kind: 'Idle', durationTicks: 30 });
     } else {
       // Nothing pressing — so the choice is shaped by BELIEF and RELATIONSHIPS,
       // not survival. Periodically a being makes a PILGRIMAGE to its sacred
@@ -218,6 +231,62 @@ function rememberedFoodSpot(input: ThinkInput): { x: number; y: number } | undef
       return { x: m.x, y: m.y };
     }
   }
+  return undefined;
+}
+
+// Where a raw material is won, so a being that knows a recipe can go get what
+// it lacks. (Stone is also winnable by digging, but a deposit is the reflex path.)
+const MATERIAL_NODE: Partial<Record<ObjectKind, ObservedResource['kind']>> = {
+  wood: 'tree',
+  stone: 'stoneDeposit',
+  fiber: 'fiberPlant',
+};
+// Materials with no resource node to harvest are won from the ground by digging
+// (stone on dry land, clay by water) — the Dig capability the reflex otherwise
+// never reaches for. A being that knows a craft will dig for what it needs.
+const DIGGABLE = new Set<ObjectKind>(['stone', 'clay']);
+/** The recipe this being knows how to make (held craft-knowledge), if any. */
+function heldRecipe(
+  knowledge: KnowledgeRecord[],
+): Extract<KnowledgeRecord['rule'], { kind: 'craft-recipe' }> | undefined {
+  for (const k of knowledge) {
+    if (k.status === 'held' && k.rule.kind === 'craft-recipe') return k.rule;
+  }
+  return undefined;
+}
+
+/**
+ * One step of practising a known craft: make it if the materials are in hand
+ * (and stock isn't already full), else go gather the first material it lacks.
+ * Returns undefined when there's nothing useful to do toward the craft right
+ * now (stock full, or the missing material is nowhere in sight).
+ */
+function craftPlan(
+  input: ThinkInput,
+  recipe: Extract<KnowledgeRecord['rule'], { kind: 'craft-recipe' }> | undefined,
+): Intent[] | undefined {
+  if (!recipe) return undefined;
+  const inv = input.snapshot.inventory;
+  let missing: ObjectKind | undefined;
+  for (const [k, n] of Object.entries(recipe.inputs) as [ObjectKind, number][]) {
+    if ((inv[k] ?? 0) < n) {
+      missing = k;
+      break;
+    }
+  }
+  if (!missing) return [{ kind: 'Craft' }];
+  const nodeKind = MATERIAL_NODE[missing];
+  if (nodeKind) {
+    const node = nearestNode(input, nodeKind);
+    if (node) {
+      return [
+        { kind: 'MoveTo', targetId: node.id, x: node.x, y: node.y },
+        { kind: 'Gather', targetId: node.id },
+      ];
+    }
+  }
+  // No harvestable node for this material in sight — dig it out of the ground.
+  if (DIGGABLE.has(missing)) return [{ kind: 'Dig' }];
   return undefined;
 }
 

@@ -9,6 +9,7 @@ import {
   WorldRegularitiesSystem,
   WildlifeSystem,
   YggdrasilSystem,
+  CRAFT_RECIPES,
   createResourceNode,
   createGahallianBody,
   spawnGahallians,
@@ -39,7 +40,7 @@ import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
-import type { Intent, MindOutput, ResourceNodeKind, SimEvent, Traits, ThinkInput, KnownStory, KinTie, KnownPerson, RelationshipRecord } from '../contract/types.js';
+import type { Intent, MindOutput, ObjectKind, ResourceNodeKind, SimEvent, Traits, ThinkInput, KnownStory, KinTie, KnownPerson, RelationshipRecord } from '../contract/types.js';
 import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS, isDeepWater, clampToWorld } from '../world/regions.js';
 import type { Region } from '../world/regions.js';
 
@@ -67,6 +68,11 @@ export interface ExperimentOptions {
    * making" — so a seeded culture, not an engine incentive, must steer making.
    * Default true. */
   offerMaking?: boolean;
+  /** Phase 3 Exp 1: when true, a being can LEARN a craft-recipe by watching it
+   * done enough times (the apprenticeship channel). Off (default) = a seeded
+   * maker still crafts, but the skill cannot spread by observation — the A/B
+   * control isolating whether technological inheritance happens. */
+  craftLearning?: boolean;
 }
 
 const EVENT_LOG_CAP = 400;
@@ -155,6 +161,10 @@ export class Experiment {
   private readonly leadershipOn: boolean;
   /** Exp 10: does the prompt offer "try making"? When false, only culture can steer it. */
   private readonly offerMaking: boolean;
+  /** Phase 3 Exp 1 A/B: can a craft-recipe be learned by watching it done? */
+  private readonly craftLearning: boolean;
+  /** Phase 3 Exp 1: per-agent count of crafts COMPLETED (actor of a Crafted event). */
+  readonly craftsByAgent = new Map<number, number>();
 
   tick = 0;
   eventCount = 0;
@@ -182,6 +192,7 @@ export class Experiment {
     this.mythBehavior = options.mythBehavior ?? true;
     this.leadershipOn = options.leadership ?? true;
     this.offerMaking = options.offerMaking ?? true;
+    this.craftLearning = options.craftLearning ?? false;
     if (mindBackend) {
       this.cognitionLog = new CognitionLog();
       this.llm = new LlmMind(mindBackend, {
@@ -285,6 +296,9 @@ export class Experiment {
         break;
       case 'BuiltStructure':
         this.buildCount++;
+        break;
+      case 'Crafted':
+        this.craftsByAgent.set(event.actorId, (this.craftsByAgent.get(event.actorId) ?? 0) + 1);
         break;
       case 'UtteranceSpoken': {
         const u = event.payload['utterance'] as { speechAct?: string } | undefined;
@@ -401,7 +415,10 @@ export class Experiment {
     for (const agent of agents) {
       this.agentIds.push(agent.id);
       const tr = (agent.components['GahallianBody'] as GahallianBody).traits;
-      this.minds.set(agent.id, new AgentMind(agent.id, { ...mindOptions(tr), mythBehavior: this.mythBehavior }));
+      this.minds.set(
+        agent.id,
+        new AgentMind(agent.id, { ...mindOptions(tr), mythBehavior: this.mythBehavior, craftLearning: this.craftLearning }),
+      );
     }
     this.reproRng = mulberry32(hashSeed(`${this.seed}:repro`));
 
@@ -574,7 +591,10 @@ export class Experiment {
       GahallianBody: createGahallianBody('', traits, tick), // unnamed, age 0
     });
     this.agentIds.push(child.id);
-    this.minds.set(child.id, new AgentMind(child.id, { ...mindOptions(traits), mythBehavior: this.mythBehavior }));
+    this.minds.set(
+      child.id,
+      new AgentMind(child.id, { ...mindOptions(traits), mythBehavior: this.mythBehavior, craftLearning: this.craftLearning }),
+    );
     this.birthCount++;
     this.births.push({ child: child.id, parents: [a.id, b.id], tick });
     a.body.reproCooldownUntil = tick + REPRO_COOLDOWN;
@@ -982,6 +1002,69 @@ export class Experiment {
       const mind = this.minds.get(aid);
       if (mind) mind.narratives.seed(id, text, x, y, this.tick, timesHeard);
     }
+  }
+
+  /**
+   * Phase 3 Exp 1 setup: give a being the SKILL of a craft — as if it had
+   * discovered (or long ago been taught) the recipe. It now holds the
+   * craft-recipe as firm knowledge and will practise it; whether the skill
+   * then SPREADS by observation is the experiment, not this seeding. The
+   * recipe's materials come from the engine's one source of truth (CRAFT_RECIPES),
+   * so a seeded maker makes exactly what anyone could discover.
+   */
+  seedRecipe(output: ObjectKind, toAgentIds: number[]): void {
+    const recipe = CRAFT_RECIPES.find((r) => r.output === output);
+    if (!recipe) throw new Error(`no recipe makes ${output}`);
+    for (const aid of toAgentIds) {
+      const mind = this.minds.get(aid);
+      if (!mind) continue;
+      mind.knowledge.applyEvidence(
+        {
+          rule: { kind: 'craft-recipe', output, inputs: recipe.inputs },
+          confidence: 0.95,
+          evidenceCount: 6, // > HELD_MIN_EVIDENCE, so it is held from the start
+          contradictionCount: 0,
+          sourceMemoryIds: [],
+        },
+        this.tick,
+      );
+    }
+  }
+
+  /** Living beings who HOLD a craft-recipe for `output` (learned it, may or may
+   *  not have crafted yet) — the apprenticeship's reach, distinct from makers. */
+  recipeHolders(output: ObjectKind): number[] {
+    const key = `craft:${output}`;
+    const holders: number[] = [];
+    for (const id of this.agentIds) {
+      if (!this.agentBody(id)?.alive) continue;
+      const rec = this.minds.get(id)?.knowledge.get(key);
+      if (rec && rec.status === 'held') holders.push(id);
+    }
+    return holders;
+  }
+
+  /**
+   * Which generation a being belongs to: founders are 1, a child is one past
+   * its eldest-known parent. Computed from the births ledger — the only record
+   * of lineage. Used to measure how a skill propagates DOWN the generations.
+   */
+  generationOf(id: number): number {
+    const parentOf = new Map<number, [number, number]>();
+    for (const b of this.births) parentOf.set(b.child, b.parents);
+    const cache = new Map<number, number>();
+    const depth = (a: number, guard: number): number => {
+      if (cache.has(a)) return cache.get(a)!;
+      const parents = parentOf.get(a);
+      if (!parents || guard > 100) {
+        cache.set(a, 1);
+        return 1;
+      }
+      const g = 1 + Math.max(depth(parents[0], guard + 1), depth(parents[1], guard + 1));
+      cache.set(a, g);
+      return g;
+    };
+    return depth(id, 0);
   }
 
   /**

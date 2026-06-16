@@ -30,6 +30,11 @@ export function classifyRuleTruth(rule: KnowledgeRule): RuleTruth {
       // Whether agent #N reciprocates depends on that agent's lived behavior,
       // not on world config — the Observatory can't adjudicate it cheaply.
       return 'unverified';
+    case 'craft-recipe':
+      // The world's hidden material relations are real: a known recipe is true
+      // knowledge (the engine will honour it). A learned technology is not a
+      // superstition.
+      return 'true';
   }
 }
 

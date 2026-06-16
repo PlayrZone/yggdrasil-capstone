@@ -13,6 +13,7 @@ import { ContextMiner } from '../learning/ContextMiner.js';
 import { SuccessionMiner } from '../learning/SuccessionMiner.js';
 import { SocialMiner } from '../learning/SocialMiner.js';
 import { OutcomeMiner } from '../learning/OutcomeMiner.js';
+import { CraftObservationMiner } from '../learning/CraftObservationMiner.js';
 import { KnowledgeStore } from '../knowledge/KnowledgeStore.js';
 import { RelationshipStore } from '../relationships/RelationshipStore.js';
 import { NarrativeStore } from '../narrative/NarrativeStore.js';
@@ -28,6 +29,13 @@ export interface AgentMindOptions {
   memoryHotCapacity?: number;
   /** When false, held stories do NOT steer movement (the A/B control). Default true. */
   mythBehavior?: boolean;
+  /**
+   * When true, watching another craft can teach the recipe (the apprenticeship
+   * channel). The A/B control for Phase 3 Exp 1: off = a seeded maker still
+   * crafts, but the skill cannot be learned by observation. Default false so
+   * existing reflex worlds are unchanged.
+   */
+  craftLearning?: boolean;
 }
 
 /**
@@ -56,6 +64,7 @@ export class AgentMind {
   ) {
     this.memory = new MemoryStream(options.memoryHotCapacity ?? 512);
     this.learners = [new ContextMiner(), new SuccessionMiner(), new SocialMiner(), new OutcomeMiner()];
+    if (options.craftLearning) this.learners.push(new CraftObservationMiner());
     this.mind = options.mind ?? new ReflexMind();
     this.thinkInterval = options.thinkInterval ?? 120;
     this.consolidateInterval = options.consolidateInterval ?? 300;

@@ -246,6 +246,8 @@ export interface MemoryRecord {
   /** Agent ids involved, excluding the rememberer. */
   subjects: number[];
   objectKind?: ObjectKind;
+  /** For Crafted events: the materials that were combined (seen in a demonstration). */
+  craftInputs?: Partial<Record<ObjectKind, number>>;
   context: ContextFeatures;
   /** Need pressure deltas this event caused (negative = relief). */
   needDeltas: Partial<Needs>;
@@ -299,6 +301,16 @@ export type KnowledgeRule =
       feature: ContextFeatureKey | null;
       need: NeedKey;
       direction: 'relieves' | 'worsens';
+    }
+  | {
+      // A learned PRACTICE: the materials, worked together, become a tool.
+      // Unlike the other rules (correlations mined from need-deltas), this is
+      // a recipe a being can ACT on — and learn by watching it done. The
+      // output is the recipe's identity; inputs are what the demonstration
+      // showed going in. This is the transmissible unit of technology.
+      kind: 'craft-recipe';
+      output: ObjectKind;
+      inputs: Partial<Record<ObjectKind, number>>;
     };
 
 export type KnowledgeStatus = 'hypothesis' | 'held' | 'contested' | 'abandoned';
