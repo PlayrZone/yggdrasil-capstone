@@ -194,7 +194,7 @@ describe('SpatialIndex', () => {
     expect(seen).toEqual(made.filter((id) => id !== made[7] && id !== made[0]));
   });
 
-  it('counts the entities its queries look at', () => {
+  it('counts every entity its queries, walks and reconciles look at', () => {
     const world = new World();
     for (let i = 0; i < 50; i++) place(world, 100 + i, 100);
     place(world, 1900, 1900);
@@ -207,6 +207,164 @@ describe('SpatialIndex', () => {
     counter.visits = 0;
     world.forEach(() => {});
     expect(counter.visits).toBe(51); // a full scan visits everything
+    counter.visits = 0;
+    world.spatial.each('Mark', () => {});
+    expect(counter.visits).toBe(51); // …and so does a whole-kind walk
+    counter.visits = 0;
+    world.spatial.reconcile(); // the per-tick pass is real work, so it counts
+    expect(counter.visits).toBe(51);
     world.setVisitCounter(null);
+  });
+});
+
+describe('SpatialIndex — hostile input', () => {
+  it('keeps an entity listed when it loses its position, and re-grids it on return', () => {
+    const world = new World();
+    const e = place(world, 100, 100);
+    world.addComponent(e.id, 'Other', {});
+    world.removeComponent(e.id, 'Transform2D');
+    // A full scan still saw it: whole-kind walks must too.
+    expect(world.spatial.count('Mark')).toBe(1);
+    expect(world.spatial.count('Other')).toBe(1);
+    const seen: number[] = [];
+    world.spatial.each('Mark', (x) => seen.push(x.id));
+    expect(seen).toEqual([e.id]);
+    expect(world.spatial.within('Mark', 100, 100, 500)).toEqual([]);
+    // …and components added while it is positionless are not silently dropped.
+    world.addComponent(e.id, 'Third', {});
+    expect(world.spatial.count('Third')).toBe(1);
+    world.addComponent(e.id, 'Transform2D', { x: 700, y: 700 });
+    expect(ids(world.spatial.within('Mark', 700, 700, 1))).toEqual([e.id]);
+    expect(ids(world.spatial.within('Third', 700, 700, 1))).toEqual([e.id]);
+    expect(ids(world.spatial.within('Other', 700, 700, 1))).toEqual([e.id]);
+  });
+
+  it('churns components and positions without ever diverging from a scan', () => {
+    const world = new World();
+    const rng = mulberry32(hashSeed('churn'));
+    const live: Entity[] = [];
+    for (let i = 0; i < 120; i++) live.push(place(world, rng() * 2000, rng() * 2000));
+    for (let step = 0; step < 600; step++) {
+      const e = live[Math.floor(rng() * live.length)]!;
+      const roll = rng();
+      if (roll < 0.25) world.removeComponent(e.id, 'Transform2D');
+      else if (roll < 0.5) world.addComponent(e.id, 'Transform2D', { x: rng() * 2000, y: rng() * 2000 });
+      else if (roll < 0.65) world.addComponent(e.id, 'Extra', {});
+      else if (roll < 0.75) world.removeComponent(e.id, 'Extra');
+      else if (roll < 0.85) live.push(place(world, rng() * 2000, rng() * 2000));
+      else {
+        const t = e.components['Transform2D'] as Transform2D | undefined;
+        if (t) {
+          t.x = rng() * 2000;
+          t.y = rng() * 2000;
+          world.spatial.markMoved(e.id);
+        }
+      }
+      if (step % 7 === 0) world.spatial.reconcile();
+      const x = rng() * 2000;
+      const y = rng() * 2000;
+      const radius = [10, 92, 400][step % 3]!;
+      expect(ids(world.spatial.within('Mark', x, y, radius))).toEqual(bruteForce(world, 'Mark', x, y, radius));
+    }
+    // Listing never lost anyone: every living Mark is still counted.
+    let scanned = 0;
+    world.forEach((e) => {
+      if (e.components['Mark']) scanned++;
+    });
+    expect(world.spatial.count('Mark')).toBe(scanned);
+  });
+
+  it('a query with a non-finite centre or radius finds nothing instead of hanging', () => {
+    const world = new World();
+    place(world, 100, 100);
+    for (const bad of [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN]) {
+      expect(world.spatial.within('Mark', bad, 0, 50)).toEqual([]);
+      expect(world.spatial.within('Mark', 0, bad, 50)).toEqual([]);
+      expect(world.spatial.within('Mark', 0, 0, bad)).toEqual([]);
+      expect(world.spatial.anyWithin('Mark', bad, 0, 50, () => true)).toBe(false);
+      expect(world.spatial.anyWithin('Mark', 0, 0, bad, () => true)).toBe(false);
+    }
+    // A negative radius is still a disc of |r| — exactly what `d² <= r²` meant.
+    expect(ids(world.spatial.within('Mark', 100, 100, -5))).toEqual([1]);
+  });
+
+  it('treats a non-finite position as no position, until it is finite again', () => {
+    const world = new World();
+    const e = place(world, 100, 100);
+    const t = e.components['Transform2D'] as Transform2D;
+    t.x = Number.NaN;
+    world.spatial.markMoved(e.id);
+    expect(world.spatial.within('Mark', 100, 100, 5000)).toEqual([]);
+    expect(world.spatial.count('Mark')).toBe(1); // still listed, as a scan saw it
+    t.x = Number.POSITIVE_INFINITY;
+    world.spatial.reconcile();
+    expect(world.spatial.within('Mark', 100, 100, 5000)).toEqual([]);
+    t.x = 120;
+    world.spatial.reconcile();
+    expect(ids(world.spatial.within('Mark', 100, 100, 50))).toEqual([e.id]);
+  });
+
+  it('packs far-flung coordinates into the edge cell without colliding', () => {
+    const world = new World();
+    // Well beyond ±CELL_BIAS cells (±1.57M units), where a naive key would wrap.
+    const far = place(world, 5e9, 5e9);
+    const alsoFar = place(world, 6e9, 5e9);
+    const mirrored = place(world, -5e9, -5e9);
+    expect(ids(world.spatial.within('Mark', 5e9, 5e9, 1))).toEqual([far.id]);
+    expect(ids(world.spatial.within('Mark', 6e9, 5e9, 1))).toEqual([alsoFar.id]);
+    expect(ids(world.spatial.within('Mark', -5e9, -5e9, 1))).toEqual([mirrored.id]);
+    // The two positives share the clamped cell but the distance test separates them.
+    expect(ids(world.spatial.within('Mark', 5e9, 5e9, 2e9))).toEqual([far.id, alsoFar.id]);
+    expect(world.spatial.within('Mark', 0, 0, 100)).toEqual([]);
+  });
+
+  it('falls back to the bucket scan when a radius asks for more cells than entities', () => {
+    const world = new World();
+    const rng = mulberry32(hashSeed('huge-radius'));
+    for (let i = 0; i < 300; i++) place(world, rng() * 2000, rng() * 2000);
+    const expected = bruteForce(world, 'Mark', 1000, 1000, 20000);
+    const counter = { visits: 0 };
+    world.setVisitCounter(counter);
+    expect(ids(world.spatial.within('Mark', 1000, 1000, 20000))).toEqual(expected);
+    expect(counter.visits).toBe(300); // one pass over the bucket, not 174k cell probes
+    counter.visits = 0;
+    expect(world.spatial.anyWithin('Mark', 1000, 1000, 20000, () => true)).toBe(true);
+    expect(counter.visits).toBeLessThanOrEqual(300);
+    world.setVisitCounter(null);
+  });
+
+  it('reconcile follows a Transform2D object that was swapped, dropped or added', () => {
+    const world = new World();
+    const e = place(world, 10, 10);
+    e.components['Transform2D'] = { x: 1500, y: 1500 }; // a host replacing the object
+    world.spatial.reconcile();
+    expect(ids(world.spatial.within('Mark', 1500, 1500, 1))).toEqual([e.id]);
+    expect(world.spatial.within('Mark', 10, 10, 1)).toEqual([]);
+    delete e.components['Transform2D']; // …and dropping it outright
+    world.spatial.reconcile();
+    expect(world.spatial.within('Mark', 1500, 1500, 5000)).toEqual([]);
+    expect(world.spatial.count('Mark')).toBe(1);
+    e.components['Transform2D'] = { x: 40, y: 40 };
+    world.spatial.reconcile();
+    expect(ids(world.spatial.within('Mark', 40, 40, 1))).toEqual([e.id]);
+  });
+
+  it('each walks a snapshot: what the callback creates or removes is well defined', () => {
+    const world = new World();
+    const made: Entity[] = [];
+    for (let i = 0; i < 8; i++) made.push(place(world, i * 10, 0));
+    const seen: number[] = [];
+    world.spatial.each('Mark', (e) => {
+      seen.push(e.id);
+      if (e.id === made[2]!.id) {
+        world.removeEntity(made[5]!.id); // not yet reached — it is skipped
+        world.removeEntity(made[1]!.id); // already visited — no effect
+        place(world, 500, 500); // created during the walk — not visited
+      }
+    });
+    expect(seen).toEqual([1, 2, 3, 4, 5, 7, 8]);
+    const after: number[] = [];
+    world.spatial.each('Mark', (e) => after.push(e.id));
+    expect(after).toEqual([1, 3, 4, 5, 7, 8, 9]);
   });
 });

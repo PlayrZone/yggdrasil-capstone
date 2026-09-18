@@ -2,9 +2,10 @@ import type { Entity } from './Entity.js';
 import type { Transform2D } from './Transform2D.js';
 
 /**
- * Instrumentation hook: how many entities the world's scans and spatial
- * queries have looked at. Nothing in the simulation reads it — the benchmark
- * injects one to compare "entity visits per tick" across implementations.
+ * Instrumentation hook: how many entities the world's scans, spatial queries,
+ * `each` walks and per-tick reconciles have looked at. Nothing in the
+ * simulation reads it — the benchmark injects one to compare "entity visits
+ * per tick" across implementations.
  */
 export interface VisitCounter {
   visits: number;
@@ -19,22 +20,36 @@ export interface VisitCounter {
  */
 const CELL_SIZE = 48;
 
-// Cell coordinates packed into one integer key; good for ±32768 cells.
+// Cell coordinates are packed into one integer key, so they must stay inside
+// ±CELL_BIAS or two different cells could share a key. Coordinates beyond
+// ±(CELL_BIAS · CELL_SIZE) ≈ ±1.57M world units — far outside any world the
+// engine models — are clamped into the outermost cell. Queries clamp the same
+// way, so a clamped entity is still found by a query centred near it, and the
+// exact distance test still decides membership.
 const CELL_SPAN = 0x10000;
 const CELL_BIAS = 0x8000;
+const CELL_MIN = -CELL_BIAS;
+const CELL_MAX = CELL_BIAS - 1;
+
+function cellAxis(v: number): number {
+  const c = Math.floor(v / CELL_SIZE);
+  return c < CELL_MIN ? CELL_MIN : c > CELL_MAX ? CELL_MAX : c;
+}
 
 function cellOf(x: number, y: number): number {
-  return (Math.floor(y / CELL_SIZE) + CELL_BIAS) * CELL_SPAN + (Math.floor(x / CELL_SIZE) + CELL_BIAS);
+  return (cellAxis(y) + CELL_BIAS) * CELL_SPAN + (cellAxis(x) + CELL_BIAS);
 }
 
 interface Indexed {
   readonly entity: Entity;
-  /** Null for an entity that has no position: listed, but never in a cell. */
-  readonly transform: Transform2D | null;
-  /** Component keys (Transform2D excluded) this entity is bucketed under. */
+  /** The position component as last seen, or null when the entity has none. */
+  transform: Transform2D | null;
+  /** Component keys (Transform2D excluded) this entity is listed under. */
   readonly keys: string[];
+  /** True while this record occupies `cell` in every one of its buckets. */
+  inCells: boolean;
   cell: number;
-  /** Position as of the last (re)bucketing — compared against the live transform. */
+  /** Position as of the last settle — what the queries measure against. */
   x: number;
   y: number;
 }
@@ -57,42 +72,58 @@ interface Bucket {
  * ascending and a Map iterates in insertion order). That is what keeps
  * nearest-wins tie-breaking, RNG consumption and event ordering identical.
  *
- * An entity with no `Transform2D` is still listed under its components (`each`
- * and `count` see it, as a full scan did) but lives in no cell, so the spatial
- * queries skip it — exactly like the `if (!t) return` in the scans.
+ * MEMBERSHIP IS NOT POSITION. An entity is listed under its components whether
+ * or not it has a `Transform2D`, and whether or not that position is finite —
+ * `each` and `count` see it, as a full scan did. Only the spatial queries skip
+ * it, exactly like the `if (!t) return` in the scans. Gaining, losing or
+ * replacing the position moves it in and out of the grid, never off the list.
+ *
+ * NON-FINITE INPUT. A query centred on, or sized by, a non-finite number
+ * describes no disc, so it finds nothing: the alternative is a cell walk whose
+ * bounds are both `Infinity`, which never terminates. An entity whose position
+ * is non-finite is treated as having none until it is finite again.
  *
  * STAYING IN SYNC. Creation, removal and component changes go through `World`.
  * A position written directly must be followed by `markMoved`; `reconcile` is
- * the safety net that catches a position changed by anyone else (a host
- * relocating a being between ticks) by comparing each record against its live
- * transform.
+ * the safety net — it re-reads each entity's position component, so a host that
+ * moves a being, swaps its `Transform2D` for a new object, or drops it
+ * altogether between ticks is picked up.
+ *
+ * MUTATION DURING ITERATION. `each` walks a snapshot and re-checks liveness, so
+ * a callback may create or remove entities: it visits exactly those of that
+ * kind present at the call and still present when reached, in id order. The
+ * `match` predicate of `anyWithin` must be pure — it runs inside a live cell
+ * walk, so moving or removing entities from it has undefined coverage.
  */
 export class SpatialIndex {
   private readonly records = new Map<number, Indexed>();
   private readonly buckets = new Map<string, Bucket>();
   counter: VisitCounter | null = null;
 
+  /** Idempotent: re-inserting an entity replaces whatever was listed for it. */
   insert(entity: Entity): void {
-    const transform = (entity.components['Transform2D'] as Transform2D | undefined) ?? null;
+    this.remove(entity.id);
     const keys: string[] = [];
     for (const key of Object.keys(entity.components)) if (key !== 'Transform2D') keys.push(key);
     const record: Indexed = {
       entity,
-      transform,
+      transform: (entity.components['Transform2D'] as Transform2D | undefined) ?? null,
       keys,
-      cell: transform ? cellOf(transform.x, transform.y) : 0,
-      x: transform ? transform.x : 0,
-      y: transform ? transform.y : 0,
+      inCells: false,
+      cell: 0,
+      x: 0,
+      y: 0,
     };
     this.records.set(entity.id, record);
-    for (const key of keys) this.bucketIn(key, record);
+    for (const key of keys) this.listIn(key, record);
+    this.settle(record);
   }
 
   remove(id: number): void {
     const record = this.records.get(id);
     if (!record) return;
     this.records.delete(id);
-    for (const key of record.keys) this.bucketOut(key, record);
+    for (const key of record.keys) this.listOut(key, record);
   }
 
   clear(): void {
@@ -101,62 +132,93 @@ export class SpatialIndex {
   }
 
   componentAdded(entity: Entity, key: string): void {
-    if (key === 'Transform2D') {
-      this.remove(entity.id);
+    const record = this.records.get(entity.id);
+    if (!record) {
       this.insert(entity);
       return;
     }
-    const record = this.records.get(entity.id);
-    if (!record || record.keys.includes(key)) return;
+    if (key === 'Transform2D') {
+      record.transform = (entity.components['Transform2D'] as Transform2D | undefined) ?? null;
+      this.settle(record);
+      return;
+    }
+    if (record.keys.includes(key)) return;
     record.keys.push(key);
-    this.bucketIn(key, record);
+    this.listIn(key, record);
   }
 
   componentRemoved(entity: Entity, key: string): void {
-    if (key === 'Transform2D') {
-      this.remove(entity.id);
-      return;
-    }
     const record = this.records.get(entity.id);
     if (!record) return;
+    if (key === 'Transform2D') {
+      // The entity stays listed — a scan still saw it — it just leaves the grid.
+      record.transform = null;
+      this.settle(record);
+      return;
+    }
     const at = record.keys.indexOf(key);
     if (at < 0) return;
     record.keys.splice(at, 1);
-    this.bucketOut(key, record);
+    this.listOut(key, record);
   }
 
   /** Tell the index a position was just written. The sanctioned move path. */
   markMoved(id: number): void {
     const record = this.records.get(id);
-    if (record) this.rebucket(record);
+    if (record) this.settle(record);
   }
 
-  /** Re-home anything whose transform moved without a `markMoved`. O(indexed). */
+  /**
+   * Re-home anything whose position changed without a `markMoved` — including a
+   * `Transform2D` that was replaced, added or dropped straight on the entity.
+   * O(indexed) per call.
+   */
   reconcile(): void {
+    if (this.counter) this.counter.visits += this.records.size;
     for (const record of this.records.values()) {
-      const t = record.transform;
-      if (t && (t.x !== record.x || t.y !== record.y)) this.rebucket(record);
+      const t = (record.entity.components['Transform2D'] as Transform2D | undefined) ?? null;
+      if (t === record.transform) {
+        if (t && (t.x !== record.x || t.y !== record.y)) this.settle(record);
+        continue;
+      }
+      record.transform = t;
+      this.settle(record);
     }
   }
 
   /** Entities with `key` within `radius` (inclusive), ascending by id. */
   within(key: string, x: number, y: number, radius: number): Entity[] {
     const bucket = this.buckets.get(key);
-    if (!bucket) return [];
+    if (!bucket || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return [];
+    const r = radius < 0 ? -radius : radius;
     const r2 = radius * radius;
     const found: Indexed[] = [];
-    const cx1 = Math.floor((x + radius) / CELL_SIZE);
-    const cy1 = Math.floor((y + radius) / CELL_SIZE);
-    for (let cy = Math.floor((y - radius) / CELL_SIZE); cy <= cy1; cy++) {
-      const row = (cy + CELL_BIAS) * CELL_SPAN + CELL_BIAS;
-      for (let cx = Math.floor((x - radius) / CELL_SIZE); cx <= cx1; cx++) {
-        const list = bucket.cells.get(row + cx);
-        if (!list) continue;
-        if (this.counter) this.counter.visits += list.length;
-        for (const record of list) {
-          const dx = record.x - x;
-          const dy = record.y - y;
-          if (dx * dx + dy * dy <= r2) found.push(record);
+    const cx0 = cellAxis(x - r);
+    const cx1 = cellAxis(x + r);
+    const cy0 = cellAxis(y - r);
+    const cy1 = cellAxis(y + r);
+    if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > bucket.all.length) {
+      // More cells to probe than there are entities of this kind: the scan the
+      // grid replaced is cheaper, and bounds the cost of a world-wide radius.
+      if (this.counter) this.counter.visits += bucket.all.length;
+      for (const record of bucket.all) {
+        if (!record.inCells) continue;
+        const dx = record.x - x;
+        const dy = record.y - y;
+        if (dx * dx + dy * dy <= r2) found.push(record);
+      }
+    } else {
+      for (let cy = cy0; cy <= cy1; cy++) {
+        const row = (cy + CELL_BIAS) * CELL_SPAN + CELL_BIAS;
+        for (let cx = cx0; cx <= cx1; cx++) {
+          const list = bucket.cells.get(row + cx);
+          if (!list) continue;
+          if (this.counter) this.counter.visits += list.length;
+          for (const record of list) {
+            const dx = record.x - x;
+            const dy = record.y - y;
+            if (dx * dx + dy * dy <= r2) found.push(record);
+          }
         }
       }
     }
@@ -180,13 +242,26 @@ export class SpatialIndex {
     excludeId?: number,
   ): boolean {
     const bucket = this.buckets.get(key);
-    if (!bucket) return false;
+    if (!bucket || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius)) return false;
+    const r = radius < 0 ? -radius : radius;
     const r2 = radius * radius;
-    const cx1 = Math.floor((x + radius) / CELL_SIZE);
-    const cy1 = Math.floor((y + radius) / CELL_SIZE);
-    for (let cy = Math.floor((y - radius) / CELL_SIZE); cy <= cy1; cy++) {
+    const cx0 = cellAxis(x - r);
+    const cx1 = cellAxis(x + r);
+    const cy0 = cellAxis(y - r);
+    const cy1 = cellAxis(y + r);
+    if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > bucket.all.length) {
+      if (this.counter) this.counter.visits += bucket.all.length;
+      for (const record of bucket.all) {
+        if (!record.inCells || record.entity.id === excludeId) continue;
+        const dx = record.x - x;
+        const dy = record.y - y;
+        if (dx * dx + dy * dy <= r2 && match(record.entity)) return true;
+      }
+      return false;
+    }
+    for (let cy = cy0; cy <= cy1; cy++) {
       const row = (cy + CELL_BIAS) * CELL_SPAN + CELL_BIAS;
-      for (let cx = Math.floor((x - radius) / CELL_SIZE); cx <= cx1; cx++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
         const list = bucket.cells.get(row + cx);
         if (!list) continue;
         if (this.counter) this.counter.visits += list.length;
@@ -203,14 +278,15 @@ export class SpatialIndex {
 
   /**
    * Every entity with `key`, ascending by id — the un-spatial query, for the
-   * systems that must touch all of one kind. The callback must not create or
-   * remove entities of that same kind.
+   * systems that must touch all of one kind, positioned or not.
    */
   each(key: string, visit: (entity: Entity) => void): void {
     const bucket = this.buckets.get(key);
     if (!bucket) return;
     if (this.counter) this.counter.visits += bucket.all.length;
-    for (const record of bucket.all) visit(record.entity);
+    for (const record of bucket.all.slice()) {
+      if (this.records.get(record.entity.id) === record) visit(record.entity);
+    }
   }
 
   /** How many entities carry `key` — for tests and diagnostics. */
@@ -218,46 +294,65 @@ export class SpatialIndex {
     return this.buckets.get(key)?.all.length ?? 0;
   }
 
-  private bucketIn(key: string, record: Indexed): void {
+  private listIn(key: string, record: Indexed): void {
     let bucket = this.buckets.get(key);
     if (!bucket) this.buckets.set(key, (bucket = { cells: new Map(), all: [] }));
     insertById(bucket.all, record);
-    if (record.transform) putInCell(bucket, record.cell, record);
+    if (record.inCells) putInCell(bucket, record.cell, record);
   }
 
-  private bucketOut(key: string, record: Indexed): void {
+  private listOut(key: string, record: Indexed): void {
     const bucket = this.buckets.get(key);
     if (!bucket) return;
     const at = searchById(bucket.all, record.entity.id);
     if (at >= 0) bucket.all.splice(at, 1);
-    if (record.transform) dropFromCell(bucket, record.cell, record);
+    if (record.inCells) dropFromCell(bucket, record.cell, record);
   }
 
-  private rebucket(record: Indexed): void {
-    const transform = record.transform;
-    if (!transform) return;
-    record.x = transform.x;
-    record.y = transform.y;
-    const cell = cellOf(record.x, record.y);
-    if (cell === record.cell) return;
+  /** The one place that decides which cell (if any) a record belongs in. */
+  private settle(record: Indexed): void {
+    const t = record.transform;
+    const positioned = t !== null && Number.isFinite(t.x) && Number.isFinite(t.y);
+    if (positioned) {
+      const cell = cellOf(t.x, t.y);
+      record.x = t.x;
+      record.y = t.y;
+      if (record.inCells && cell === record.cell) return; // moved within its cell
+      if (!record.inCells) {
+        record.cell = cell;
+        for (const key of record.keys) {
+          const bucket = this.buckets.get(key);
+          if (bucket) putInCell(bucket, cell, record);
+        }
+        record.inCells = true;
+        return;
+      }
+      for (const key of record.keys) {
+        const bucket = this.buckets.get(key);
+        if (!bucket) continue;
+        dropFromCell(bucket, record.cell, record);
+        putInCell(bucket, cell, record);
+      }
+      record.cell = cell;
+      return;
+    }
+    if (!record.inCells) return;
     for (const key of record.keys) {
       const bucket = this.buckets.get(key);
-      if (!bucket) continue;
-      dropFromCell(bucket, record.cell, record);
-      putInCell(bucket, cell, record);
+      if (bucket) dropFromCell(bucket, record.cell, record);
     }
-    record.cell = cell;
+    record.inCells = false;
   }
+}
+
+function byId(a: Indexed, b: Indexed): number {
+  return a.entity.id - b.entity.id;
 }
 
 function putInCell(bucket: Bucket, cell: number, record: Indexed): void {
   const list = bucket.cells.get(cell);
   if (list) list.push(record);
   else bucket.cells.set(cell, [record]);
-}
-
-function byId(a: Indexed, b: Indexed): number {
-  return a.entity.id - b.entity.id;
 }
 
 function dropFromCell(bucket: Bucket, cell: number, record: Indexed): void {

@@ -13,7 +13,11 @@ import type { VisitCounter } from '../src/core/World.js';
  * Two passes per size, so neither measurement distorts the other:
  *  1. timed — no counter installed, reports ticks/second;
  *  2. counted — a VisitCounter injected into the world, reporting how many
- *     entities the tick's scans and spatial queries looked at.
+ *     entities the tick looked at across full scans, spatial queries,
+ *     whole-kind `each` walks and the per-tick `reconcile`. It counts ENTITIES,
+ *     not work: probing an empty grid cell costs something and adds nothing to
+ *     this number, so treat visits/tick as the scaling metric and ticks/second
+ *     (which includes everything) as the cost one.
  *
  * Reflex-only (no mind backend), one fixed seed, sizes chosen so each pass
  * stays well under two minutes. Tick budgets shrink with population because
