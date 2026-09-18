@@ -37,6 +37,7 @@ export function memoryFromEvent(
   let origin: MemoryRecord['origin'] = 'experience';
   let deltas = needDeltas;
   let toldBy: number | undefined;
+  let causedBy: number | undefined;
 
   if (isActor) {
     subjects = event.targetIds.filter((id) => id !== selfId);
@@ -71,9 +72,16 @@ export function memoryFromEvent(
       deltas = seen;
     }
     switch (event.type) {
-      case 'AgentDied':
+      case 'AgentDied': {
         type = 'WitnessedDeath';
+        // The memory is ABOUT the one who died (already the subject). The hand
+        // behind it rides separately, and only when a person's blow did it —
+        // a starvation, an exposure or a beast names nobody, and a killer does
+        // not witness itself into fearing itself.
+        const killerId = event.payload['killerId'];
+        if (typeof killerId === 'number' && killerId !== selfId) causedBy = killerId;
         break;
+      }
       case 'UtteranceSpoken': {
         // Eavesdropping: an overheard utterance is testimony too.
         toldBy = event.actorId;
@@ -102,16 +110,23 @@ export function memoryFromEvent(
           : 'neutral',
     x: event.x,
     y: event.y,
-    summaryText: summarize(type, subjects, objectKind),
+    summaryText: summarize(type, subjects, objectKind, causedBy),
     importance: importanceOf(type, deltas),
     origin,
     toldBy,
+    causedBy,
     utterance,
   };
 }
 
-function summarize(type: SimEventType, subjects: number[], objectKind?: ObjectKind): string {
+function summarize(
+  type: SimEventType,
+  subjects: number[],
+  objectKind?: ObjectKind,
+  causedBy?: number,
+): string {
   const who = subjects.length > 0 ? ` involving agent #${subjects[0]}` : '';
   const what = objectKind ? ` (${objectKind})` : '';
-  return `${type}${what}${who}`;
+  const by = causedBy !== undefined ? ` caused by agent #${causedBy}` : '';
+  return `${type}${what}${who}${by}`;
 }

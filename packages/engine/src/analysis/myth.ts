@@ -12,14 +12,15 @@ export interface MythReport {
   driftedStories: number;
   driftRate: number;
   /** The most-fractured story + a few of the versions it has become. */
-  mostVaried: { id: number; variants: number; examples: string[] } | null;
+  mostVaried: { id: string; variants: number; examples: string[] } | null;
   /** Beings whose deeds (slaying, home-raising) are widely retold. */
   heroes: { name: string; mentions: number }[];
   /** Beings whose attacks on others are widely retold. */
   villains: { name: string; mentions: number }[];
   /** One event two tribes remember differently — same id, different words. */
   tribeVersions: { versions: { tribeSize: number; text: string }[] } | null;
-  /** The longest-surviving story — how many ticks since the event, + its current words. */
+  /** The longest-surviving story — how many ticks since it entered the world,
+   *  + its current words. */
   oldestSurviving: { ageTicks: number; holders: number; text: string; grandeur: number } | null;
   /** The story that has climbed highest up the legend ladder. */
   grandest: { grandeur: number; text: string; ageTicks: number } | null;
@@ -39,6 +40,8 @@ export function grandeur(text: string): number {
 interface NarrativeRef {
   id: string;
   text: string;
+  /** When this holder's copy entered the world — the story's own clock. */
+  firstTick: number;
 }
 
 function protagonist(id: string): { kind: string; actor: number } | null {
@@ -46,6 +49,7 @@ function protagonist(id: string): { kind: string; actor: number } | null {
   if (!kind || actor === undefined) return null;
   return { kind, actor: Number(actor) };
 }
+
 
 export function analyzeMyth(
   narratives: Map<number, NarrativeRef[]>,
@@ -55,11 +59,16 @@ export function analyzeMyth(
 ): MythReport {
   // id → (text → holders)
   const byId = new Map<string, Map<string, number>>();
+  // id → when the story entered the world: the earliest tick any holder has
+  // it from (a witness's own tick, or the tick a tale was seeded).
+  const originOf = new Map<string, number>();
   for (const ns of narratives.values()) {
     for (const n of ns) {
       let variants = byId.get(n.id);
       if (!variants) byId.set(n.id, (variants = new Map()));
       variants.set(n.text, (variants.get(n.text) ?? 0) + 1);
+      const known = originOf.get(n.id);
+      if (known === undefined || n.firstTick < known) originOf.set(n.id, n.firstTick);
     }
   }
 
@@ -70,7 +79,7 @@ export function analyzeMyth(
     if (variants.size > 1) driftedStories++;
     if (!mostVaried || variants.size > mostVaried.variants) {
       const examples = [...variants.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t]) => t);
-      mostVaried = { id: 0, variants: variants.size, examples };
+      mostVaried = { id, variants: variants.size, examples };
     }
   }
 
@@ -115,13 +124,13 @@ export function analyzeMyth(
     }
   }
 
-  // Survival across time + escalation into legend. The id's last field is the
-  // event's original time-bucket (tick/300), so age = now − original.
+  // Survival across time + escalation into legend. Age is measured from when
+  // the story entered the world — the tellers' own record of it, never parsed
+  // out of an id — so a seeded tale ages like any other.
   let oldestSurviving: MythReport['oldestSurviving'] = null;
   let grandest: MythReport['grandest'] = null;
   for (const [id, variants] of byId) {
-    const bucket = Number(id.split(':')[2] ?? 0);
-    const ageTicks = currentTick - bucket * 300;
+    const ageTicks = Math.max(0, currentTick - (originOf.get(id) ?? currentTick));
     const holders = [...variants.values()].reduce((a, b) => a + b, 0);
     const dominant = [...variants.entries()].sort((a, b) => b[1] - a[1])[0]![0];
     if (holders >= 3 && (!oldestSurviving || ageTicks > oldestSurviving.ageTicks)) {

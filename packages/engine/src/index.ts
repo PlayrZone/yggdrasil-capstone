@@ -161,4 +161,4 @@ export { analyzeMyth } from './analysis/myth.js';
 export type { MythReport } from './analysis/myth.js';
 export { analyzeSacredPlaces } from './analysis/sacredPlaces.js';
 export type { SacredPlace, SacredPlacesReport, StorySite } from './analysis/sacredPlaces.js';
-export { mutateNarrative } from './narrative/NarrativeStore.js';
+export { mutateNarrative, narrativeRefOf } from './narrative/NarrativeStore.js';

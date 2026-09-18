@@ -1,5 +1,6 @@
 import type { KnowledgeRecord, ThinkInput } from '../contract/types.js';
 import { NEED_CRITICAL, NEED_PRESSING } from '../contract/types.js';
+import { narrativeRefOf } from '../narrative/NarrativeStore.js';
 
 /**
  * Builds the consciousness prompt. The LLM is a pure reasoner: it receives
@@ -45,7 +46,7 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     `Respond ONLY with JSON of this exact shape:`,
     `{${unnamed ? '"name":string,' : ''}"thought":string,"goals":[{"description":string,"need":string|null}],`,
     ` "plan":[{"kind":INTENT,...args}],`,
-    ` "utterances":[{"targetId":number|null,"speechAct":"share-knowledge"|"share-episode"|"inform"|"request","text"?:string}]}`,
+    ` "utterances":[{"targetId":number|null,"speechAct":"share-knowledge"|"share-episode"|"inform"|"request","text"?:string,"ruleRef"?:number,"narrativeRef"?:string}]}`,
     `"thought" is a short first-person sentence: what you are thinking and WHY you choose this —`,
     `including what you make of any story or person that matters to you now. Speak as yourself.`,
     `INTENT kind is one of: ${INTENT_VOCAB}.`,
@@ -54,6 +55,9 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     `Craft{} (try combining the raw materials you carry — whether anything useful results, and what, is for you to DISCOVER through trying),`,
     `Flee{x,y}, Follow{targetId}, Speak{} (put speech in utterances).`,
     `To ASK someone something — to seek what they know — use a "request" utterance addressed to them.`,
+    `To TEACH, use "share-knowledge" with "ruleRef" set to the [number] of one thing from WHAT YOU KNOW;`,
+    `to RETELL a tale, use "share-episode" with "narrativeRef" set to the (ref …) of one story you carry.`,
+    `You can only pass on what you yourself know and carry — say it in your own words in "text".`,
     `Keep the plan short (1-4 intents). The world validates every intent; impossible ones fail.`,
   ].join('\n');
 
@@ -118,11 +122,20 @@ function socialText(social: ThinkInput['social']): string {
   return social.slice(0, 8).map((p) => `  - ${p.name}: ${p.feeling}`).join('\n');
 }
 
+/**
+ * A being's stories, each with the opaque handle it may name to retell one.
+ * The narrative id itself is engine bookkeeping — it encodes an analysis label
+ * and would betray a seeded tale as seeded — so only `narrativeRefOf` is ever
+ * rendered.
+ */
 function storiesText(stories: ThinkInput['stories']): string {
   if (!stories || stories.length === 0) return '  (you carry no stories yet)';
   return stories
     .slice(0, 8)
-    .map((s) => `  - "${s.text}"${s.firsthand ? ' (you were there)' : ' (you were told this)'}`)
+    .map(
+      (s) =>
+        `  -${s.id ? ` (ref ${narrativeRefOf(s.id)})` : ''} "${s.text}"${s.firsthand ? ' (you were there)' : ' (you were told this)'}`,
+    )
     .join('\n');
 }
 
@@ -149,7 +162,12 @@ function inventoryText(inv: ThinkInput['snapshot']['inventory']): string {
   return entries.length > 0 ? entries.map(([k, n]) => `${k}×${n}`).join(', ') : 'empty';
 }
 
-/** Knowledge rendered with confidence qualifiers — the agent's worldview. */
+/**
+ * Knowledge rendered with confidence qualifiers — the agent's worldview. Each
+ * line carries its record id in brackets: that number is how a mind names
+ * WHICH of its beliefs it is teaching (`ruleRef`), the only content reference
+ * it is allowed to make.
+ */
 export function knowledgeText(knowledge: KnowledgeRecord[]): string {
   const held = knowledge.filter((k) => k.status === 'held').slice(0, 12);
   if (held.length === 0) return '  (you have learned nothing yet)';
@@ -162,7 +180,7 @@ export function knowledgeText(knowledge: KnowledgeRecord[]): string {
             ? 'You believe'
             : 'You suspect';
       const provenance = k.origin === 'testimony' ? ' (you were told this)' : '';
-      return `  - ${qualifier} (${(k.confidence * 100).toFixed(0)}%, seen ${k.evidenceCount}×): ${k.statement}${provenance}`;
+      return `  - [${k.id}] ${qualifier} (${(k.confidence * 100).toFixed(0)}%, seen ${k.evidenceCount}×): ${k.statement}${provenance}`;
     })
     .join('\n');
 }

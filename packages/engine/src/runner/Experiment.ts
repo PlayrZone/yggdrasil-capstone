@@ -73,6 +73,10 @@ export interface ExperimentOptions {
    * maker still crafts, but the skill cannot spread by observation — the A/B
    * control isolating whether technological inheritance happens. */
   craftLearning?: boolean;
+  /** Wall-clock source for cognition latency, supplied by the host. Purely
+   * observational — nothing in the sim reads it, so it cannot affect
+   * determinism. Tests inject a fake; omitted = the real clock. */
+  now?: () => number;
 }
 
 const EVENT_LOG_CAP = 400;
@@ -197,8 +201,10 @@ export class Experiment {
       this.cognitionLog = new CognitionLog();
       this.llm = new LlmMind(mindBackend, {
         onCognition: this.cognitionLog.push,
-        // Sim ticks are the clock; latency is reported in ticks-as-ms-ish.
-        now: () => this.tick,
+        // Latency measures the MODEL, so it is wall-clock (LlmMind's default
+        // when the host supplies none). Sim time is not a stopwatch; the tick
+        // a thought belongs to rides in CognitionRecord.tick.
+        ...(options.now ? { now: options.now } : {}),
       });
       this.scheduler = new CognitionScheduler({ maxConcurrent: 8 });
       this.backendLabel = mindBackend.modelId;
@@ -471,8 +477,9 @@ export class Experiment {
               if (output.name && live.name === '') live.name = output.name;
               // Its thought is OBSERVED ONLY — surfaced, never read back into state.
               if (output.thought) this.lastThought.set(agentId, output.thought);
-              mind.applyOutput(output);
-              this.applyPlan(agentId, output);
+              // What it SAYS is resolved against its own stores first, so a
+              // conscious being can teach and retell — but only what it holds.
+              this.applyPlan(agentId, mind.applyOutput(output));
             },
           );
         }
@@ -522,11 +529,13 @@ export class Experiment {
           // (a detail lost, a beast made greater). Drift accumulates along the
           // chain, so a memory drifts toward myth, and different tribes end up
           // telling different versions of the same event.
+          // The retelling carries the story's own age (sa.firstTick), not the
+          // hour it was told — an old tale stays old in a new mouth.
           if ((tick + a.id + b.id) % 3 === 0) {
             const sa = a.mind.narratives.pickToRetell(tick);
-            if (sa) b.mind.narratives.remember(sa.id, mutateNarrative(sa.text, (b.id * 31 + sa.text.length) >>> 0), sa.x, sa.y, tick, false);
+            if (sa) b.mind.narratives.remember(sa.id, mutateNarrative(sa.text, (b.id * 31 + sa.text.length) >>> 0), sa.x, sa.y, sa.firstTick, false);
             const sb = b.mind.narratives.pickToRetell(tick);
-            if (sb) a.mind.narratives.remember(sb.id, mutateNarrative(sb.text, (a.id * 31 + sb.text.length) >>> 0), sb.x, sb.y, tick, false);
+            if (sb) a.mind.narratives.remember(sb.id, mutateNarrative(sb.text, (a.id * 31 + sb.text.length) >>> 0), sb.x, sb.y, sb.firstTick, false);
           }
         }
       }
@@ -822,13 +831,14 @@ export class Experiment {
    */
   myth(): MythReport {
     const tribes = this.society().tribes;
-    const narratives = new Map<number, { id: string; text: string }[]>();
+    const narratives = new Map<number, { id: string; text: string; firstTick: number }[]>();
     const names = new Map<number, string>();
     for (const id of this.agentIds) {
       names.set(id, this.nameOf(id));
       if (!this.agentBody(id)?.alive) continue;
       const mind = this.minds.get(id);
-      if (mind) narratives.set(id, mind.narratives.all().map((n) => ({ id: n.id, text: n.text })));
+      // firstTick rides along: a story's age is its own record, not its id.
+      if (mind) narratives.set(id, mind.narratives.all().map((n) => ({ id: n.id, text: n.text, firstTick: n.firstTick })));
     }
     return analyzeMyth(narratives, tribes, names, this.tick);
   }
@@ -966,7 +976,8 @@ export class Experiment {
     // Stories ordered by how often the being has HEARD each (intrinsic salience) —
     // so the tale its people tell most leads, instead of being buried in the list.
     const held = [...mind.narratives.all()].sort((a, b) => b.timesHeard - a.timesHeard);
-    const stories: KnownStory[] = held.map((n) => ({ text: n.text, firsthand: n.firsthand }));
+    // The id rides along so a being can name WHICH tale it is retelling.
+    const stories: KnownStory[] = held.map((n) => ({ id: n.id, text: n.text, firsthand: n.firsthand }));
     const top = held[0];
     const mostTold = top && top.timesHeard >= 2 ? top.text : undefined; // a tale actually retold
     const scored: { person: KnownPerson; salience: number }[] = [];

@@ -3,6 +3,16 @@ import type { EvidenceReport } from '../learning/ILearner.js';
 import { ruleKey } from '../learning/ruleKey.js';
 import { renderStatement } from '../learning/templates.js';
 
+/**
+ * A rule entering a store is COPIED: one utterance reaches every witness by
+ * reference, so without this the whole audience — and the speaker — would hold
+ * a single object and one being's belief could be edited through another's.
+ * `craft-recipe` nests `inputs`, so a spread alone is not enough.
+ */
+export function copyRule(rule: KnowledgeRule): KnowledgeRule {
+  return rule.kind === 'craft-recipe' ? { ...rule, inputs: { ...rule.inputs } } : { ...rule };
+}
+
 /** Lifecycle thresholds — pure function of counts + confidence. */
 const HELD_MIN_EVIDENCE = 4;
 const HELD_MIN_CONFIDENCE = 0.55;
@@ -109,7 +119,7 @@ export class KnowledgeStore {
     const record: KnowledgeRecord = {
       id: this.nextId++,
       ruleKey: key,
-      rule,
+      rule: copyRule(rule),
       statement: renderStatement(rule),
       confidence,
       evidenceCount: 0,

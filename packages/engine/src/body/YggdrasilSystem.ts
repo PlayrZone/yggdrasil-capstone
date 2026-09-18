@@ -86,12 +86,16 @@ export class YggdrasilSystem {
       this.decayNeeds(world, entity, body, context, tick);
       this.applyAfflictions(body, context, tick, entity, bus, t);
       if (!body.alive) {
+        // Death by what the world did: starvation, exposure, sickness — and a
+        // predator's mauling, which sets `hitThisTick` too, so the cause reads
+        // 'violence'. None of these names a killer: a beast is not a person in
+        // the relationship store, so watching one kill marks no one.
         this.die(world, entity, body, t, tick, bus);
         continue;
       }
 
       if (body.sleepingUntil > tick) {
-        this.sleepTick(body, context);
+        this.sleepTick(body);
         continue;
       }
       if (body.sleepingUntil !== 0 && body.sleepingUntil <= tick) {
@@ -204,6 +208,11 @@ export class YggdrasilSystem {
     if (body.health <= 0) body.alive = false;
   }
 
+  /**
+   * `killerId` is passed only from the one site where a Gahallian's blow is
+   * what kills — so the death event names a person when, and only when, a
+   * person did it. Starvation, exposure, sickness and predators name nobody.
+   */
   private die(
     world: World,
     entity: Entity,
@@ -211,6 +220,7 @@ export class YggdrasilSystem {
     t: Transform2D,
     tick: number,
     bus: SimEventBus,
+    killerId?: number,
   ): void {
     const cause = body.hitThisTick
       ? 'violence'
@@ -240,18 +250,16 @@ export class YggdrasilSystem {
       targetIds: [],
       x: t.x,
       y: t.y,
-      payload: { cause },
+      payload: { cause, ...(killerId !== undefined ? { killerId } : {}) },
     });
   }
 
   // ── Sleep ────────────────────────────────────────────────────────────────
 
-  private sleepTick(body: GahallianBody, context: ContextFeatures): void {
+  /** Rest only; exposure while sleeping outside is applied in afflictions. */
+  private sleepTick(body: GahallianBody): void {
     const relief = DECAY.sleepRestRelief * (body.sleptInShelter ? DECAY.shelterSleepBonus : 1);
     body.needs.rest = clamp(body.needs.rest - relief);
-    if (context.night && !context.inShelter) {
-      // Exposure while sleeping outside is already applied in afflictions.
-    }
   }
 
   private wake(entity: Entity, body: GahallianBody, t: Transform2D, tick: number, bus: SimEventBus): void {
@@ -274,10 +282,11 @@ export class YggdrasilSystem {
   /** Critical hunger interrupts anything when there is safe food in hand. */
   private urgentOverride(body: GahallianBody): void {
     if (body.needs.hunger < NEED_CRITICAL) return;
-    if ((body.inventory.berry ?? 0) <= 0) return;
+    const food = nourishingInInventory(body.inventory);
+    if (!food) return;
     const current = body.plan[body.planStep];
     if (current?.kind === 'Eat') return;
-    body.plan.splice(body.planStep, 0, { kind: 'Eat', objectKind: 'berry' });
+    body.plan.splice(body.planStep, 0, { kind: 'Eat', objectKind: food });
   }
 
   private executeStep(
@@ -602,7 +611,7 @@ export class YggdrasilSystem {
         if (victimBody.health <= 0) {
           victimBody.alive = false;
           const vt = victim.components['Transform2D'] as Transform2D;
-          this.die(world, victim, victimBody, vt, tick, bus);
+          this.die(world, victim, victimBody, vt, tick, bus, entity.id);
         }
         this.advance(body);
         return;
@@ -749,6 +758,19 @@ export class YggdrasilSystem {
 
 function clamp(v: number): number {
   return Math.min(100, Math.max(0, v));
+}
+
+/**
+ * The first thing in hand that actually feeds a body. NUTRITIOUS_FOODS is the
+ * world's one source of truth about what nourishes, so a starving Gahallian
+ * never dies holding meat or tubers; the set's insertion order makes the
+ * choice deterministic.
+ */
+function nourishingInInventory(inventory: GahallianBody['inventory']): ObjectKind | undefined {
+  for (const kind of NUTRITIOUS_FOODS) {
+    if ((inventory[kind] ?? 0) > 0) return kind;
+  }
+  return undefined;
 }
 
 function addItem(inventory: GahallianBody['inventory'], kind: ObjectKind, n: number): void {

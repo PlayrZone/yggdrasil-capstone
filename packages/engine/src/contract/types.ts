@@ -1,11 +1,9 @@
 /**
- * Body⇄Yggdrasil contract types.
+ * Body⇄Yggdrasil contract types — the single source of truth in this repo.
  *
- * The Gahalla Engine keeps a structurally-identical copy of the boundary
- * subset in `engine/src/yggdrasil/contract.ts` — neither side imports the
- * other (repo rule: engine and packages never cross-import; same precedent
- * as worldgen). Drift between the two copies is caught by the assignability
- * test in `test/contract-compat.test.ts`.
+ * `body/contract.ts` re-exports the subset the Body needs instead of copying
+ * it, so the two sides cannot drift; only the speech payload differs there
+ * (physics transports an utterance without ever interpreting it).
  *
  * Doctrine reminders enforced by these shapes (yggdrasil_civilization_design V2):
  * - No role/job/class/faction/rank field exists anywhere. Ever.
@@ -180,14 +178,32 @@ export interface Utterance {
   /** Listener agent id; omitted = addressed to everyone in earshot. */
   targetId?: number;
   speechAct: SpeechAct;
-  /** share-knowledge: the rule being taught + the speaker's confidence. */
+  /**
+   * share-knowledge: the rule being taught + the speaker's confidence.
+   * ENGINE-SET — resolved from the speaker's own KnowledgeStore
+   * (`AgentMind.resolveSpeech`), never taken from a model's words.
+   */
   rule?: KnowledgeRule;
   ruleConfidence?: number;
   /** share-episode / inform / request: free-ish summary text. */
   text?: string;
-  /** share-episode: a shared story — stable id (so retellings cluster) + words. */
+  /** share-episode: a shared story — stable id (so retellings cluster) + words
+   *  + the story's origin tick, so a retelling does not reset its age.
+   *  ENGINE-SET from the speaker's NarrativeStore, like `rule`. */
   narrativeId?: string;
   narrativeText?: string;
+  narrativeFirstTick?: number;
+  /**
+   * What a MODEL may say about content: WHICH held belief (`ruleRef` — the
+   * KnowledgeRecord id shown in its prompt) and WHICH carried story
+   * (`narrativeRef` — the opaque `narrativeRefOf` handle shown in its prompt)
+   * it is passing on. The engine resolves
+   * these against the speaker's own stores and drops them; an unresolvable
+   * reference leaves plain speech. Consciousness chooses what to say; only
+   * the stores decide what is actually transmitted.
+   */
+  ruleRef?: number;
+  narrativeRef?: string;
 }
 
 // ─── Events ──────────────────────────────────────────────────────────────────
@@ -261,6 +277,14 @@ export interface MemoryRecord {
   origin: MemoryOrigin;
   /** For origin=testimony: who told the rememberer. */
   toldBy?: number;
+  /**
+   * Who DEALT what this memory is about, when that is a person and is not the
+   * rememberer — a killing's killer. Distinct from `subjects` (who it happened
+   * TO) on purpose: a witnessed death is about the one who died, and the hand
+   * behind it is a separate fact. Absent when nobody dealt it (a starvation, a
+   * beast).
+   */
+  causedBy?: number;
   /** For heard speech: what was said (share-knowledge rules ride here). */
   utterance?: Utterance;
   /** Retrieval embedding — optional, filled by an IEmbedder when present. */
@@ -414,6 +438,9 @@ export interface RelationshipRecord {
 
 /** A story this being carries — its myths and history. Label-free. */
 export interface KnownStory {
+  /** Stable narrative id. Engine-side only: a prompt renders `narrativeRefOf(id)`,
+   *  never the id, which encodes how the engine filed the event. */
+  id?: string;
   text: string;
   /** True if it witnessed the event; false if it was only told the story. */
   firsthand: boolean;

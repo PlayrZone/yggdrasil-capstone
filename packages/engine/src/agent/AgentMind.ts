@@ -1,20 +1,24 @@
 import type {
   AgentSnapshot,
   Goal,
+  KnowledgeRecord,
+  KnowledgeRule,
   MemoryRecord,
   MindOutput,
   ThinkInput,
   ThinkTrigger,
+  Utterance,
   WorldView,
 } from '../contract/types.js';
 import { MemoryStream } from '../memory/MemoryStream.js';
 import type { ILearner } from '../learning/ILearner.js';
+import { ruleKey } from '../learning/ruleKey.js';
 import { ContextMiner } from '../learning/ContextMiner.js';
 import { SuccessionMiner } from '../learning/SuccessionMiner.js';
 import { SocialMiner } from '../learning/SocialMiner.js';
 import { OutcomeMiner } from '../learning/OutcomeMiner.js';
 import { CraftObservationMiner } from '../learning/CraftObservationMiner.js';
-import { KnowledgeStore } from '../knowledge/KnowledgeStore.js';
+import { KnowledgeStore, copyRule } from '../knowledge/KnowledgeStore.js';
 import { RelationshipStore } from '../relationships/RelationshipStore.js';
 import { NarrativeStore } from '../narrative/NarrativeStore.js';
 import type { IMind } from '../consciousness/IMind.js';
@@ -85,13 +89,26 @@ export class AgentMind {
       for (const partnerId of stored.subjects) {
         this.relationships.applyEvent(partnerId, stored.type, stored.tick);
       }
+    } else if (stored.origin === 'observation' && stored.causedBy !== undefined) {
+      // …with one explicit exception: watching someone DO a thing can mark you
+      // about them (a killing). It marks you about the hand, never about who it
+      // was done to, and the store names exactly which events qualify.
+      this.relationships.applyObservedEvent(stored.causedBy, stored.type, stored.tick);
     }
     // A story retold to you — you carry it now too (shared narrative → identity).
     if (stored.utterance?.speechAct === 'share-episode' && stored.utterance.narrativeId && stored.utterance.narrativeText) {
       // The LLM share path carries no location; reflex retelling (coPresencePass)
       // carries the real place. First write wins, so this only matters when an
-      // LLM hears a story it has no other source for.
-      this.narratives.remember(stored.utterance.narrativeId, stored.utterance.narrativeText, 0, 0, stored.tick, false);
+      // LLM hears a story it has no other source for. The age comes from the
+      // teller's copy — a tale heard today may be generations old.
+      this.narratives.remember(
+        stored.utterance.narrativeId,
+        stored.utterance.narrativeText,
+        0,
+        0,
+        stored.utterance.narrativeFirstTick ?? stored.tick,
+        false,
+      );
     }
     if (stored.utterance?.speechAct === 'share-knowledge' && stored.utterance.rule && stored.toldBy) {
       const trust = (this.relationships.recordFor(stored.toldBy, stored.tick).trust ?? 50) / 100;
@@ -167,12 +184,70 @@ export class AgentMind {
   think(snapshot: AgentSnapshot, worldView: WorldView, trigger: ThinkTrigger): MindOutput {
     const output = this.mind.think(this.buildThinkInput(snapshot, worldView, trigger));
     this.goals = output.goals;
-    return output;
+    return { ...output, utterances: this.resolveSpeech(output.utterances) };
   }
 
-  /** Apply an externally-produced (e.g. LLM) decision back onto the agent. */
-  applyOutput(output: MindOutput): void {
+  /**
+   * Apply an externally-produced (e.g. LLM) decision back onto the agent, and
+   * hand it back with its speech resolved — the host speaks the RETURNED
+   * output, never the raw one.
+   */
+  applyOutput(output: MindOutput): MindOutput {
     this.goals = output.goals;
+    return { ...output, utterances: this.resolveSpeech(output.utterances) };
+  }
+
+  /**
+   * What leaves the mouth is only ever what this being holds. A mind may
+   * CHOOSE what to pass on — by `ruleRef` (the knowledge id its prompt showed
+   * it) or `narrativeRef` (a story it carries) — but the rule, the confidence
+   * and the story's words are read out of this being's own stores here.
+   * Nothing a model wrote is transmitted: an unresolvable (or invented)
+   * reference simply leaves plain speech, and the utterance still goes out.
+   * Every outgoing utterance is rebuilt field by field, so no payload can ride
+   * along unchecked.
+   */
+  private resolveSpeech(utterances: Utterance[]): Utterance[] {
+    return utterances.map((u) => {
+      const spoken: Utterance = { speechAct: u.speechAct };
+      if (u.targetId !== undefined) spoken.targetId = u.targetId;
+      if (u.text !== undefined) spoken.text = u.text;
+      if (u.speechAct === 'share-knowledge') {
+        const record = this.heldRuleFor(u);
+        if (record) {
+          spoken.rule = copyRule(record.rule);
+          spoken.ruleConfidence = record.confidence;
+        }
+      } else if (u.speechAct === 'share-episode') {
+        // A mind names a story by its opaque ref; `narrativeId` is the raw-id
+        // path for minds that already speak the engine's own handles (never
+        // the parser, which cannot produce one).
+        const story =
+          u.narrativeRef !== undefined
+            ? this.narratives.findByRef(u.narrativeRef)
+            : u.narrativeId !== undefined
+              ? this.narratives.get(u.narrativeId)
+              : undefined;
+        if (story) {
+          spoken.narrativeId = story.id;
+          spoken.narrativeText = story.text;
+          spoken.narrativeFirstTick = story.firstTick;
+        }
+      }
+      return spoken;
+    });
+  }
+
+  /**
+   * The held belief an utterance points at: named by id, or — for minds that
+   * attach a rule directly (the reflex path, which reads its rules out of this
+   * same store) — confirmed still held before it may be taught.
+   */
+  private heldRuleFor(u: Utterance): KnowledgeRecord | undefined {
+    if (u.ruleRef !== undefined) return this.knowledge.held().find((k) => k.id === u.ruleRef);
+    if (!u.rule) return undefined;
+    const record = this.knowledge.get(ruleKey(u.rule));
+    return record?.status === 'held' ? record : undefined;
   }
 
   /**

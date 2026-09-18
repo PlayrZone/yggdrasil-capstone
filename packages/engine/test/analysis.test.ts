@@ -74,6 +74,44 @@ describe('ground truth', () => {
       classifyRuleTruth({ kind: 'outcome-association', actionType: 'AteFood', feature: null, need: 'hunger', direction: 'relieves' }),
     ).toBe('true');
   });
+
+  it('grades highland claims against the real, unequal continent', () => {
+    type Ctx = Extract<KnowledgeRule, { kind: 'context-association' }>;
+    const oreUp: Ctx = {
+      kind: 'context-association',
+      event: 'GatherSucceeded',
+      objectKind: 'ironOre',
+      feature: 'highland',
+      direction: 'positive',
+    };
+    // "Gathering iron ore happens mostly in the highlands" — every vein is
+    // scattered in the mountains, so this is knowledge, not superstition.
+    expect(renderStatement(oreUp)).toBe('Gathering succeeds (ironOre) happens mostly in the highlands');
+    expect(classifyRuleTruth(oreUp)).toBe('true');
+    expect(classifyRuleTruth({ ...oreUp, direction: 'negative' })).toBe('false');
+    expect(classifyRuleTruth({ ...oreUp, objectKind: 'gemstone' })).toBe('true');
+    // The mountains are deliberately food-poor: the ABSENCE is the real regularity.
+    expect(classifyRuleTruth({ ...oreUp, objectKind: 'berry', direction: 'negative' })).toBe('true');
+    expect(classifyRuleTruth({ ...oreUp, objectKind: 'berry' })).toBe('false');
+    // Without a material named, where gathering happens depends on where a
+    // population lives — the oracle abstains rather than guessing.
+    expect(classifyRuleTruth({ ...oreUp, objectKind: undefined })).toBe('unverified');
+  });
+
+  it('abstains on stone, which Dig wins anywhere dry', () => {
+    type Ctx = Extract<KnowledgeRule, { kind: 'context-association' }>;
+    const stone: Ctx = {
+      kind: 'context-association',
+      event: 'GatherSucceeded',
+      objectKind: 'stone',
+      feature: 'highland',
+      direction: 'positive',
+    };
+    // The deposits are upland, but digging yields stone on any dry ground, so
+    // where a population's stone comes from is behaviour, not mechanics.
+    expect(classifyRuleTruth(stone)).toBe('unverified');
+    expect(classifyRuleTruth({ ...stone, direction: 'negative' })).toBe('unverified');
+  });
 });
 
 describe('diffusion', () => {

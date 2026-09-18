@@ -101,6 +101,14 @@ function parseUtterances(value: unknown): Utterance[] {
     const u: Utterance = { speechAct: speechAct as SpeechAct };
     if (isNum(o['targetId'])) u.targetId = o['targetId'];
     if (typeof o['text'] === 'string') u.text = o['text'].slice(0, 240);
+    // Content is REFERENCED, never authored: the model may say WHICH belief or
+    // story it is passing on, and the speaker's own stores then supply the
+    // rule, the confidence and the words (AgentMind.resolveSpeech). A `rule`
+    // or narrative text the model writes has no source and is not read here,
+    // so an invented fact can never reach a listener.
+    if (isNum(o['ruleRef'])) u.ruleRef = o['ruleRef'];
+    const narrativeRef = o['narrativeRef'];
+    if (typeof narrativeRef === 'string' && narrativeRef.trim()) u.narrativeRef = narrativeRef.trim().slice(0, 64);
     out.push(u);
   }
   return out;

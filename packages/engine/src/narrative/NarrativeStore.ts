@@ -12,6 +12,10 @@ export interface Narrative {
   /** Where the event happened — so a story can draw beings to, or away from, a place. */
   x: number;
   y: number;
+  /** When the story ENTERED THE WORLD — the event's own tick (or a seeding).
+   *  A property of the story, not of this copy: it travels with every
+   *  retelling, so a tale does not become young again each time it is passed
+   *  on, and does not age backwards when its first witnesses die. */
   firstTick: number;
   /** True if this being witnessed it; false if it was only retold to them. */
   firsthand: boolean;
@@ -20,6 +24,23 @@ export interface Narrative {
    * story is what a being would call its people's best-known tale. */
   timesHeard: number;
   retellable: number; // ticks before it can be retold again (rate-limit per teller)
+}
+
+/**
+ * The handle a MIND may use to name one of its stories. A narrative id encodes
+ * how the engine filed the event (`slew:<actor>:<bucket>`, `seed:myth`), which
+ * is an analysis label and, for a seeded tale, the researcher's own hand — so
+ * the id itself must never reach a mind. This is an opaque, stateless FNV-1a
+ * token: derivable on both sides at any tick (a thought resolves long after the
+ * prompt that produced it), and carrying no information about the story.
+ */
+export function narrativeRefOf(id: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36).padStart(6, '0');
 }
 
 /**
@@ -80,14 +101,21 @@ export function mutateNarrative(text: string, h: number): string {
 export class NarrativeStore {
   private readonly stories = new Map<string, Narrative>();
 
-  remember(id: string, text: string, x: number, y: number, tick: number, firsthand: boolean): void {
+  /**
+   * Take a story in. `firstTick` is the story's ORIGIN — a witness passes the
+   * tick it happened, a teller passes the one it carries — never "now", or the
+   * tale would reset its age at every retelling.
+   */
+  remember(id: string, text: string, x: number, y: number, firstTick: number, firsthand: boolean): void {
     const existing = this.stories.get(id);
     if (existing) {
       existing.timesHeard++; // heard again — it grows more familiar/told
       if (firsthand) existing.firsthand = true; // hearing then witnessing upgrades it
+      // A teller who knows it from further back corrects how old it is.
+      if (firstTick < existing.firstTick) existing.firstTick = firstTick;
       return;
     }
-    this.stories.set(id, { id, text, x, y, firstTick: tick, firsthand, timesHeard: 1, retellable: 0 });
+    this.stories.set(id, { id, text, x, y, firstTick, firsthand, timesHeard: 1, retellable: 0 });
   }
 
   /**
@@ -102,6 +130,23 @@ export class NarrativeStore {
 
   has(id: string): boolean {
     return this.stories.has(id);
+  }
+
+  /** The story this being carries under `id`, as IT knows it (already drifted). */
+  get(id: string): Narrative | undefined {
+    return this.stories.get(id);
+  }
+
+  /**
+   * The carried story a mind named by its opaque ref. Matching is over this
+   * being's OWN stories only, and only against the token — a raw id resolves
+   * nothing, so ids stay unguessable and unusable.
+   */
+  findByRef(ref: string): Narrative | undefined {
+    for (const n of this.stories.values()) {
+      if (narrativeRefOf(n.id) === ref) return n;
+    }
+    return undefined;
   }
 
   /** A story this being can pass on right now (not retold too recently). */

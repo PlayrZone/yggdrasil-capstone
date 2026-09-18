@@ -18,6 +18,17 @@ const EVENT_DELTAS: Partial<
   SleptSafely: {},
 };
 
+/**
+ * The few deltas a WITNESS may feel — the ones that mark you about a person
+ * without your ever touching them. Seeing a killing is the whole list:
+ * `WitnessedDeath` only ever arises in the bystander perspective
+ * (memory/memoryFromEvent), where its subject is the KILLER, and only when a
+ * person did it — so fear lands on someone still alive, or on no one.
+ * Deliberately an allowlist: watching is otherwise miner input, not a
+ * relationship event.
+ */
+const OBSERVER_APPLICABLE: ReadonlySet<SimEventType> = new Set<SimEventType>(['WitnessedDeath']);
+
 /** Without interaction, every dimension drifts toward neutral (50). */
 const DECAY_INTERVAL = 2400;
 const DECAY_STEP = 1;
@@ -52,6 +63,23 @@ export class RelationshipStore {
     r.fear = clamp(r.fear + (deltas.fear ?? 0));
     r.interactionCount++;
     r.lastInteractionTick = tick;
+  }
+
+  /**
+   * The same deltas, felt from the outside: applied only for the allowlisted
+   * witness events. Watching is not interacting, so — like `gainRespect` —
+   * this leaves `interactionCount` alone; the scalar moves, the familiarity
+   * does not.
+   */
+  applyObservedEvent(partnerId: number, type: SimEventType, tick: number): void {
+    if (!OBSERVER_APPLICABLE.has(type)) return;
+    const deltas = EVENT_DELTAS[type];
+    if (!deltas) return;
+    const r = this.recordFor(partnerId, tick);
+    r.trust = clamp(r.trust + (deltas.trust ?? 0));
+    r.respect = clamp(r.respect + (deltas.respect ?? 0));
+    r.friendship = clamp(r.friendship + (deltas.friendship ?? 0));
+    r.fear = clamp(r.fear + (deltas.fear ?? 0));
   }
 
   /**
