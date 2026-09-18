@@ -40,7 +40,10 @@ import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
-import type { Intent, MindOutput, ObjectKind, ResourceNodeKind, SimEvent, Traits, ThinkInput, KnownStory, KinTie, KnownPerson, RelationshipRecord } from '../contract/types.js';
+import { CognitionRecorder } from '../record/CognitionRecorder.js';
+import { ScaffoldLedger } from '../record/ScaffoldLedger.js';
+import type { ICognitionSink, RecordedBody, RecorderWorld } from '../record/types.js';
+import type { Intent, KnowledgeRecord, MindOutput, Needs, ObjectKind, ResourceNodeKind, SimEvent, Traits, ThinkInput, KnownStory, KinTie, KnownPerson, RelationshipRecord } from '../contract/types.js';
 import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS, isDeepWater, clampToWorld } from '../world/regions.js';
 import type { Region } from '../world/regions.js';
 
@@ -77,6 +80,33 @@ export interface ExperimentOptions {
    * observational — nothing in the sim reads it, so it cannot affect
    * determinism. Tests inject a fake; omitted = the real clock. */
   now?: () => number;
+  /** Where the lossless cognition record goes. Absent = nothing is recorded,
+   * and no recording code runs at all. */
+  recording?: RecordingOptions;
+}
+
+/**
+ * The one world this engine generates. A record carries it so a held-out-world
+ * transfer score has something to split on the day a second adapter exists.
+ */
+export const FORAGER_CONTINENT = 'forager-continent-v1';
+
+/** Default bound on an outcome window — a plan that neither finishes nor is
+ *  replaced within this many ticks is scored on what it did get done. */
+const DEFAULT_OUTCOME_WINDOW = 400;
+
+export interface RecordingOptions {
+  sink: ICognitionSink;
+  /** Stable id for this run; every record and outcome carries it. */
+  runId: string;
+  /** The experiment this run belongs to (the old corpus's `experiment` tag). */
+  scenarioId?: string;
+  worldId?: string;
+  outcomeWindowTicks?: number;
+  /** Wall clock for the run manifest. Tests inject a fake. */
+  nowMs?: () => number;
+  /** Called once with the first sink error; the corpus is incomplete from there. */
+  onFailure?: (error: string) => void;
 }
 
 const EVENT_LOG_CAP = 400;
@@ -105,6 +135,12 @@ function relationshipFeeling(r: RelationshipRecord): { feeling: string; salience
   if (cand.length === 0) return null;
   cand.sort((a, b) => b.salience - a.salience);
   return cand[0]!;
+}
+
+const NEED_KEYS = ['hunger', 'rest', 'safety', 'socialConnection'] as const satisfies readonly (keyof Needs)[];
+
+function clampNeed(v: number): number {
+  return Math.max(0, Math.min(100, v));
 }
 
 /** Gini coefficient of a non-negative distribution (0 = equal, →1 = concentrated). */
@@ -189,6 +225,12 @@ export class Experiment {
   private readonly scheduler: CognitionScheduler | null;
   readonly cognitionLog: CognitionLog | null;
   readonly backendLabel: string;
+  /** Every sanctioned intervention a driver makes, written down. Always on:
+   *  it is bookkeeping beside the sim, never inside it. */
+  private readonly scaffoldLedger = new ScaffoldLedger();
+  private readonly recorder: CognitionRecorder | null;
+  /** Set by `endRecording`: the run is closed and nothing more may act. */
+  private recordingEnded = false;
 
   constructor(options: ExperimentOptions) {
     const { seed, agentCount = 100, mindBackend } = options;
@@ -197,10 +239,20 @@ export class Experiment {
     this.leadershipOn = options.leadership ?? true;
     this.offerMaking = options.offerMaking ?? true;
     this.craftLearning = options.craftLearning ?? false;
+    const recording = options.recording;
     if (mindBackend) {
       this.cognitionLog = new CognitionLog();
+      const log = this.cognitionLog;
       this.llm = new LlmMind(mindBackend, {
-        onCognition: this.cognitionLog.push,
+        onCognition: (record) => {
+          log.push(record);
+          this.recorder?.attempt(record);
+        },
+        // The conditions of the act are frozen here, not when the answer lands:
+        // while the model thinks, the miners rewrite the knowledge the prompt
+        // quoted and a driver may provision the being. A record must hold what
+        // the model was shown, and nothing that happened after.
+        onPromptBuilt: (input, prompt) => this.recorder?.freezeInput(input, prompt),
         // Latency measures the MODEL, so it is wall-clock (LlmMind's default
         // when the host supplies none). Sim time is not a stopwatch; the tick
         // a thought belongs to rides in CognitionRecord.tick.
@@ -215,6 +267,34 @@ export class Experiment {
       this.backendLabel = 'reflex';
     }
     this.buildWorld(agentCount);
+
+    this.recorder = recording
+      ? new CognitionRecorder({
+          sink: recording.sink,
+          runId: recording.runId,
+          scenarioId: recording.scenarioId ?? 'default',
+          worldId: recording.worldId ?? FORAGER_CONTINENT,
+          seed,
+          modelId: mindBackend?.modelId ?? 'reflex',
+          backendLabel: this.backendLabel,
+          options: {
+            agentCount,
+            mythBehavior: this.mythBehavior,
+            leadership: this.leadershipOn,
+            offerMaking: this.offerMaking,
+            craftLearning: this.craftLearning,
+            outcomeWindowTicks: recording.outcomeWindowTicks ?? DEFAULT_OUTCOME_WINDOW,
+          },
+          scaffold: this.scaffoldLedger,
+          world: this.recorderWorld(),
+          nowMs: recording.nowMs ?? (() => Date.now()),
+          ...(recording.onFailure ? { onFailure: recording.onFailure } : {}),
+        })
+      : null;
+    // The recorder brackets the world's own listener: "who already knew this?"
+    // is only answerable before the witnesses hear an utterance, and "who took
+    // it in?" only after. Listeners fire in registration order.
+    if (this.recorder) this.bus.on(this.recorder.observeBefore);
 
     this.bus.on((event) => {
       this.eventCount++;
@@ -245,6 +325,23 @@ export class Experiment {
       }
       if (story) this.minds.get(event.actorId)?.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
     });
+    if (this.recorder) this.bus.on(this.recorder.observeAfter);
+  }
+
+  /**
+   * The read-only windows the recorder observes through. Every one of these is
+   * a getter the host already offers — nothing here can reach into the sim.
+   */
+  private recorderWorld(): RecorderWorld {
+    return {
+      body: (id): RecordedBody | undefined => this.agentBody(id),
+      knowledge: (id): readonly KnowledgeRecord[] => this.minds.get(id)?.knowledge.all() ?? [],
+      carriesNarrative: (id, narrativeId): boolean => this.minds.get(id)?.narratives.has(narrativeId) ?? false,
+      name: (id): string => this.nameOf(id),
+      generation: (id): number => this.generationOf(id),
+      witnesses: (event): number[] => this.perception.witnessesOf(this.world, event),
+      day: (tick): number => Math.floor(tick / TICKS_PER_DAY) + 1,
+    };
   }
 
   /**
@@ -443,6 +540,10 @@ export class Experiment {
       this.wildlife.step(this.world, tick, this.bus);
       this.regularities.step(this.world, tick, this.bus);
       this.body.step(this.world, tick, this.bus);
+      // Sampled HERE, not at the end of the tick: reflex takes a finished plan
+      // away the moment it is done, so a step later the outcome tracker would
+      // see every completed plan as a replaced one.
+      this.recorder?.tick(tick);
       if (tick % CO_PRESENCE_INTERVAL === 0 && tick > 0) this.coPresencePass(tick);
       if (tick % REPRO_INTERVAL === 0 && tick > 0) this.reproduce(tick);
 
@@ -474,15 +575,33 @@ export class Experiment {
             agentId,
             () => this.llm!.complete(thinkInput),
             (output) => {
+              // Once the recording has been closed nothing may still act: a
+              // think applied after the last row is a world change with no
+              // record anywhere, which is the one thing this item exists to
+              // make impossible. Hosts drain with `settleCognition` first.
+              if (this.recordingEnded) return;
               const live = this.agentBody(agentId);
-              if (!live?.alive) return; // died while thinking
-              // A conscious Gahallian may name itself, once, while still unnamed.
-              if (output.name && live.name === '') live.name = output.name;
-              // Its thought is OBSERVED ONLY — surfaced, never read back into state.
-              if (output.thought) this.lastThought.set(agentId, output.thought);
-              // What it SAYS is resolved against its own stores first, so a
-              // conscious being can teach and retell — but only what it holds.
-              this.applyPlan(agentId, mind.applyOutput(output));
+              let resolved: MindOutput | null = null;
+              let applied: readonly Intent[] | null = null;
+              if (live?.alive) {
+                // A conscious Gahallian may name itself, once, while still unnamed.
+                if (output.name && live.name === '') live.name = output.name;
+                // Its thought is OBSERVED ONLY — surfaced, never read back into state.
+                if (output.thought) this.lastThought.set(agentId, output.thought);
+                // What it SAYS is resolved against its own stores first, so a
+                // conscious being can teach and retell — but only what it holds.
+                resolved = mind.applyOutput(output);
+                applied = this.applyPlan(agentId, resolved);
+              }
+              // Recorded either way: a think that never reached the world is
+              // still a think the model was paid for and can be scored on.
+              this.recorder?.complete({
+                beingId: agentId,
+                parsed: output,
+                appliedPlan: applied,
+                resolved,
+                tick: this.tick,
+              });
             },
           );
         }
@@ -490,14 +609,16 @@ export class Experiment {
     }
   }
 
-  private applyPlan(agentId: number, output: MindOutput): void {
+  /** Hand a decision to the body; returns the plan array the body now owns. */
+  private applyPlan(agentId: number, output: MindOutput): Intent[] | null {
     const body = this.agentBody(agentId);
-    if (!body) return;
+    if (!body) return null;
     const plan: Intent[] = [
       ...output.utterances.map((utterance) => ({ kind: 'Speak' as const, utterance })),
       ...output.plan,
     ];
     this.body.setPlan(body, plan);
+    return plan;
   }
 
   /**
@@ -955,7 +1076,118 @@ export class Experiment {
   makeConscious(id: number): boolean {
     if (!this.minds.has(id) || !this.agentBody(id)?.alive) return false;
     this.conscious.add(id);
+    this.scaffoldLedger.madeConscious(id, this.tick);
     return true;
+  }
+
+  // ─── Sanctioned scaffolding (recorded) ────────────────────────────────────
+  //
+  // Experiments legitimately intervene — freedom from want isolates the
+  // cultural variable. What was illegitimate was doing it by reaching into
+  // bodies, so no captured act could say it had happened. These are the same
+  // interventions, through the front door, written into the scaffold ledger and
+  // stamped onto every cognition record produced afterwards.
+
+  /**
+   * Set needs/health from outside. `patch` is absolute pressure values, not
+   * deltas — a driver "provisioning" a being is declaring a state, not nudging
+   * one. Returns how many living beings were touched.
+   */
+  provisionNeeds(
+    ids: Iterable<number>,
+    patch: Partial<Needs> & { health?: number; clearSickness?: boolean },
+  ): number {
+    const touched: number[] = [];
+    for (const id of ids) {
+      const body = this.agentBody(id);
+      if (!body?.alive) continue;
+      for (const key of NEED_KEYS) {
+        const v = patch[key];
+        if (v !== undefined) body.needs[key] = clampNeed(v);
+      }
+      if (patch.health !== undefined) body.health = Math.max(0, Math.min(100, patch.health));
+      if (patch.clearSickness) body.sickUntil = 0;
+      touched.push(id);
+    }
+    this.scaffoldLedger.provisionedNeeds(touched, this.tick);
+    return touched.length;
+  }
+
+  /**
+   * Put items in a being's hands. `mode: 'floor'` tops the stack up to the
+   * given count (what the Phase 2 drivers did); `'add'` adds that many.
+   */
+  grantItems(id: number, items: Partial<Record<ObjectKind, number>>, mode: 'floor' | 'add' = 'floor'): boolean {
+    const body = this.agentBody(id);
+    if (!body?.alive) return false;
+    for (const [kind, n] of Object.entries(items) as [ObjectKind, number][]) {
+      const have = body.inventory[kind] ?? 0;
+      body.inventory[kind] = mode === 'add' ? have + n : Math.max(have, n);
+    }
+    this.scaffoldLedger.grantedItems(id, this.tick);
+    return true;
+  }
+
+  /**
+   * Move a being. `markMoved` is the spatial index's contract for a position
+   * written directly — without it the being stays findable only where it used
+   * to be until the next tick reconciles, and a query made in between (say the
+   * witnesses of an authored event) would be answered about the old place.
+   */
+  relocate(id: number, x: number, y: number): boolean {
+    const entity = this.agentEntity(id);
+    if (!entity) return false;
+    const t = entity.components['Transform2D'] as { x: number; y: number } | undefined;
+    if (!t) return false;
+    t.x = x;
+    t.y = y;
+    clampToWorld(t);
+    this.world.spatial.markMoved(id);
+    this.scaffoldLedger.relocated(id, this.tick);
+    return true;
+  }
+
+  /**
+   * Emit an event nobody did — an authored deed, to test how a people reads
+   * one. The witnesses are resolved before it goes out, so every being it
+   * reaches carries the fact in its scaffold from then on.
+   */
+  authorEvent(event: SimEvent): number {
+    const witnesses = this.perception.witnessesOf(this.world, event);
+    this.scaffoldLedger.authoredEvent(event, witnesses);
+    this.bus.emit(event);
+    return witnesses.length;
+  }
+
+  /**
+   * Wait for the thinks already in flight to land, so a run can be closed with
+   * nothing outstanding. Bounded: a wedged backend must not hang a host.
+   */
+  async settleCognition(timeoutMs = 10_000): Promise<boolean> {
+    if (!this.scheduler) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (this.cognitionPending() > 0 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    return this.cognitionPending() === 0;
+  }
+
+  /**
+   * Close the recording: anything still in flight is written as an explicitly
+   * unanswered row, open outcome windows resolve, and the manifest gets counts
+   * that reconcile. From here no further think may reach the world, so drain
+   * with `settleCognition` first if the results still matter. Safe to call
+   * twice; a run without recording ignores it entirely.
+   */
+  endRecording(): void {
+    if (!this.recorder) return;
+    this.recordingEnded = true;
+    this.recorder.end();
+  }
+
+  /** Non-null once a sink write has thrown — the corpus is then incomplete. */
+  get recordingFailure(): string | null {
+    return this.recorder?.failureReason ?? null;
   }
 
   /** The kin a being knows it has — parents and children, by name. */
@@ -1016,6 +1248,7 @@ export class Experiment {
       const mind = this.minds.get(aid);
       if (mind) mind.narratives.seed(id, text, x, y, this.tick, timesHeard);
     }
+    this.scaffoldLedger.seededMyth(id, text, ids, this.tick);
   }
 
   /**
@@ -1043,6 +1276,7 @@ export class Experiment {
         this.tick,
       );
     }
+    this.scaffoldLedger.seededRecipe(output, toAgentIds, this.tick);
   }
 
   /** Living beings who HOLD a craft-recipe for `output` (learned it, may or may
@@ -1247,14 +1481,15 @@ export class Experiment {
     const clean = text.trim().slice(0, 200);
     if (!clean) return 0;
     const ids = target === 'all' ? this.agentIds : [target];
-    let n = 0;
+    const reached: number[] = [];
     for (const id of ids) {
       const mind = this.minds.get(id);
       if (mind && this.agentBody(id)?.alive) {
         mind.injectIdea(clean, this.tick);
-        n++;
+        reached.push(id);
       }
     }
-    return n;
+    this.scaffoldLedger.gaveIdea(clean, reached, this.tick);
+    return reached.length;
   }
 }

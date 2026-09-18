@@ -1,6 +1,6 @@
 import type { ThinkInput } from '../contract/types.js';
 import type { IMindBackend } from './IMindBackend.js';
-import { buildThinkPrompt } from './prompt.js';
+import { buildThinkPrompt, retryPrompt } from './prompt.js';
 
 export interface FireworksMindBackendOptions {
   apiKey: string;
@@ -45,10 +45,9 @@ export class FireworksMindBackend implements IMindBackend {
   }
 
   async complete(input: ThinkInput, retryError?: string): Promise<string> {
-    const prompt = buildThinkPrompt(input);
-    const user = retryError
-      ? `${prompt.user}\n\nYour previous reply was rejected: ${retryError}. Reply with valid JSON only.`
-      : prompt.user;
+    // Composed by `retryPrompt`, not here: the cognition record stores the same
+    // messages per attempt, and the two must be the same bytes.
+    const prompt = retryPrompt(buildThinkPrompt(input), retryError);
 
     const res = await this.opts.fetchImpl(this.opts.baseUrl, {
       method: 'POST',
@@ -63,7 +62,7 @@ export class FireworksMindBackend implements IMindBackend {
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: prompt.system },
-          { role: 'user', content: user },
+          { role: 'user', content: prompt.user },
         ],
       }),
     });

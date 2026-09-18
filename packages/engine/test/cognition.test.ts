@@ -108,6 +108,11 @@ describe('LlmMind', () => {
     expect(log[0]!.valid).toBe(false);
     expect(log[0]!.retried).toBe(true);
     expect(log[0]!.fellBackToReflex).toBe(true);
+    // Both rejected completions survive — a refusal is the most informative
+    // row a training corpus can hold, and the old capture threw it away.
+    expect(log[0]!.attempts).toHaveLength(2);
+    expect(log[0]!.attempts.every((a) => a.raw === 'not json — the model glitched' && a.error)).toBe(true);
+    expect(log[0]!.modelId).toBe('mock/reflex-policy');
   });
 
   it('recovers on the retry when the model fails just once', async () => {
@@ -117,6 +122,9 @@ describe('LlmMind', () => {
     expect(log[0]!.valid).toBe(true);
     expect(log[0]!.retried).toBe(true);
     expect(log[0]!.fellBackToReflex).toBe(false);
+    expect(log[0]!.attempts).toHaveLength(2);
+    expect(log[0]!.attempts[0]!.error).toBeDefined();
+    expect(log[0]!.attempts[1]!.error).toBeUndefined();
   });
 });
 
@@ -161,6 +169,8 @@ describe('CognitionLog', () => {
       systemPrompt: '',
       userPrompt: '',
       rawOutput: '',
+      attempts: [],
+      modelId: 'mock/reflex-policy',
       valid,
       retried: false,
       fellBackToReflex: !valid,

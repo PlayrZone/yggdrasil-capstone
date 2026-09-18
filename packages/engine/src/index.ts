@@ -62,8 +62,41 @@ export { WORLD, EDGE, SEA_HEIGHT, regionAt, heightAt, elevationBand, riverY, tri
 export type { Region } from './world/regions.js';
 
 // ── Experiment runner (headless sim host) ────────────────────────────────────
-export { Experiment } from './runner/Experiment.js';
-export type { ExperimentOptions, AgentInfo } from './runner/Experiment.js';
+export { Experiment, FORAGER_CONTINENT } from './runner/Experiment.js';
+export type { ExperimentOptions, RecordingOptions, AgentInfo } from './runner/Experiment.js';
+
+// ── Lossless cognition record (W0-B) ─────────────────────────────────────────
+export { ENGINE_VERSION } from './version.js';
+export { COGNITION_SCHEMA_VERSION, NullCognitionSink } from './record/types.js';
+export type {
+  ICognitionSink,
+  CognitionRecordV2,
+  CognitionOutcome,
+  CognitionStatus,
+  CognitionAttempt as CognitionAttemptRecord,
+  IntentOutcome,
+  UtteranceOutcome,
+  InterventionDuringThink,
+  OutcomeCloseReason,
+  ResolvedOutput,
+  RecordedRunOptions,
+  RecordedBody,
+  RecorderWorld,
+  RunManifest,
+  RunSummary,
+  RunCounts,
+  RunScaffoldSummary,
+  ScaffoldState,
+  ScaffoldKind,
+  ScaffoldEvent,
+  SerializedThinkInput,
+  SerializedMemoryRecord,
+} from './record/types.js';
+export { serializeThinkInput, deserializeThinkInput } from './record/serialize.js';
+export { ScaffoldLedger } from './record/ScaffoldLedger.js';
+export { CognitionRecorder } from './record/CognitionRecorder.js';
+export type { CognitionRecorderOptions, CompletedAct } from './record/CognitionRecorder.js';
+export { OutcomeTracker } from './record/OutcomeTracker.js';
 
 // ── Mind (memory · learning · knowledge · consciousness) ─────────────────────
 
@@ -128,12 +161,12 @@ export type { IMind } from './consciousness/IMind.js';
 export type { IMindBackend } from './consciousness/IMindBackend.js';
 export { ReflexMind } from './consciousness/ReflexMind.js';
 export { LlmMind } from './consciousness/LlmMind.js';
-export type { CognitionRecord, LlmMindOptions } from './consciousness/LlmMind.js';
+export type { CognitionRecord, CognitionAttempt, LlmMindOptions } from './consciousness/LlmMind.js';
 export { FireworksMindBackend } from './consciousness/FireworksMindBackend.js';
 export type { FireworksMindBackendOptions } from './consciousness/FireworksMindBackend.js';
 export { MockMindBackend } from './consciousness/MockMindBackend.js';
 export type { MockMindBackendOptions } from './consciousness/MockMindBackend.js';
-export { buildThinkPrompt, knowledgeText } from './consciousness/prompt.js';
+export { buildThinkPrompt, retryPrompt, knowledgeText } from './consciousness/prompt.js';
 export type { ThinkPrompt } from './consciousness/prompt.js';
 export { parseMindOutput, MindOutputError } from './consciousness/schema.js';
 
@@ -141,8 +174,10 @@ export { CognitionScheduler } from './scheduler/CognitionScheduler.js';
 export type { CognitionSchedulerOptions } from './scheduler/CognitionScheduler.js';
 export { CognitionLog } from './scheduler/CognitionLog.js';
 
-export { cognitionToExample, curateCorpus } from './training/corpus.js';
+export { cognitionToExample, curateCorpus, acceptedAttempt, acceptedCompletion, planShape } from './training/corpus.js';
 export type { TrainingExample, CurateOptions, CurationResult } from './training/corpus.js';
+export { summarizeCorpus } from './training/summarize.js';
+export type { DatasetCard, ScaffoldCounts, PlanShapeSuccess, Share } from './training/summarize.js';
 export { evalJsonValidity, evalKnowledgeFidelity } from './training/eval.js';
 export type { ValidityResult, FidelityResult, FidelityViolation } from './training/eval.js';
 

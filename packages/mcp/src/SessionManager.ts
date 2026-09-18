@@ -1,5 +1,6 @@
 import { Experiment } from '@yggdrasil/engine';
-import type { IMindBackend } from '@yggdrasil/engine';
+import type { ICognitionSink, IMindBackend } from '@yggdrasil/engine';
+import { JsonlCognitionSink } from '@yggdrasil/home';
 import type { ResearchDB, EventRow, KnowledgeRow } from '@yggdrasil/db';
 
 interface Session {
@@ -17,18 +18,35 @@ interface Session {
  * — then finalize it into a permanent DB record. Recording is incremental:
  * every advance snapshots metrics + drains new events into the store.
  */
+export function corpusRunId(runId: number): string {
+  return `run-${runId}`;
+}
+
 export class SessionManager {
   private readonly sessions = new Map<number, Session>();
 
   constructor(
     private readonly db: ResearchDB,
     private readonly makeBackend: () => IMindBackend | null = () => null,
+    /** Where the lossless cognition record goes. Tests inject a capturing sink. */
+    private readonly makeSink: (runId: number) => ICognitionSink | null = (runId) =>
+      new JsonlCognitionSink(corpusRunId(runId)),
   ) {}
 
   create(seed: string, agentCount: number, startedAt: number, craftLearning = false): number {
     const mindBackend = this.makeBackend() ?? undefined;
-    const exp = new Experiment({ seed, agentCount, mindBackend, craftLearning });
-    const runId = this.db.createRun({ seed, agentCount, backend: exp.backendLabel, startedAt });
+    // The run row comes first so the corpus and the DB agree on the run's id.
+    const runId = this.db.createRun({ seed, agentCount, backend: mindBackend?.modelId ?? 'reflex', startedAt });
+    // Only a conscious run produces cognition; a reflex run would open an empty
+    // corpus for every advance the lab ever makes.
+    const sink = mindBackend ? this.makeSink(runId) : null;
+    const exp = new Experiment({
+      seed,
+      agentCount,
+      mindBackend,
+      craftLearning,
+      ...(sink ? { recording: { sink, runId: corpusRunId(runId), scenarioId: seed } } : {}),
+    });
     this.sessions.set(runId, { exp, runId, agentCount, lastRecordedEventCount: 0, startedAt });
     this.snapshotMetrics(runId);
     return runId;
@@ -55,6 +73,36 @@ export class SessionManager {
     exp.seedRecipe(output as never, makers);
     // (The tool handler logs this mutation via logMutation; no double-record here.)
     return makers;
+  }
+
+  /**
+   * Switch beings to LLM cognition — without this the backend is wired but
+   * never called, so an MCP run produced no cognition and no corpus at all.
+   * Either explicit ids, or the `count` living beings closest to the population
+   * centroid (so they can perceive and speak to each other). Recorded in the
+   * scaffold ledger, so every row says when its being became conscious.
+   */
+  makeConscious(runId: number, opts: { ids?: number[]; count?: number } = {}): number[] {
+    const exp = this.require(runId).exp;
+    const living = exp.agentIds.filter((id) => exp.agentBody(id)?.alive);
+    let candidates = living;
+    if (opts.ids && opts.ids.length > 0) {
+      const wanted = new Set(opts.ids);
+      candidates = living.filter((id) => wanted.has(id));
+    } else {
+      const positioned = living
+        .map((id) => {
+          const t = exp.agentEntity(id)?.components['Transform2D'] as { x: number; y: number } | undefined;
+          return t ? { id, x: t.x, y: t.y } : null;
+        })
+        .filter((a): a is { id: number; x: number; y: number } => a !== null);
+      if (positioned.length === 0) return [];
+      const cx = positioned.reduce((a, p) => a + p.x, 0) / positioned.length;
+      const cy = positioned.reduce((a, p) => a + p.y, 0) / positioned.length;
+      positioned.sort((a, b) => (a.x - cx) ** 2 + (a.y - cy) ** 2 - ((b.x - cx) ** 2 + (b.y - cy) ** 2));
+      candidates = positioned.slice(0, Math.max(1, opts.count ?? 1)).map((p) => p.id);
+    }
+    return candidates.filter((id) => exp.makeConscious(id));
   }
 
   /** Phase 3 measure: makers (beings who completed a craft) by generation, plus
@@ -118,11 +166,16 @@ export class SessionManager {
     return n;
   }
 
-  finish(runId: number): void {
+  async finish(runId: number): Promise<void> {
     const s = this.require(runId);
+    // Drain first: a think still in flight would otherwise be applied to a world
+    // whose recording has closed, i.e. a change with no row anywhere.
+    await s.exp.settleCognition();
     this.drainEvents(s);
     this.snapshotMetrics(runId);
     this.snapshotKnowledge(s);
+    // Open outcome windows resolve here, so no act is left without its result.
+    s.exp.endRecording();
     this.db.finishRun(runId, s.exp.tick, s.startedAt + s.exp.tick);
     this.sessions.delete(runId);
   }

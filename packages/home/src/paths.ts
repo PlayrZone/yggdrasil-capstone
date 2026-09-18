@@ -43,3 +43,15 @@ export function corpusDir(): string {
   mkdirSync(dir, { recursive: true });
   return dir;
 }
+
+/**
+ * The v2 corpus root — one directory per run, holding a manifest, the lossless
+ * cognition records and their outcomes. `corpus/civilization.jsonl` stays where
+ * it is as read-only history: it has no prompts, no completions and no
+ * outcomes, so nothing new is ever appended to it again (audit 03).
+ */
+export function corpusV2Root(): string {
+  const dir = join(corpusDir(), 'v2');
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}

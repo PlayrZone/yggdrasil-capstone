@@ -1,6 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ResearchDB } from '@yggdrasil/db';
-import { SessionManager } from '../src/SessionManager.js';
+import { MockMindBackend } from '@yggdrasil/engine';
+import type { CognitionOutcome, CognitionRecordV2, ICognitionSink, RunManifest, RunSummary } from '@yggdrasil/engine';
+import { SessionManager, corpusRunId } from '../src/SessionManager.js';
+
+class CapturingSink implements ICognitionSink {
+  manifest: RunManifest | null = null;
+  summary: RunSummary | null = null;
+  readonly records: CognitionRecordV2[] = [];
+  readonly outcomes: CognitionOutcome[] = [];
+  openRun(manifest: RunManifest): void {
+    this.manifest = manifest;
+  }
+  cognition(record: CognitionRecordV2): void {
+    this.records.push(record);
+  }
+  outcome(outcome: CognitionOutcome): void {
+    this.outcomes.push(outcome);
+  }
+  closeRun(summary: RunSummary): void {
+    this.summary = summary;
+  }
+}
 
 describe('SessionManager (engine ⇄ db wiring)', () => {
   let db: ResearchDB;
@@ -42,10 +63,64 @@ describe('SessionManager (engine ⇄ db wiring)', () => {
   it('finishes a run: snapshots knowledge and marks it finished', async () => {
     const runId = sessions.create('mcp-finish', 30, 0);
     await sessions.advance(runId, 3000);
-    sessions.finish(runId);
+    await sessions.finish(runId);
     expect(db.getRun(runId)!.status).toBe('finished');
     await expect(sessions.advance(runId, 1)).rejects.toThrow(); // session released
   });
+
+  /**
+   * The lossy `appendCorpus` path is replaced for new data: a conscious run
+   * emits the full record through the sink, and the manifest closes with the
+   * run. A reflex run has no cognition at all, so it opens no corpus.
+   */
+  it('records a conscious run losslessly and a reflex run not at all', async () => {
+    const sink = new CapturingSink();
+    let made = 0;
+    const conscious = new SessionManager(
+      db,
+      () => new MockMindBackend(),
+      () => {
+        made++;
+        return sink;
+      },
+    );
+    const runId = conscious.create('mcp-corpus', 12, 0);
+    // The sanctioned route: without this the backend is wired but never called.
+    const woken = conscious.makeConscious(runId, { count: 4 });
+    expect(woken).toHaveLength(4);
+    await conscious.advance(runId, 600);
+    await conscious.finish(runId);
+
+    expect(made).toBe(1);
+    expect(sink.manifest).toMatchObject({ runId: corpusRunId(runId), seed: 'mcp-corpus', scenarioId: 'mcp-corpus' });
+    expect(sink.records.length).toBeGreaterThan(0);
+    expect(sink.records.every((r) => r.prompt.system.length > 0 && r.attempts.length > 0)).toBe(true);
+    expect(sink.outcomes.length).toBeGreaterThan(0);
+    // finish() closes every open window, so no act is left without a result.
+    expect(sink.records.map((r) => r.beingId).every((id) => woken.includes(id))).toBe(true);
+    expect(sink.records.every((r) => r.scaffold.madeConsciousAtTick === 0)).toBe(true);
+    const counts = sink.summary!.counts;
+    expect(counts.recordsWritten).toBe(sink.records.length);
+    expect(counts.outcomesWritten).toBe(sink.outcomes.length);
+    // Drained before closing, so nothing was left unanswered and nothing dropped.
+    expect(counts.promptsSent).toBe(counts.recordsWritten + counts.recordsDropped);
+    expect(counts.unanswered).toBe(0);
+    expect(counts.recordsDropped).toBe(0);
+    expect(sink.summary!.status).toBe('ok');
+    // Every act has a result, and every result points at a record on disk.
+    const ids = new Set(sink.records.map((r) => r.id));
+    for (const o of sink.outcomes) expect(ids.has(o.cognitionId)).toBe(true);
+
+    let reflexSinks = 0;
+    const reflex = new SessionManager(db, () => null, () => {
+      reflexSinks++;
+      return sink;
+    });
+    const plainRun = reflex.create('mcp-reflex', 12, 0);
+    await reflex.advance(plainRun, 200);
+    await reflex.finish(plainRun);
+    expect(reflexSinks).toBe(0);
+  }, 30_000);
 
   it('is reproducible for a given seed (same recorded metrics)', async () => {
     const a = new SessionManager(new ResearchDB(':memory:'));

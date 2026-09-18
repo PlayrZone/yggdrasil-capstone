@@ -20,6 +20,21 @@ export interface ThinkPrompt {
 const INTENT_VOCAB =
   'MoveTo, Gather, Dig, Eat, Drink, Sleep, Build, Deposit, Withdraw, Give, Attack, Craft, Speak, Follow, Flee, Idle';
 
+/**
+ * The prompt for a RETRY — the base prompt plus the reason the last reply was
+ * rejected. It lives here, not in a backend, because a record must be able to
+ * say exactly which messages produced each completion: a backend that composed
+ * its own retry text would leave the accepted completion paired with a prompt
+ * that never produced it. Every backend must send this and nothing else.
+ */
+export function retryPrompt(base: ThinkPrompt, retryError: string | undefined): ThinkPrompt {
+  if (!retryError) return base;
+  return {
+    system: base.system,
+    user: `${base.user}\n\nYour previous reply was rejected: ${retryError}. Reply with valid JSON only.`,
+  };
+}
+
 export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
   const { snapshot, knowledge, recalledMemories, worldView, goals, trigger } = input;
   const t = snapshot.traits;

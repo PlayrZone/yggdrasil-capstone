@@ -3,9 +3,19 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { DEFAULT_QUERY_TIMEOUT_MS, ResearchDB } from '@yggdrasil/db';
-import { MATERIAL_PROPERTIES, WORLD } from '@yggdrasil/engine';
+import { COGNITION_SCHEMA_VERSION, MATERIAL_PROPERTIES, WORLD, summarizeCorpus } from '@yggdrasil/engine';
 import { SessionManager } from './SessionManager.js';
-import { appendActivity, dbPath, isSafeSlug, listReports, readReport, writeReport, yggHome } from '@yggdrasil/home';
+import {
+  appendActivity,
+  dbPath,
+  isSafeSlug,
+  listCorpusRuns,
+  listReports,
+  readCorpusRun,
+  readReport,
+  writeReport,
+  yggHome,
+} from '@yggdrasil/home';
 import { hasLlmKey, llmModelId, makeLlmBackend } from './llm.js';
 
 /**
@@ -49,7 +59,7 @@ const text = (s: string): { content: { type: 'text'; text: string }[] } => ({
 });
 const json = (v: unknown): { content: { type: 'text'; text: string }[] } => text(JSON.stringify(v, null, 2));
 
-const MUTATING = new Set(['create_experiment', 'advance', 'give_idea', 'finish_run', 'run_experiment', 'write_report', 'seed_recipe']);
+const MUTATING = new Set(['create_experiment', 'advance', 'give_idea', 'finish_run', 'run_experiment', 'write_report', 'seed_recipe', 'make_conscious']);
 function logMutation(tool: string, detail: unknown, runId?: number): void {
   if (!MUTATING.has(tool)) return;
   // The audit trail is only auditable if it can be ordered against real time —
@@ -214,6 +224,27 @@ server.registerTool(
   },
 );
 
+// ── make_conscious (MUTATING — the only route to a cognition corpus) ───────────
+server.registerTool(
+  'make_conscious',
+  {
+    title: 'Make beings conscious',
+    description:
+      'Switch living Gahallians to LLM cognition. Until this is called the model backend is wired but never consulted, so a run produces no cognition and no corpus. Pass explicit ids, or a count to take the most central living beings (so they can perceive and speak to one another). Logged, and recorded in the scaffold ledger of the run.',
+    inputSchema: {
+      runId: z.number().int().positive(),
+      ids: z.array(z.number().int().positive()).max(200).optional().describe('Specific agent ids.'),
+      count: z.number().int().positive().max(200).optional().describe('Most-central living beings to take instead (default 1).'),
+    },
+  },
+  async ({ runId, ids, count }) => {
+    const made = sessions.makeConscious(runId, { ...(ids ? { ids } : {}), ...(count !== undefined ? { count } : {}) });
+    logMutation('make_conscious', { ids, count, made }, runId);
+    announce('idea', `Made ${made.length} Gahallian(s) conscious: ${made.join(', ')}`, { runId, data: { made } });
+    return json({ runId, conscious: made, count: made.length });
+  },
+);
+
 // ── advance (MUTATING) ─────────────────────────────────────────────────────────
 server.registerTool(
   'advance',
@@ -272,7 +303,7 @@ server.registerTool(
     const s = sessions.get(runId);
     const summary = s ? `Finished run ${runId} at day ${s.exp.day()} — ${s.exp.aliveCount()} survived, ${s.exp.totalKnowledge()} knowledge` : `Finished run ${runId}`;
     announce('finish', summary, { runId });
-    sessions.finish(runId);
+    await sessions.finish(runId);
     logMutation('finish_run', {}, runId);
     return json({ runId, status: 'finished' });
   },
@@ -300,7 +331,7 @@ server.registerTool(
     if (s) announce('advance', `Day ${s.exp.day()} — ${s.exp.aliveCount()}/${n} alive, ${s.exp.totalKnowledge()} knowledge`, { runId, withAgents: true });
     const snap = snapshot(runId);
     announce('finish', `Batch run ${runId} complete`, { runId });
-    sessions.finish(runId);
+    await sessions.finish(runId);
     return json(snap);
   },
 );
@@ -472,6 +503,38 @@ server.registerTool(
       return json(await db.readonlyQueryBounded(sql, params ?? [], timeoutMs ?? QUERY_TIMEOUT_MS));
     } catch (e) {
       return text(`query rejected: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  },
+);
+
+// ── dataset_card (read — the corpus, measured) ──────────────────────────────────
+server.registerTool(
+  'dataset_card',
+  {
+    title: 'Measure a cognition corpus',
+    description:
+      'The dataset card for a recorded run: counts by trigger and by SCAFFOLD state (needs provisioned, seeded myth, authored events…), validity and fallback rates, distinct beings/seeds/worlds, intent-kind and plan-shape distribution with the top-five share, exact-duplicate rate, outcome-linked rate, and success rate per plan shape. Read-only. Omit runId for the most recent run; omit everything to list the runs.',
+    inputSchema: {
+      runId: z.string().optional().describe('A corpus run id (e.g. "run-12"). Omit for the newest.'),
+      list: z.boolean().optional().describe('Just list the recorded runs.'),
+    },
+  },
+  async ({ runId, list }) => {
+    const runs = listCorpusRuns();
+    if (list) return json({ runs });
+    const target = runId ?? runs[0]?.runId;
+    if (!target) return text('no recorded cognition corpus yet (a run only records when it has conscious beings)');
+    try {
+      const stored = readCorpusRun(target, COGNITION_SCHEMA_VERSION);
+      return json({
+        runId: stored.runId,
+        manifest: stored.manifest,
+        summary: stored.summary,
+        skippedLines: stored.skipped,
+        card: summarizeCorpus(stored.records, stored.outcomes),
+      });
+    } catch (e) {
+      return text(`cannot read corpus run: ${e instanceof Error ? e.message : String(e)}`);
     }
   },
 );
