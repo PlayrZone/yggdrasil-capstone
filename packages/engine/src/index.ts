@@ -120,6 +120,7 @@ export type {
   KnowledgeRule,
   KnowledgeStatus,
   KnowledgeRecord,
+  EvidenceSnapshot,
   AgentSnapshot,
   ObservedAgent,
   ObservedResource,
@@ -144,7 +145,7 @@ export { memoryFromEvent } from './memory/memoryFromEvent.js';
 export type { IEmbedder } from './memory/IEmbedder.js';
 export { NullEmbedder, cosineSimilarity } from './memory/IEmbedder.js';
 
-export type { ILearner, EvidenceReport } from './learning/ILearner.js';
+export type { ILearner, EvidenceReport, ProvenanceLevel } from './learning/ILearner.js';
 export { ProvenanceSample } from './learning/ILearner.js';
 export { ContextMiner } from './learning/ContextMiner.js';
 export { SuccessionMiner } from './learning/SuccessionMiner.js';

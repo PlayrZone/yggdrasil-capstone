@@ -2,6 +2,7 @@ import v8 from 'node:v8';
 import vm from 'node:vm';
 import { it } from 'vitest';
 import { Experiment } from '../src/runner/Experiment.js';
+import type { ProvenanceLevel } from '../src/learning/ILearner.js';
 import { TICKS_PER_DAY } from '../src/body/WorldRegularities.js';
 import type { AgentMind } from '../src/agent/AgentMind.js';
 
@@ -12,6 +13,9 @@ import type { AgentMind } from '../src/agent/AgentMind.js';
  *   YG_MEM_AGENTS=256 YG_MEM_DAYS=1,5,10 pnpm --filter @yggdrasil/engine bench
  *
  * NOT part of `pnpm test` — collected only by `bench/vitest.config.ts`.
+ *
+ * Retained episodic memory is bounded by the LIVING population, not by run
+ * length — it is not a plateau: grow the population and it rises with it.
  *
  * At each checkpoint it reports living vs dead minds, the episodic records each
  * side has FORMED split into still-held and dropped, the size of every other
@@ -59,7 +63,10 @@ function heapMb(): number {
  * the stores against each other, and the heap line is the real number.
  */
 function deepSize(root: unknown): number {
-  const seen = new Set<object>();
+  return deepSizeInto(root, new Set<object>());
+}
+
+function deepSizeInto(root: unknown, seen: Set<object>): number {
   const stack: unknown[] = [root];
   let bytes = 0;
   while (stack.length) {
@@ -112,6 +119,19 @@ function deepSize(root: unknown): number {
       stack.push((o as Record<string, unknown>)[k]);
     }
   }
+  return bytes;
+}
+
+/**
+ * The same walk over several roots at once, sharing ONE identity set — so a
+ * string or object held by many minds is charged once. This is the number that
+ * moves when tombstones are made to share their canonical parts; the per-mind
+ * `deepSize` above cannot see that sharing at all.
+ */
+function deepSizeShared(roots: readonly unknown[]): number {
+  const seen = new Set<object>();
+  let bytes = 0;
+  for (const root of roots) bytes += deepSizeInto(root, seen);
   return bytes;
 }
 
@@ -186,6 +206,7 @@ it(`memory footprint — seed ${SEED}, ${AGENTS} agents, days ${DAYS.join('/')}`
   const log = console.log;
   log(`\nmemory footprint · seed=${SEED} agents=${AGENTS} baseline heap ${heapMb()}MB`);
 
+  const totals: string[] = [];
   let at = 0;
   for (const day of DAYS) {
     const target = day * TICKS_PER_DAY;
@@ -214,13 +235,145 @@ it(`memory footprint — seed ${SEED}, ${AGENTS} agents, days ${DAYS.join('/')}`
       `\nday ${day} (tick ${at}, ${Math.round((Date.now() - started) / 100) / 10}s) · heap ${heapMb()}MB` +
         ` · memories formed ${formed} (${deadShare}% by beings now dead)` +
         ` · eventLog ${exp.eventLog.length} · births ${exp.births.length}` +
-        ` · held over capacity: ${overCapacity} minds (worst +${worstOver})`,
+        ` · held over capacity: ${overCapacity} minds (worst +${worstOver})` +
+        ` · held per living mind ${Math.round(living.held / Math.max(1, living.minds))}`,
     );
     log(line('living', living));
     log(line('dead', dead));
+    totals.push(
+      `day ${day}: heap ${heapMb()}MB (living miners ${mb(living.minerBytes)},` +
+        ` living knowledge ${mb(living.knowledgeBytes)}, dead knowledge ${mb(dead.knowledgeBytes)})`,
+    );
     log(
       `  other     births=${mb(deepSize(exp.births))} eventLog=${mb(deepSize(exp.eventLog))}` +
         ` world=${mb(deepSize(exp.world))} spatial=${mb(deepSize(exp.world.spatial))}`,
     );
   }
+
+  // The headline in one place: total heap is the budget this engine is held to,
+  // and the three terms that move it. Printed together so a regression in any
+  // of them is visible without reading four blocks of columns.
+  log(`
+TOTAL · seed=${SEED} agents=${AGENTS}`);
+  for (const t of totals) log(`  ${t}`);
+});
+
+/**
+ * What one hundred deaths cost, and where.
+ *
+ *   YG_MEM_DEATHS=100,200 pnpm --filter @yggdrasil/engine bench
+ *
+ * UNIQUE retained bytes across all tombstones at once — one identity set for
+ * the whole set of dead minds, so anything they share is charged once. That is
+ * the number tombstone compaction moves, and the per-mind `deepSize` above
+ * cannot see it. Knowledge is split into the parts a rule determines (ruleKey,
+ * statement, the rule object — identical in every mind that holds the belief,
+ * so shareable) and the parts it does not (provenance, ids, scalars).
+ *
+ * At the LAST checkpoint the dead are dropped for real and the heap re-read,
+ * destructively — a stash would keep them reachable and report nothing.
+ */
+const DEATH_MARKS = (process.env['YG_MEM_DEATHS'] ?? '100').split(',').map((d) => Number(d.trim()));
+
+it(`tombstone cost — seed ${SEED}-t, deaths ${DEATH_MARKS.join('/')}`, () => {
+  const exp = new Experiment({ seed: `${SEED}-t`, agentCount: Number(process.env['YG_MEM_TAGENTS'] ?? 150) });
+  const log = console.log;
+  log(`
+tombstone cost · seed=${SEED}-t`);
+
+  const deadMinds = (): AgentMind[] => {
+    const out: AgentMind[] = [];
+    for (const id of exp.agentIds) {
+      const mind = exp.minds.get(id);
+      if (mind && !exp.agentBody(id)?.alive) out.push(mind);
+    }
+    return out;
+  };
+
+  for (let i = 0; i < DEATH_MARKS.length; i++) {
+    const mark = DEATH_MARKS[i]!;
+    const started = Date.now();
+    while (deadMinds().length < mark && exp.tick < 200 * TICKS_PER_DAY) exp.advance(600);
+    let dead = deadMinds();
+    if (dead.length < mark) {
+      log(`  only ${dead.length} deaths by tick ${exp.tick} — stopping`);
+      break;
+    }
+
+    let stores = dead.map((m) => m.knowledge);
+    let records = stores.flatMap((k) => k.all());
+    const knowledge = deepSizeShared(stores);
+    // Split by what a rule determines and what it does not.
+    const ruleDerived = deepSizeShared(records.flatMap((k) => [k.ruleKey, k.statement, k.rule]));
+    const provenance = deepSizeShared(records.map((k) => k.provenance ?? []));
+    const snaps = [...new Set(records.flatMap((k) => k.provenance ?? []))];
+    const per100 = (bytes: number): string => mb((bytes / dead.length) * 100);
+
+    log(
+      `
+  ${dead.length} dead (tick ${exp.tick}, ${Math.round((Date.now() - started) / 100) / 10}s, ${exp.aliveCount()} living)` +
+        ` · ${records.length} knowledge records, ${snaps.length} distinct provenance snapshots`,
+    );
+    log(
+      `  unique bytes  knowledge=${mb(knowledge)} (${per100(knowledge)}/100 deaths)` +
+        `  = rule-derived ${mb(ruleDerived)} + provenance ${mb(provenance)} + rest ${mb(knowledge - ruleDerived - provenance)}` +
+        `  · narratives=${mb(deepSizeShared(dead.map((m) => m.narratives)))}` +
+        ` relationships=${mb(deepSizeShared(dead.map((m) => m.relationships)))}` +
+        ` episodic=${mb(deepSizeShared(dead.map((m) => m.memory)))}`,
+    );
+
+    if (i === DEATH_MARKS.length - 1) {
+      // Every local reference must go first, or the tombstones stay reachable
+      // through this very function and the heap gives nothing back.
+      const deaths = dead.length;
+      dead = [];
+      stores = [];
+      records = [];
+      const before = heapMb();
+      for (const id of [...exp.minds.keys()]) {
+        if (!exp.agentBody(id)?.alive) exp.minds.delete(id);
+      }
+      const after = heapMb();
+      log(
+        `  REAL heap ${before}MB → ${after}MB with the tombstones gone = ${Math.round((before - after) * 10) / 10}MB` +
+          ` (${Math.round(((before - after) / deaths) * 100 * 10) / 10}MB per 100 deaths)`,
+      );
+    }
+  }
+});
+
+/**
+ * What each provenance level costs. Provenance is an instrument, so its price
+ * is a number a host chooses with — not a constant to discover later.
+ *
+ *   YG_MEM_LEVEL_DAYS=16 pnpm --filter @yggdrasil/engine bench
+ *
+ * One world per level, same seed and population, torn down between so the heap
+ * reading belongs to the level being measured. Compare against the same bench
+ * run on the commit before provenance existed (3f70c03).
+ */
+const LEVEL_DAY = Number(process.env['YG_MEM_LEVEL_DAYS'] ?? 16);
+
+it(`provenance levels — ${AGENTS} agents, day ${LEVEL_DAY}`, () => {
+  const log = console.log;
+  const rows: string[] = [];
+  for (const level of ['off', 'compact', 'full'] as const satisfies readonly ProvenanceLevel[]) {
+    let exp: Experiment | undefined = new Experiment({ seed: SEED, agentCount: AGENTS, provenance: level });
+    exp.advance(LEVEL_DAY * TICKS_PER_DAY);
+    let miners = 0;
+    let knowledge = 0;
+    for (const id of exp.agentIds) {
+      const mind = exp.minds.get(id);
+      if (!mind) continue;
+      miners += deepSize(mind.learners);
+      knowledge += deepSize(mind.knowledge);
+    }
+    const heap = heapMb();
+    rows.push(`  ${level.padEnd(8)} heap ${String(heap).padStart(6)}MB   miners ${mb(miners).padStart(8)}   knowledge ${mb(knowledge).padStart(8)}`);
+    exp = undefined;
+    forceGc();
+  }
+  log(`
+PROVENANCE LEVELS · seed=${SEED} agents=${AGENTS} day ${LEVEL_DAY}`);
+  for (const r of rows) log(r);
 });

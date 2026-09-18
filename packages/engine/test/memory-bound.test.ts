@@ -8,8 +8,9 @@ import { mem, resetIds } from './helpers.js';
  * FOOTPRINT LOCK (W0-E). The episodic tier is the only unbounded thing a mind
  * used to hold: eviction moved records into an archive that only grew, and a
  * dead being kept every record it ever formed. These hold the bound that
- * replaced both — the amount of episodic memory a run retains must be a
- * function of the LIVING population, never of how long the run has gone on.
+ * replaced both — the amount of episodic memory a run retains is a function of
+ * the LIVING population, never of how long the run has gone on. That is a
+ * bound, not a plateau: grow the population and it rises with it.
  */
 
 /** Long enough that minds have evicted and the world has buried someone. */
@@ -83,11 +84,12 @@ describe('episodic memory is bounded by the living population', () => {
     expect(late.deadMinds).toBeGreaterThan(early.deadMinds); // more have died…
     expect(late.dead).toBe(0); // …and they still hold nothing
 
-    // THE PLATEAU. Memories keep being formed, but what is RETAINED has come
-    // off that curve: it can never exceed the living population's capacity,
-    // whatever the run length, and the dead — who form a large share of every
-    // long run's memories — retain nothing at all. Before this change retained
-    // and ever-formed were the same number, for the living and the dead alike.
+    // THE BOUND. Memories keep being formed, but what is RETAINED has come off
+    // that curve: it is a function of the LIVING population, never of run
+    // length — it does NOT plateau, it tracks how many minds are alive, and it
+    // rises again when the population does. The dead, who form a large share of
+    // every long run's memories, retain nothing at all. Before this change
+    // retained and ever-formed were the same number, living and dead alike.
     expect(late.everFormed).toBeGreaterThan(early.everFormed * 1.5);
     expect(early.living).toBeLessThanOrEqual(early.allowed);
     expect(late.living).toBeLessThanOrEqual(late.allowed);

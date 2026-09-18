@@ -1,5 +1,5 @@
 import type { MemoryRecord } from '../contract/types.js';
-import type { EvidenceReport, ILearner } from './ILearner.js';
+import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
 
 interface PartnerTallies {
@@ -24,6 +24,8 @@ const RECIPROCATION_WINDOW = 1200;
  * or "enemy" concept exists here — only observed behavior patterns.
  */
 export class SocialMiner implements ILearner {
+  constructor(private readonly provenanceLevel: ProvenanceLevel = 'compact') {}
+
   private partners = new Map<number, PartnerTallies>();
 
   private talliesFor(partnerId: number): PartnerTallies {
@@ -36,7 +38,7 @@ export class SocialMiner implements ILearner {
         reciprocations: 0,
         attacks: 0,
         openGives: [],
-        provenance: new ProvenanceSample(),
+        provenance: new ProvenanceSample(this.provenanceLevel),
       };
       this.partners.set(partnerId, t);
     }
@@ -51,13 +53,13 @@ export class SocialMiner implements ILearner {
           t.interactions++;
           t.myGives++;
           t.openGives.push(memory.tick);
-          t.provenance.add(memory.id);
+          t.provenance.add(memory);
           break;
         }
         case 'ReceivedItem': {
           t.interactions++;
           t.theirGives++;
-          t.provenance.add(memory.id);
+          t.provenance.add(memory);
           const open = t.openGives.findIndex((tick) => memory.tick - tick <= RECIPROCATION_WINDOW);
           if (open !== -1) {
             t.openGives.splice(open, 1);
@@ -68,7 +70,7 @@ export class SocialMiner implements ILearner {
         case 'WasAttacked': {
           t.interactions++;
           t.attacks++;
-          t.provenance.add(memory.id);
+          t.provenance.add(memory);
           break;
         }
         case 'UtteranceSpoken':
@@ -94,6 +96,7 @@ export class SocialMiner implements ILearner {
           evidenceCount: t.reciprocations,
           contradictionCount: t.myGives - t.reciprocations,
           sourceMemoryIds: t.provenance.ids(),
+          provenance: t.provenance.snapshots(),
         });
       }
       if (t.theirGives >= 2) {
@@ -103,6 +106,7 @@ export class SocialMiner implements ILearner {
           evidenceCount: t.theirGives,
           contradictionCount: 0,
           sourceMemoryIds: t.provenance.ids(),
+          provenance: t.provenance.snapshots(),
         });
       }
       if (t.attacks >= 1) {
@@ -112,6 +116,7 @@ export class SocialMiner implements ILearner {
           evidenceCount: t.attacks,
           contradictionCount: 0,
           sourceMemoryIds: t.provenance.ids(),
+          provenance: t.provenance.snapshots(),
         });
       }
     }

@@ -11,7 +11,7 @@ import type {
   WorldView,
 } from '../contract/types.js';
 import { MemoryStream } from '../memory/MemoryStream.js';
-import type { ILearner } from '../learning/ILearner.js';
+import type { ILearner, ProvenanceLevel } from '../learning/ILearner.js';
 import { ruleKey } from '../learning/ruleKey.js';
 import { ContextMiner } from '../learning/ContextMiner.js';
 import { SuccessionMiner } from '../learning/SuccessionMiner.js';
@@ -19,6 +19,7 @@ import { SocialMiner } from '../learning/SocialMiner.js';
 import { OutcomeMiner } from '../learning/OutcomeMiner.js';
 import { CraftObservationMiner } from '../learning/CraftObservationMiner.js';
 import { KnowledgeStore, copyRule } from '../knowledge/KnowledgeStore.js';
+import type { RuleIntern } from '../knowledge/KnowledgeStore.js';
 import { RelationshipStore } from '../relationships/RelationshipStore.js';
 import { NarrativeStore } from '../narrative/NarrativeStore.js';
 import type { IMind } from '../consciousness/IMind.js';
@@ -40,6 +41,12 @@ export interface AgentMindOptions {
    * existing reflex worlds are unchanged.
    */
   craftLearning?: boolean;
+  /**
+   * How much evidence each belief keeps about itself. Instrumentation only —
+   * no prompt, miner or decision reads it, and every level simulates
+   * identically. Default 'compact'. See `ProvenanceLevel`.
+   */
+  provenance?: ProvenanceLevel;
 }
 
 /**
@@ -63,7 +70,7 @@ export interface AgentMindOptions {
  */
 export class AgentMind {
   readonly memory: MemoryStream;
-  readonly knowledge = new KnowledgeStore();
+  readonly knowledge: KnowledgeStore;
   readonly relationships = new RelationshipStore();
   readonly narratives = new NarrativeStore();
   readonly learners: ILearner[];
@@ -79,8 +86,15 @@ export class AgentMind {
     options: AgentMindOptions = {},
   ) {
     this.memory = new MemoryStream(options.memoryHotCapacity ?? 512);
-    this.learners = [new ContextMiner(), new SuccessionMiner(), new SocialMiner(), new OutcomeMiner()];
-    if (options.craftLearning) this.learners.push(new CraftObservationMiner());
+    const provenance = options.provenance ?? 'compact';
+    this.knowledge = new KnowledgeStore(provenance);
+    this.learners = [
+      new ContextMiner(provenance),
+      new SuccessionMiner({ provenance }),
+      new SocialMiner(provenance),
+      new OutcomeMiner(provenance),
+    ];
+    if (options.craftLearning) this.learners.push(new CraftObservationMiner(provenance));
     this.mind = options.mind ?? new ReflexMind();
     this.thinkInterval = options.thinkInterval ?? 120;
     this.consolidateInterval = options.consolidateInterval ?? 300;
@@ -134,7 +148,7 @@ export class AgentMind {
         trust,
         stored.tick,
         stored.toldBy,
-        stored.id,
+        stored,
       );
     }
     return stored;
@@ -153,13 +167,19 @@ export class AgentMind {
    * the episodic records (retrieved only by `think`) and the miners' working
    * counters (read only by `consolidate`) — leaving the tombstone above.
    *
+   * `intern` collapses the tombstone's rule-derived strings onto shared
+   * instances; omitted, the store is simply left as it is.
+   *
    * Safe because nothing reaches a dead mind again: the tick loop skips it,
    * `PerceptionSystem.witnessesOf` returns only the living, and `injectIdea`
    * is gated on `alive`. `test/memory-bound.test.ts` holds that empirically.
    */
-  entomb(): void {
+  entomb(intern?: RuleIntern): void {
     this.memory.release();
     this.learners.length = 0;
+    // The beliefs stay, but stop each being a private copy of strings and a
+    // rule object every other tombstone holding the belief already has.
+    if (intern) this.knowledge.compact(intern);
   }
 
   /** Run every miner and fold the evidence into the knowledge base. */

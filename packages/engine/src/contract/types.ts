@@ -339,6 +339,46 @@ export type KnowledgeRule =
 
 export type KnowledgeStatus = 'hypothesis' | 'held' | 'contested' | 'abandoned';
 
+/**
+ * One episode a belief rests on, copied out of the memory it came from so the
+ * belief survives the memory. Episodic records are evicted while a being lives
+ * and released when it dies, so an id into that store dangles; these are the
+ * fields someone auditing "why do you believe that?" actually needs — what
+ * happened, when, where, who was in it, whose hand it was, and whether you
+ * lived it, watched it or were told it.
+ *
+ * DERIVABLE FIELDS ARE NOT STORED. The memory's `summaryText` is a pure
+ * template over `type`, `objectKind`, `subjects` and `causedBy`; the same
+ * function that wrote it renders it back (`describeEpisode`), so keeping the
+ * string would be a second copy of these fields for every belief in the world.
+ *
+ * Every field is always present — `undefined` rather than absent — so the whole
+ * population's snapshots share one object shape instead of one per combination
+ * of what happened to be known.
+ *
+ * Bookkeeping only: no prompt, miner or decision reads it, so it cannot steer
+ * the simulation.
+ */
+export interface EvidenceSnapshot {
+  /** The memory it was taken from. May no longer exist — that is the point. */
+  memoryId: number;
+  tick: number;
+  type: SimEventType;
+  objectKind: ObjectKind | undefined;
+  outcome: 'success' | 'failure' | 'neutral';
+  origin: MemoryOrigin;
+  /** For origin=testimony: who said so. */
+  toldBy: number | undefined;
+  /** Whose hand it was, when that is a person and not the rememberer. */
+  causedBy: number | undefined;
+  /** The others it involved, excluding the rememberer. */
+  subjects: readonly number[];
+  x: number | undefined;
+  y: number | undefined;
+  /** The engine's deterministic salience for the episode. */
+  importance: number;
+}
+
 export interface KnowledgeRecord {
   id: number;
   /** Canonical string key derived from the rule — dedupe + diffusion compare. */
@@ -350,8 +390,18 @@ export interface KnowledgeRecord {
   confidence: number;
   evidenceCount: number;
   contradictionCount: number;
-  /** Sampled provenance — enough to audit "why do you believe that?". */
+  /**
+   * Sampled provenance by id. Kept because it is the record's long-standing
+   * identity of its evidence, but the ids dangle once those memories are
+   * evicted or released — read `provenance` instead.
+   */
   sourceMemoryIds: number[];
+  /**
+   * The same evidence, self-describing and outliving the memories. Bounded
+   * (see `ProvenanceSample`). Absent when a record was formed with no episode
+   * behind it at all — a seeded recipe, or a hand-built record in a test.
+   */
+  provenance?: readonly EvidenceSnapshot[];
   status: KnowledgeStatus;
   origin: MemoryOrigin;
   /** For origin=testimony: the informant. Provenance chains live here. */

@@ -1,5 +1,5 @@
 import type { MemoryRecord, ObjectKind } from '../contract/types.js';
-import type { EvidenceReport, ILearner } from './ILearner.js';
+import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
 
 interface RecipeTally {
@@ -27,6 +27,8 @@ const MIN_SAMPLES = 3;
  * not hearsay). This is what lets a skill — and a technology — be inherited.
  */
 export class CraftObservationMiner implements ILearner {
+  constructor(private readonly provenance: ProvenanceLevel = 'compact') {}
+
   private recipes = new Map<ObjectKind, RecipeTally>();
 
   observe(memory: MemoryRecord): void {
@@ -37,7 +39,7 @@ export class CraftObservationMiner implements ILearner {
     if (weight === 0) return; // testimony is not a craft-learning channel
     let t = this.recipes.get(output);
     if (!t) {
-      t = { seen: 0, inputs: {}, provenance: new ProvenanceSample() };
+      t = { seen: 0, inputs: {}, provenance: new ProvenanceSample(this.provenance) };
       this.recipes.set(output, t);
     }
     t.seen += weight;
@@ -46,7 +48,7 @@ export class CraftObservationMiner implements ILearner {
     // recipe table), so keeping the reference would let every watcher's belief
     // share one object with the world's physics.
     if (memory.craftInputs) t.inputs = { ...memory.craftInputs };
-    t.provenance.add(memory.id);
+    t.provenance.add(memory);
   }
 
   consolidate(): EvidenceReport[] {
@@ -62,6 +64,7 @@ export class CraftObservationMiner implements ILearner {
         evidenceCount: evidence,
         contradictionCount: 0,
         sourceMemoryIds: t.provenance.ids(),
+        provenance: t.provenance.snapshots(),
       });
     }
     return reports;

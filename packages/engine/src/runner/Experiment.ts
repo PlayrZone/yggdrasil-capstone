@@ -36,6 +36,8 @@ import type { MythReport } from '../analysis/myth.js';
 import { analyzeSacredPlaces } from '../analysis/sacredPlaces.js';
 import type { SacredPlacesReport } from '../analysis/sacredPlaces.js';
 import { mutateNarrative } from '../narrative/NarrativeStore.js';
+import { RuleIntern } from '../knowledge/KnowledgeStore.js';
+import type { ProvenanceLevel } from '../learning/ILearner.js';
 import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { AgentKnowledge, BeliefCluster, BeliefAccuracy } from '../analysis/diffusion.js';
 import type { ArchetypeResult, Archetype } from '../analysis/archetype.js';
@@ -80,6 +82,16 @@ export interface ExperimentOptions {
    * observational — nothing in the sim reads it, so it cannot affect
    * determinism. Tests inject a fake; omitted = the real clock. */
   now?: () => number;
+  /**
+   * How much evidence each belief keeps about itself — an INSTRUMENT, read by
+   * nothing in the simulation, so its cost is the host's to choose. 'off' for
+   * bulk and scale runs, 'full' for observatory deep-dives, 'compact' (the
+   * default) in between. Total heap at 150 agents / day 16, against the
+   * 97.1 MB of the commit before provenance existed: off 98.5, compact 114.5,
+   * full 123.5 — see `ProvenanceLevel`. Every level simulates identically;
+   * `test/provenance.test.ts` fingerprints one golden config at all three.
+   */
+  provenance?: ProvenanceLevel;
   /** Where the lossless cognition record goes. Absent = nothing is recorded,
    * and no recording code runs at all. */
   recording?: RecordingOptions;
@@ -203,6 +215,8 @@ export class Experiment {
   private readonly offerMaking: boolean;
   /** Phase 3 Exp 1 A/B: can a craft-recipe be learned by watching it done? */
   private readonly craftLearning: boolean;
+  /** Instrumentation level for belief evidence — see ExperimentOptions. */
+  readonly provenanceLevel: ProvenanceLevel;
   /** Phase 3 Exp 1: per-agent count of crafts COMPLETED (actor of a Crafted event). */
   readonly craftsByAgent = new Map<number, number>();
 
@@ -228,6 +242,8 @@ export class Experiment {
   /** Every sanctioned intervention a driver makes, written down. Always on:
    *  it is bookkeeping beside the sim, never inside it. */
   private readonly scaffoldLedger = new ScaffoldLedger();
+  /** Shared rule strings for the dead — see RuleIntern. Dies with the run. */
+  private readonly tombstoneRules = new RuleIntern();
   private readonly recorder: CognitionRecorder | null;
   /** Set by `endRecording`: the run is closed and nothing more may act. */
   private recordingEnded = false;
@@ -239,6 +255,7 @@ export class Experiment {
     this.leadershipOn = options.leadership ?? true;
     this.offerMaking = options.offerMaking ?? true;
     this.craftLearning = options.craftLearning ?? false;
+    this.provenanceLevel = options.provenance ?? 'compact';
     const recording = options.recording;
     if (mindBackend) {
       this.cognitionLog = new CognitionLog();
@@ -331,7 +348,13 @@ export class Experiment {
     // recorder's after-pass. From here it can never think again, so the tiers
     // only a thinking mind uses are released (AgentMind.entomb).
     this.bus.on((event) => {
-      if (event.type === 'AgentDied') this.minds.get(event.actorId)?.entomb();
+      if (event.type !== 'AgentDied') return;
+      // The BODY decides, not the event. `authorEvent` lets a driver stage a
+      // death that nothing in the world performed; entombing on the event alone
+      // would leave that being alive, amnesiac and — with its miners gone —
+      // unable to ever learn again.
+      const body = this.agentBody(event.actorId);
+      if (body && !body.alive) this.minds.get(event.actorId)?.entomb(this.tombstoneRules);
     });
   }
 
@@ -527,7 +550,7 @@ export class Experiment {
       const tr = (agent.components['GahallianBody'] as GahallianBody).traits;
       this.minds.set(
         agent.id,
-        new AgentMind(agent.id, { ...mindOptions(tr), mythBehavior: this.mythBehavior, craftLearning: this.craftLearning }),
+        new AgentMind(agent.id, { ...mindOptions(tr), mythBehavior: this.mythBehavior, craftLearning: this.craftLearning, provenance: this.provenanceLevel }),
       );
     }
     this.reproRng = mulberry32(hashSeed(`${this.seed}:repro`));
@@ -736,7 +759,7 @@ export class Experiment {
     this.agentIds.push(child.id);
     this.minds.set(
       child.id,
-      new AgentMind(child.id, { ...mindOptions(traits), mythBehavior: this.mythBehavior, craftLearning: this.craftLearning }),
+      new AgentMind(child.id, { ...mindOptions(traits), mythBehavior: this.mythBehavior, craftLearning: this.craftLearning, provenance: this.provenanceLevel }),
     );
     this.birthCount++;
     this.births.push({ child: child.id, parents: [a.id, b.id], tick });

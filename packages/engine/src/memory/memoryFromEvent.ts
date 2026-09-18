@@ -110,7 +110,7 @@ export function memoryFromEvent(
           : 'neutral',
     x: event.x,
     y: event.y,
-    summaryText: summarize(type, subjects, objectKind, causedBy),
+    summaryText: describeEpisode(type, subjects, objectKind, causedBy),
     importance: importanceOf(type, deltas),
     origin,
     toldBy,
@@ -119,9 +119,14 @@ export function memoryFromEvent(
   };
 }
 
-function summarize(
+/**
+ * The engine's one rendering of an episode. `EvidenceSnapshot` stores the parts
+ * and not the string, so an inspector calls this to read a belief's evidence
+ * back — same function, so the two can never drift.
+ */
+export function describeEpisode(
   type: SimEventType,
-  subjects: number[],
+  subjects: readonly number[],
   objectKind?: ObjectKind,
   causedBy?: number,
 ): string {

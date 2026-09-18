@@ -1,5 +1,5 @@
 import type { ContextFeatureKey, MemoryRecord, NeedKey } from '../contract/types.js';
-import type { EvidenceReport, ILearner } from './ILearner.js';
+import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
 
 interface OutcomeCell {
@@ -22,6 +22,8 @@ function featureActive(m: MemoryRecord, f: ContextFeatureKey): boolean {
  * worsens safety". Negative deltas are relief (needs are pressure).
  */
 export class OutcomeMiner implements ILearner {
+  constructor(private readonly provenance: ProvenanceLevel = 'compact') {}
+
   private cells = new Map<string, OutcomeCell>();
   private keyParts = new Map<
     string,
@@ -44,13 +46,13 @@ export class OutcomeMiner implements ILearner {
         const key = `${memory.type}:${feature ?? '*'}:${need}`;
         let cell = this.cells.get(key);
         if (!cell) {
-          cell = { relieves: 0, worsens: 0, provenance: new ProvenanceSample() };
+          cell = { relieves: 0, worsens: 0, provenance: new ProvenanceSample(this.provenance) };
           this.cells.set(key, cell);
           this.keyParts.set(key, { actionType: memory.type, feature, need });
         }
         if (delta < 0) cell.relieves += weight;
         else cell.worsens += weight;
-        cell.provenance.add(memory.id);
+        cell.provenance.add(memory);
       }
     }
   }
@@ -75,6 +77,7 @@ export class OutcomeMiner implements ILearner {
         evidenceCount: majority,
         contradictionCount: total - majority,
         sourceMemoryIds: cell.provenance.ids(),
+        provenance: cell.provenance.snapshots(),
       });
     }
     return reports;

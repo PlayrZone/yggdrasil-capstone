@@ -1,13 +1,14 @@
-import type { MemoryRecord, SimEventType } from '../contract/types.js';
-import type { EvidenceReport, ILearner } from './ILearner.js';
-import { ProvenanceSample } from './ILearner.js';
+import type { EvidenceSnapshot, MemoryRecord, SimEventType } from '../contract/types.js';
+import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
+import { ProvenanceSample, snapshotOf } from './ILearner.js';
 
 interface PendingCause {
   key: string;
   tick: number;
   x?: number;
   y?: number;
-  memoryId: number;
+  /** The cause episode itself: an effect can arrive after the memory is gone. */
+  memory: EvidenceSnapshot;
   /** Pair keys already credited for this cause instance. */
   matched: Set<string>;
 }
@@ -19,6 +20,8 @@ export interface SuccessionMinerOptions {
   radius?: number;
   /** Event types never considered (too frequent, no causal signal). */
   exclude?: SimEventType[];
+  /** How much evidence each mined rule keeps about itself. */
+  provenance?: ProvenanceLevel;
 }
 
 const DEFAULT_EXCLUDE: SimEventType[] = ['SawAgent', 'UtteranceSpoken', 'IntentRejected'];
@@ -35,6 +38,7 @@ export class SuccessionMiner implements ILearner {
   private readonly window: number;
   private readonly radius: number;
   private readonly exclude: Set<SimEventType>;
+  private readonly provenanceLevel: ProvenanceLevel;
 
   private pending: PendingCause[] = [];
   private causeTotals = new Map<string, number>();
@@ -46,6 +50,7 @@ export class SuccessionMiner implements ILearner {
     this.window = options.windowTicks ?? 600;
     this.radius = options.radius ?? 8;
     this.exclude = new Set(options.exclude ?? DEFAULT_EXCLUDE);
+    this.provenanceLevel = options.provenance ?? 'compact';
   }
 
   observe(memory: MemoryRecord): void {
@@ -77,11 +82,11 @@ export class SuccessionMiner implements ILearner {
       this.pairCounts.set(pairKey, (this.pairCounts.get(pairKey) ?? 0) + 1);
       let prov = this.provenance.get(pairKey);
       if (!prov) {
-        prov = new ProvenanceSample();
+        prov = new ProvenanceSample(this.provenanceLevel);
         this.provenance.set(pairKey, prov);
       }
-      prov.add(cause.memoryId);
-      prov.add(memory.id);
+      prov.addSnapshot(cause.memory);
+      prov.add(memory);
     }
 
     // And it is a potential CAUSE of what comes next.
@@ -91,7 +96,7 @@ export class SuccessionMiner implements ILearner {
       tick: memory.tick,
       x: memory.x,
       y: memory.y,
-      memoryId: memory.id,
+      memory: snapshotOf(memory),
       matched: new Set(),
     });
   }
@@ -106,6 +111,7 @@ export class SuccessionMiner implements ILearner {
       const cause = this.keyParts.get(causeKey)!;
       const effect = this.keyParts.get(effectKey)!;
       const causeTotal = this.causeTotals.get(causeKey) ?? count;
+      const prov = this.provenance.get(pairKey);
       reports.push({
         rule: {
           kind: 'succession',
@@ -117,7 +123,8 @@ export class SuccessionMiner implements ILearner {
         confidence: (count + 1) / (causeTotal + 2),
         evidenceCount: count,
         contradictionCount: causeTotal - count,
-        sourceMemoryIds: this.provenance.get(pairKey)?.ids() ?? [],
+        sourceMemoryIds: prov?.ids() ?? [],
+        ...(prov ? { provenance: prov.snapshots() } : {}),
       });
     }
     return reports;

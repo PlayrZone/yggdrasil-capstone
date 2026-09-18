@@ -1,5 +1,5 @@
 import type { ContextFeatureKey, MemoryRecord } from '../contract/types.js';
-import type { EvidenceReport, ILearner } from './ILearner.js';
+import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
 
 interface EventCell {
@@ -31,6 +31,8 @@ function featureActive(m: MemoryRecord, f: ContextFeatureKey): boolean {
  * that clears the thresholds becomes knowledge; that is by design.
  */
 export class ContextMiner implements ILearner {
+  constructor(private readonly provenance: ProvenanceLevel = 'compact') {}
+
   private totalMemories = 0;
   private featureTotals = new Map<ContextFeatureKey, number>();
   private events = new Map<string, EventCell>();
@@ -55,10 +57,10 @@ export class ContextMiner implements ILearner {
       cell.withFeature.set(f, (cell.withFeature.get(f) ?? 0) + 1);
       let prov = cell.provenance.get(f);
       if (!prov) {
-        prov = new ProvenanceSample();
+        prov = new ProvenanceSample(this.provenance);
         cell.provenance.set(f, prov);
       }
-      prov.add(memory.id);
+      prov.add(memory);
     }
   }
 
@@ -76,6 +78,7 @@ export class ContextMiner implements ILearner {
         const pFeatureGivenEvent = joint / cell.total;
         const pFeature = featureTotal / this.totalMemories;
         const lift = pFeatureGivenEvent / pFeature;
+        const prov = cell.provenance.get(feature);
 
         if (joint >= MIN_JOINT && lift >= MIN_LIFT_POSITIVE) {
           reports.push({
@@ -89,7 +92,8 @@ export class ContextMiner implements ILearner {
             confidence: (joint + 1) / (cell.total + 2),
             evidenceCount: joint,
             contradictionCount: cell.total - joint,
-            sourceMemoryIds: cell.provenance.get(feature)?.ids() ?? [],
+            sourceMemoryIds: prov?.ids() ?? [],
+            ...(prov ? { provenance: prov.snapshots() } : {}),
           });
         } else if (cell.total >= MIN_EVENT_FOR_NEGATIVE && lift <= MAX_LIFT_NEGATIVE && pFeature >= 0.2) {
           reports.push({
@@ -103,7 +107,8 @@ export class ContextMiner implements ILearner {
             confidence: (cell.total - joint + 1) / (cell.total + 2),
             evidenceCount: cell.total - joint,
             contradictionCount: joint,
-            sourceMemoryIds: cell.provenance.get(feature)?.ids() ?? [],
+            sourceMemoryIds: prov?.ids() ?? [],
+            ...(prov ? { provenance: prov.snapshots() } : {}),
           });
         }
       }

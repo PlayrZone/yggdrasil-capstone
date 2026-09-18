@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { KnowledgeStore } from '../src/index.js';
 import type { KnowledgeRule } from '../src/index.js';
+import { mem } from './helpers.js';
 
 const RULE: KnowledgeRule = {
   kind: 'succession',
@@ -8,6 +9,9 @@ const RULE: KnowledgeRule = {
   causeObject: 'seed',
   effectType: 'PlantSprouted',
 };
+
+/** The heard utterance a testimony record is formed from. */
+const HEARD = mem(10, 'UtteranceSpoken', { id: 7, origin: 'testimony', toldBy: 42 });
 
 function evidence(evidenceCount: number, contradictionCount: number, confidence: number) {
   return { rule: RULE, confidence, evidenceCount, contradictionCount, sourceMemoryIds: [1, 2] };
@@ -63,8 +67,8 @@ describe('KnowledgeStore lifecycle', () => {
 
 describe('testimony', () => {
   it('discounts hearsay by trust in the speaker', () => {
-    const trusted = new KnowledgeStore().intakeTestimony(RULE, 0.9, 1.0, 10, 42, 7);
-    const distrusted = new KnowledgeStore().intakeTestimony(RULE, 0.9, 0.0, 10, 42, 7);
+    const trusted = new KnowledgeStore().intakeTestimony(RULE, 0.9, 1.0, 10, 42, HEARD);
+    const distrusted = new KnowledgeStore().intakeTestimony(RULE, 0.9, 0.0, 10, 42, HEARD);
     expect(trusted.confidence).toBeCloseTo(0.72, 5);
     expect(distrusted.confidence).toBeCloseTo(0.27, 5);
     expect(trusted.status).toBe('held');
@@ -75,7 +79,7 @@ describe('testimony', () => {
 
   it('upgrades testimony to experience when own evidence arrives', () => {
     const store = new KnowledgeStore();
-    store.intakeTestimony(RULE, 0.9, 0.8, 10, 42, 7);
+    store.intakeTestimony(RULE, 0.9, 0.8, 10, 42, HEARD);
     const record = store.applyEvidence(evidence(4, 0, 0.8), 500);
     expect(record.origin).toBe('experience');
     expect(record.status).toBe('held');
@@ -84,7 +88,7 @@ describe('testimony', () => {
   it('never lets hearsay override first-hand knowledge', () => {
     const store = new KnowledgeStore();
     store.applyEvidence(evidence(6, 0, 0.85), 100);
-    const record = store.intakeTestimony(RULE, 0.1, 1.0, 200, 42, 7);
+    const record = store.intakeTestimony(RULE, 0.1, 1.0, 200, 42, HEARD);
     expect(record.confidence).toBeCloseTo(0.85, 5);
     expect(record.origin).toBe('experience');
   });
