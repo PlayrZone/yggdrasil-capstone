@@ -1,4 +1,5 @@
 import type { MemoryRecord } from '../contract/types.js';
+import { episodicKey } from '../memory/MemoryStream.js';
 
 /**
  * A behavior-derived label for what an agent spends its life doing. STRICTLY
@@ -35,34 +36,37 @@ export interface ArchetypeResult {
 }
 
 /**
- * Classify from an agent's own memory stream (first-hand experiences only —
- * watching others does not define who you are). Falls back to 'wanderer' when
- * there is too little to go on.
+ * Classify from a MemoryStream's first-hand experience tally — counts keyed by
+ * `episodicKey`, which span the being's whole life whether or not the records
+ * themselves are still held. Falls back to 'wanderer' when there is too little
+ * to go on.
  */
-export function classifyArchetype(memories: MemoryRecord[]): ArchetypeResult {
+export function classifyFromCounts(counts: ReadonlyMap<string, number>): ArchetypeResult {
   const t: Tally = { forage: 0, wood: 0, stone: 0, build: 0, give: 0, attack: 0, talk: 0 };
-  for (const m of memories) {
-    if (m.origin !== 'experience') continue;
-    switch (m.type) {
-      case 'GatherSucceeded':
-        if (m.objectKind === 'wood') t.wood++;
-        else if (m.objectKind === 'stone') t.stone++;
-        else t.forage++;
+  for (const [key, n] of counts) {
+    const sep = key.indexOf(':');
+    switch (key.slice(0, sep)) {
+      case 'GatherSucceeded': {
+        const objectKind = key.slice(sep + 1);
+        if (objectKind === 'wood') t.wood += n;
+        else if (objectKind === 'stone') t.stone += n;
+        else t.forage += n;
         break;
+      }
       case 'AteFood':
-        t.forage++;
+        t.forage += n;
         break;
       case 'BuiltStructure':
-        t.build += 3;
+        t.build += 3 * n;
         break;
       case 'GaveItem':
-        t.give += 2;
+        t.give += 2 * n;
         break;
       case 'AttackedAgent':
-        t.attack += 3;
+        t.attack += 3 * n;
         break;
       case 'UtteranceSpoken':
-        t.talk++;
+        t.talk += n;
         break;
       default:
         break;
@@ -84,4 +88,18 @@ export function classifyArchetype(memories: MemoryRecord[]): ArchetypeResult {
   entries.sort((a, b) => b[1] - a[1]);
   const [label, top] = entries[0]!;
   return { archetype: top === 0 ? 'wanderer' : label, dominance: top / total, sampleSize: total };
+}
+
+/**
+ * Classify from raw records — the same rule, for callers holding a memory list
+ * rather than a stream (tests, and any analysis handed records directly).
+ */
+export function classifyArchetype(memories: MemoryRecord[]): ArchetypeResult {
+  const counts = new Map<string, number>();
+  for (const m of memories) {
+    if (m.origin !== 'experience') continue;
+    const key = episodicKey(m.type, m.objectKind);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return classifyFromCounts(counts);
 }

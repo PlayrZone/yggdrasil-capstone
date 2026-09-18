@@ -25,7 +25,7 @@ import { AgentMind } from '../agent/AgentMind.js';
 import { CognitionLog } from '../scheduler/CognitionLog.js';
 import { CognitionScheduler } from '../scheduler/CognitionScheduler.js';
 import { LlmMind } from '../consciousness/LlmMind.js';
-import { classifyArchetype } from '../analysis/archetype.js';
+import { classifyFromCounts } from '../analysis/archetype.js';
 import { analyzeDiffusion, analyzeBeliefAccuracy } from '../analysis/diffusion.js';
 import { analyzeSociety } from '../analysis/society.js';
 import type { SocietyReport } from '../analysis/society.js';
@@ -326,6 +326,13 @@ export class Experiment {
       if (story) this.minds.get(event.actorId)?.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
     });
     if (this.recorder) this.bus.on(this.recorder.observeAfter);
+    // Registered LAST, so every other reader of the being that just died has
+    // already run: the witnesses' memories, its own final story above, and the
+    // recorder's after-pass. From here it can never think again, so the tiers
+    // only a thinking mind uses are released (AgentMind.entomb).
+    this.bus.on((event) => {
+      if (event.type === 'AgentDied') this.minds.get(event.actorId)?.entomb();
+    });
   }
 
   /**
@@ -1438,7 +1445,7 @@ export class Experiment {
   /** Behavior-derived archetype label (analysis-side; never read back). */
   archetypeOf(agentId: number): ArchetypeResult | null {
     const mind = this.minds.get(agentId);
-    return mind ? classifyArchetype(mind.memory.all()) : null;
+    return mind ? classifyFromCounts(mind.memory.experienceCounts()) : null;
   }
 
   /**

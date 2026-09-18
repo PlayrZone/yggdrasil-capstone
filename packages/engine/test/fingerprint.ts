@@ -15,6 +15,10 @@ import type { Intent } from '../src/contract/types.js';
  * and folds them into two independent 32-bit accumulators plus a length, so a
  * single flipped field, a reordered list or a dropped record all change it.
  *
+ * The memory section covers what a mind still HOLDS, plus two things that
+ * outlive the records — how many it ever formed, and its first-hand tally —
+ * so freeing a tier cannot hide a change in what the being experienced.
+ *
  * Floats go in via `String(v)`, which round-trips exactly in V8 — the comparison
  * is bit-exact, not tolerant.
  */
@@ -103,8 +107,12 @@ function mind(d: Digest, exp: Experiment, agentId: number): void {
   }
   d.num(agentId);
 
+  // `all()` is the records still HELD. `totalCount` — every memory the being
+  // ever formed — and the first-hand tally outlive eviction and death, so the
+  // digest still locks a whole life even where the records have been freed.
   const memories = m.memory.all();
   d.num(memories.length).num(m.memory.hotCount).num(m.memory.totalCount);
+  d.dict(Object.fromEntries(m.memory.experienceCounts()));
   for (const r of memories) {
     d.num(r.id).num(r.tick).push(r.type).push(r.origin).push(r.outcome).num(r.importance);
     d.num(r.x).num(r.y).push(r.summaryText).num(r.toldBy).num(r.causedBy).push(r.objectKind ?? '~');

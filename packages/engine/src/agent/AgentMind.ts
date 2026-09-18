@@ -48,6 +48,18 @@ export interface AgentMindOptions {
  * and a mind. The Body never sees inside this; this never mutates the
  * world. Hosts (the Y0 test harness, the Y1 desktop runner) own the
  * Body⇄AgentMind plumbing.
+ *
+ * AFTER DEATH this becomes a TOMBSTONE (see `entomb`). What it keeps is fixed
+ * by who still reads a dead being:
+ *  - `knowledge` — the diffusion analyzer clusters across the dead too; a
+ *    belief whose discoverer is gone is how culture is detected at all
+ *    (`analysis/diffusion.ts` originator/outlivedOriginator, `society()`,
+ *    `Experiment.totalKnowledge`).
+ *  - `relationships` — the lab's ties view reads any being's bonds.
+ *  - `narratives`, `goals` — `Experiment.consciousState` reads any being's.
+ *  - `memory.experienceCounts()` / `totalCount` — what it DID, for the
+ *    archetype label `agentDetail` still shows for the dead.
+ * Everything else is released, because nothing can read it again.
  */
 export class AgentMind {
   readonly memory: MemoryStream;
@@ -134,6 +146,20 @@ export class AgentMind {
 
   shouldConsolidate(tick: number): boolean {
     return (tick + this.agentId * 13) % this.consolidateInterval === 0;
+  }
+
+  /**
+   * The being is dead. Release the two tiers only a thinking mind can use —
+   * the episodic records (retrieved only by `think`) and the miners' working
+   * counters (read only by `consolidate`) — leaving the tombstone above.
+   *
+   * Safe because nothing reaches a dead mind again: the tick loop skips it,
+   * `PerceptionSystem.witnessesOf` returns only the living, and `injectIdea`
+   * is gated on `alive`. `test/memory-bound.test.ts` holds that empirically.
+   */
+  entomb(): void {
+    this.memory.release();
+    this.learners.length = 0;
   }
 
   /** Run every miner and fold the evidence into the knowledge base. */

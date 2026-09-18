@@ -137,7 +137,7 @@ export { NEED_PRESSING, NEED_CRITICAL } from './contract/types.js';
 export type { MaterialProps, MaterialTier } from './world/materials.js';
 export { MATERIAL_PROPERTIES, isEdible, isPoisonous } from './world/materials.js';
 
-export { MemoryStream } from './memory/MemoryStream.js';
+export { MemoryStream, episodicKey } from './memory/MemoryStream.js';
 export type { RetrievalQuery } from './memory/MemoryStream.js';
 export { importanceOf } from './memory/importance.js';
 export { memoryFromEvent } from './memory/memoryFromEvent.js';
@@ -188,7 +188,7 @@ export { classifyRuleTruth } from './analysis/groundTruth.js';
 export type { RuleTruth } from './analysis/groundTruth.js';
 export { analyzeDiffusion, analyzeBeliefAccuracy } from './analysis/diffusion.js';
 export type { AgentKnowledge, BeliefHolder, BeliefCluster, BeliefAccuracy } from './analysis/diffusion.js';
-export { classifyArchetype } from './analysis/archetype.js';
+export { classifyArchetype, classifyFromCounts } from './analysis/archetype.js';
 export type { Archetype, ArchetypeResult } from './analysis/archetype.js';
 export { analyzeSociety } from './analysis/society.js';
 export type { SocietySignals, SocietyReport } from './analysis/society.js';

@@ -14,5 +14,10 @@ export default defineConfig({
     environment: 'node',
     testTimeout: 600_000,
     fileParallelism: false,
+    // A bench that measures memory must not be able to eat the machine, and the
+    // heap benchmark needs a real GC it can call. Both belong to the worker, so
+    // they are set here rather than left to whoever types the command.
+    pool: 'forks',
+    poolOptions: { forks: { execArgv: ['--max-old-space-size=3072', '--expose-gc'] } },
   },
 });

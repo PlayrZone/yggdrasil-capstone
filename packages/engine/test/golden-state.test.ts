@@ -11,15 +11,27 @@ import { GOLDEN_RUNS, fingerprintsFor } from './fingerprint.js';
  * engine does. A change that is meant to be behaviour-neutral (an optimisation,
  * a refactor) must leave every one of them untouched. If one moves, the change
  * altered the simulation: fix the change, do NOT re-record.
+ *
+ * RE-RECORDED ONCE, for W0-E (the memory-footprint bound), because the digest
+ * covered state the item exists to free: the archive of evicted records, and a
+ * dead being's episodic tier. Nothing the simulation can still reach moved —
+ * verified by running HEAD's engine and the changed one side by side in one
+ * process over all seven configs × both checkpoints and comparing the whole
+ * world, every living mind's hot records, every mind's knowledge /
+ * relationships / narratives / goals / memories-ever-formed / archetype label,
+ * and the analysis, society, culture, myth, sacred-places, leadership and
+ * belief-behaviour reports. All 14 pairs: identical. The digest now also hashes
+ * each mind's first-hand tally, which survives both eviction and death, so the
+ * lock did not weaken where the records went away.
  */
 const GOLDENS: Record<string, string[]> = {
-  'alpha-20': ['32318d40e286e2ae:183390', '08112359b8c1fb99:261439'],
-  'alpha-70': ['0b8116d02460d92a:264439', 'b3137e66706d5f04:666418'],
-  'beta-20': ['791f4a4ea3af28b0:197907', '6587d5bb6b47b0e9:270224'],
-  'beta-70': ['60b560e91755f4b9:305712', '39fd3d34a683bbda:786295'],
-  'gamma-20': ['940b9e73a458fa33:210245', '200f12d66b437ce6:374364'],
-  'gamma-70': ['6c67bcd07c2946d2:322664', '5470b9bd0ba859a3:749514'],
-  'seeded-30': ['cbab89165bdb0bbc:257550', 'ae93e18e9a1fd2f6:602398'],
+  'alpha-20': ['af34a866d8218ff6:184346', '07e17599a89e39af:264189'],
+  'alpha-70': ['fe34b248927a25a0:268246', 'ac4e2acc80204c68:666130'],
+  'beta-20': ['898883a0fff5381a:196007', '866287199774e9bb:261894'],
+  'beta-70': ['0196b00d5dbbe325:306016', 'a39fd07bb420f003:668391'],
+  'gamma-20': ['85bbe4d2bf06b57e:211238', 'a3d5bef65f2c556a:318347'],
+  'gamma-70': ['9dd43009601697c3:326089', 'd93196a008560122:672686'],
+  'seeded-30': ['cbca95b6f60ed26c:259054', '533ea9199525930b:444023'],
 };
 
 describe('golden state (behaviour lock)', () => {
