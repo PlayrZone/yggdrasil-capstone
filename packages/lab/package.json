@@ -16,7 +16,7 @@
     "release": "electron-vite build && electron-builder --win --publish always",
     "start": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
-    "test": "echo \"(lab has no unit tests)\""
+    "test": "vitest run"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
@@ -25,6 +25,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "@yggdrasil/engine": "workspace:*",
+    "@yggdrasil/home": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/three": "^0.171.0",
     "@types/react": "^19.0.0",
@@ -35,6 +36,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^2.1.0"
   }
 }

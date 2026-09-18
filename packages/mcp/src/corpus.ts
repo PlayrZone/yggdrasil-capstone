@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { corpusDir } from './home.js';
+import { corpusDir } from '@yggdrasil/home';
 
 /**
  * One entry in the Yggdrasil Civilization Corpus (Phase 2). Captures what a

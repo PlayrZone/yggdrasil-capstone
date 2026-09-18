@@ -9,3 +9,4 @@ export type {
   KnowledgeRow,
 } from './ResearchDB.js';
 export { SCHEMA } from './schema.js';
+export { DEFAULT_QUERY_TIMEOUT_MS, QueryTimeoutError, strandedQueryWorkers } from './boundedQuery.js';

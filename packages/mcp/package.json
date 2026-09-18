@@ -18,6 +18,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@yggdrasil/db": "workspace:*",
     "@yggdrasil/engine": "workspace:*",
+    "@yggdrasil/home": "workspace:*",
     "zod": "^3.23.0"
   },
   "devDependencies": {

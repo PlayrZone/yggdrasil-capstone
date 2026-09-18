@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
 /**
@@ -10,6 +10,7 @@ import { mkdirSync } from 'node:fs';
  *   <home>/research.db      — the research database (MCP-owned; Node 22+)
  *   <home>/activity.jsonl   — append-only live activity feed (shared)
  *   <home>/reports/*.md     — shared reports the user and the AI both edit
+ *   <home>/corpus/*.jsonl   — the civilization corpus (MCP-owned)
  */
 export function yggHome(): string {
   const home = process.env['YGG_HOME'] ? resolve(process.env['YGG_HOME']) : join(homedir(), '.yggdrasil-lab');

@@ -1,24 +1,20 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, safeStorage, Tray } from 'electron';
 import path from 'node:path';
 import electronUpdaterPkg from 'electron-updater';
 import { FireworksMindBackend } from '@yggdrasil/engine';
 import type { IMindBackend, ThinkInput } from '@yggdrasil/engine';
+import { listReports, readReport, recentActivity, tailActivity, writeReport, type ActivityTail } from '@yggdrasil/home';
 import { TRAY_ICON_DATA_URL } from './trayIcon.js';
-import {
-  recentActivity,
-  watchActivity,
-  listReports,
-  readReport,
-  writeReport,
-  loadSettings,
-  saveKey,
-  effectiveKey,
-  effectiveModel,
-} from './shared.js';
+import { guardLlmComplete, llmRateLimiter } from './ipcGuards.js';
+import { effectiveKey, effectiveModel, keyAtRest, migrateKeyAtRest, saveKey, savedModel, SettingsError, setSecretStore, type KeyAtRest } from './settings.js';
 
 const { autoUpdater } = electronUpdaterPkg;
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL'];
+
+/** Renderer-supplied report text is written to disk; bound what it can write. */
+const MAX_REPORT_TITLE = 512;
+const MAX_REPORT_BODY = 4 * 1024 * 1024;
 
 // LLM backend (the trained consciousness). Built lazily from the effective
 // key; rebuilt when the key/model changes. The key never leaves main.
@@ -39,9 +35,11 @@ function getBackend(): IMindBackend | null {
   return llmBackend;
 }
 
+const llmRate = llmRateLimiter();
+
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
-let stopActivityWatch: (() => void) | null = null;
+let activityTail: ActivityTail | null = null;
 /** True once the user chose Quit — lets window-close hide to tray instead. */
 let isQuitting = false;
 
@@ -94,8 +92,34 @@ function createWindow(): void {
     icon: nativeImage.createFromDataURL(TRAY_ICON_DATA_URL),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      // The preload only touches contextBridge + ipcRenderer, both of which are
+      // available inside the sandbox, so the renderer process gets no Node at all.
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webviewTag: false,
     },
+  });
+
+  // The lab is a single local document: it never navigates and never opens a
+  // second window. Anything that tries is either a bug or an injection.
+  const logBlocked = (what: string, url: string): void => {
+    // eslint-disable-next-line no-console
+    console.warn(`[yggdrasil] blocked ${what} to ${url}`);
+  };
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    e.preventDefault();
+    logBlocked('navigation', url);
+  });
+  mainWindow.webContents.on('will-frame-navigate', (e) => {
+    e.preventDefault();
+    logBlocked('frame navigation', e.url);
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Deliberately NOT forwarded to shell.openExternal: the lab has no outbound
+    // links, so a window.open() could only be an exfiltration channel.
+    logBlocked('window.open', url);
+    return { action: 'deny' };
   });
 
   // Close hides to the tray (a run may still be going); real exit is the
@@ -134,7 +158,19 @@ function setupAutoUpdate(): void {
   autoUpdater.checkForUpdates().catch(() => {});
 }
 
+function llmStatus(): { hasKey: boolean; model: string; keyAtRest: KeyAtRest } {
+  return { hasKey: !!effectiveKey(), model: effectiveModel(), keyAtRest: keyAtRest() };
+}
+
 app.whenReady().then(() => {
+  // safeStorage is only usable once the app is ready; hand it to the settings
+  // module, then lift any key an older version left on disk in the clear.
+  setSecretStore(safeStorage);
+  if (migrateKeyAtRest()) {
+    // eslint-disable-next-line no-console
+    console.log('[yggdrasil] migrated the stored API key to OS-encrypted storage');
+  }
+
   ipcMain.handle('app:version', () => app.getVersion());
   ipcMain.handle('updater:check', () => autoUpdater.checkForUpdates());
   ipcMain.handle('updater:install', () => {
@@ -147,32 +183,52 @@ app.whenReady().then(() => {
   });
 
   // LLM consciousness bridge — the renderer's minds reason through here so the
-  // Fireworks key stays in main. Throws a tagged error when no key is set.
-  ipcMain.handle('llm:complete', async (_e, input: ThinkInput, retryError?: string) => {
+  // Fireworks key stays in main. The payload is renderer-controlled and the
+  // endpoint is billed, so it is validated and rate-limited before it costs
+  // anything. Throws a tagged error when no key is set.
+  ipcMain.handle('llm:complete', async (_e, input: unknown, retryError?: unknown) => {
+    const gate = guardLlmComplete(llmRate, input, retryError);
+    if (!gate.ok) throw new Error(gate.code === 'RATE_LIMITED' ? 'RATE_LIMITED' : `BAD_THINK_INPUT: ${gate.reason}`);
     const backend = getBackend();
     if (!backend) throw new Error('NO_LLM_KEY');
-    return backend.complete(input, retryError);
+    // Structurally checked above; the engine's prompt builder reads only the
+    // fields validateThinkInput bounds.
+    return backend.complete(input as ThinkInput, retryError as string | undefined);
   });
-  ipcMain.handle('llm:status', () => ({ hasKey: !!effectiveKey(), model: effectiveModel() }));
-  ipcMain.handle('settings:setKey', (_e, key: string, model?: string) => {
-    saveKey(key, model);
-    getBackend();
-    return { hasKey: !!effectiveKey(), model: effectiveModel() };
+  ipcMain.handle('llm:status', () => llmStatus());
+  // Reports the rejection instead of throwing, so a mistyped key cannot leave
+  // the renderer with an unhandled rejection.
+  ipcMain.handle('settings:setKey', (_e, key: unknown, model?: unknown) => {
+    try {
+      saveKey(key, model);
+      getBackend();
+      return llmStatus();
+    } catch (e) {
+      return { ...llmStatus(), error: e instanceof SettingsError ? e.message : 'SAVE_FAILED' };
+    }
   });
-  ipcMain.handle('settings:get', () => ({ hasKey: !!effectiveKey(), model: effectiveModel(), savedModel: loadSettings().model ?? null }));
+  ipcMain.handle('settings:get', () => ({ ...llmStatus(), savedModel: savedModel() }));
 
-  // Shared activity feed + reports.
-  ipcMain.handle('activity:recent', (_e, limit?: number) => recentActivity(limit ?? 100));
+  // Shared activity feed + reports. Slugs are validated inside @yggdrasil/home
+  // (reportPath), which is the single gate between an untrusted name and disk.
+  ipcMain.handle('activity:recent', (_e, limit?: unknown) =>
+    recentActivity(typeof limit === 'number' && Number.isFinite(limit) ? Math.min(1000, Math.max(1, Math.floor(limit))) : 100),
+  );
   ipcMain.handle('reports:list', () => listReports());
-  ipcMain.handle('reports:read', (_e, slug: string) => readReport(slug));
-  ipcMain.handle('reports:write', (_e, title: string, body: string, slug?: string) => writeReport(title, body, 'you', slug));
+  ipcMain.handle('reports:read', (_e, slug: unknown) => (typeof slug === 'string' ? readReport(slug) : null));
+  ipcMain.handle('reports:write', (_e, title: unknown, body: unknown, slug?: unknown) => {
+    if (typeof title !== 'string' || title.length === 0 || title.length > MAX_REPORT_TITLE) throw new Error('BAD_REPORT_TITLE');
+    if (typeof body !== 'string' || body.length > MAX_REPORT_BODY) throw new Error('BAD_REPORT_BODY');
+    if (slug !== undefined && typeof slug !== 'string') throw new Error('BAD_REPORT_SLUG');
+    return writeReport(title, body, 'you', slug);
+  });
 
   createWindow();
   createTray();
   setupAutoUpdate();
 
   // Stream new activity lines (incl. the AI engineer's MCP runs) to the window.
-  stopActivityWatch = watchActivity((lines) => mainWindow?.webContents.send('activity:lines', lines));
+  activityTail = tailActivity((lines) => mainWindow?.webContents.send('activity:lines', lines));
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -182,7 +238,8 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuitting = true;
-  stopActivityWatch?.();
+  activityTail?.stop();
+  activityTail = null;
 });
 
 // Tray app: closing the window only hides it; exit happens via the tray's

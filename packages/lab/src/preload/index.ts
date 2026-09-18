@@ -8,8 +8,15 @@ type UpdaterChannel =
   | 'updater:ready'
   | 'updater:error';
 
+/**
+ * Mirrors `ActivityLine` in @yggdrasil/home. Declared rather than imported so
+ * the sandboxed preload bundle stays a leaf that requires only `electron`.
+ * Time is two fields, never one: `wallMs` is when the line was written (absent
+ * on legacy lines), `tick` is the simulation tick it describes.
+ */
 export interface ActivityLine {
-  at: number;
+  wallMs?: number;
+  tick?: number;
   actor: string;
   kind: string;
   runId?: number;
@@ -28,6 +35,8 @@ export interface ReportMeta {
 export interface LlmStatus {
   hasKey: boolean;
   model: string;
+  /** How the key is held: 'env' | 'encrypted' | 'plaintext' | 'none'. Never the key. */
+  keyAtRest: 'none' | 'env' | 'encrypted' | 'plaintext';
 }
 
 const api = {
@@ -48,7 +57,7 @@ const api = {
   // LLM consciousness bridge (key stays in main).
   llmComplete: (input: unknown, retryError?: string): Promise<string> => ipcRenderer.invoke('llm:complete', input, retryError),
   llmStatus: (): Promise<LlmStatus> => ipcRenderer.invoke('llm:status'),
-  setKey: (key: string, model?: string): Promise<LlmStatus> => ipcRenderer.invoke('settings:setKey', key, model),
+  setKey: (key: string, model?: string): Promise<LlmStatus & { error?: string }> => ipcRenderer.invoke('settings:setKey', key, model),
   getSettings: (): Promise<LlmStatus & { savedModel: string | null }> => ipcRenderer.invoke('settings:get'),
 
   // Shared activity feed.

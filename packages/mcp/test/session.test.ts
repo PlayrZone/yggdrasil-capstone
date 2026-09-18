@@ -30,8 +30,13 @@ describe('SessionManager (engine ⇄ db wiring)', () => {
     await sessions.advance(runId, 200);
     const reached = sessions.giveIdea(runId, 'water is by the river', 'all');
     expect(reached).toBeGreaterThan(0);
-    const actions = db.readonlyQuery('SELECT action, detail FROM actions WHERE run_id = ?', [runId]) as Array<{ action: string }>;
-    expect(actions.some((a) => a.action === 'give_idea')).toBe(true);
+    const actions = db.readonlyQuery('SELECT action, at, detail FROM actions WHERE run_id = ?', [runId]) as Array<{ action: string; at: number; detail: string }>;
+    const idea = actions.find((a) => a.action === 'give_idea');
+    expect(idea).toBeDefined();
+    // `at` is a wall clock, not the sim tick it used to hold — the audit trail
+    // has to be orderable against real time.
+    expect(idea!.at).toBeGreaterThan(1_700_000_000_000);
+    expect(JSON.parse(idea!.detail)).toMatchObject({ tick: 200, reached });
   });
 
   it('finishes a run: snapshots knowledge and marks it finished', async () => {

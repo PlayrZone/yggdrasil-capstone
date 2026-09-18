@@ -112,7 +112,9 @@ export class SessionManager {
   giveIdea(runId: number, text: string, target: number | 'all'): number {
     const s = this.require(runId);
     const n = s.exp.giveIdea(text, target);
-    this.db.recordAction('mcp', 'give_idea', { text, target, reached: n }, runId, s.exp.tick);
+    // `at` is wall-clock so the audit trail can be ordered; the sim tick is a
+    // different clock and belongs in the detail.
+    this.db.recordAction('mcp', 'give_idea', { text, target, reached: n, tick: s.exp.tick }, runId, Date.now());
     return n;
   }
 

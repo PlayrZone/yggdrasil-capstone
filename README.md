@@ -29,6 +29,9 @@ recipes). The Gahallians do not — they must discover them.
 - `packages/mcp` — `@yggdrasil/mcp-server`: controlled research + engineering
   access for Claude (read-first; mutations allowlisted; no arbitrary shell).
 - `packages/db` — research-database schema + recorder (every run is a record).
+- `packages/home` — `@yggdrasil/home`: the shared lab home (`~/.yggdrasil-lab`)
+  — paths, the activity feed, and the shared reports. One implementation used
+  by both the lab and the MCP server.
 
 ## Anti-NPC doctrine
 

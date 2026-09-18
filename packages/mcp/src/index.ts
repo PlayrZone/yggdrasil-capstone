@@ -2,12 +2,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { ResearchDB } from '@yggdrasil/db';
+import { DEFAULT_QUERY_TIMEOUT_MS, ResearchDB } from '@yggdrasil/db';
 import { MATERIAL_PROPERTIES, WORLD } from '@yggdrasil/engine';
 import { SessionManager } from './SessionManager.js';
-import { dbPath, yggHome } from './home.js';
-import { appendActivity } from './activity.js';
-import { listReports, readReport, writeReport } from './reports.js';
+import { appendActivity, dbPath, isSafeSlug, listReports, readReport, writeReport, yggHome } from '@yggdrasil/home';
 import { hasLlmKey, llmModelId, makeLlmBackend } from './llm.js';
 
 /**
@@ -27,6 +25,12 @@ import { hasLlmKey, llmModelId, makeLlmBackend } from './llm.js';
 const DB_PATH = dbPath();
 const db = new ResearchDB(DB_PATH);
 const sessions = new SessionManager(db, makeLlmBackend);
+
+/** Default wall-clock budget for `query_db`; a client may ask for less or more. */
+const QUERY_TIMEOUT_MS = (() => {
+  const n = Number.parseInt(process.env['YGG_QUERY_TIMEOUT_MS'] ?? '', 10);
+  return Number.isFinite(n) && n > 0 && n <= 120_000 ? n : DEFAULT_QUERY_TIMEOUT_MS;
+})();
 
 /** Compact agent positions for the lab minimap (state: 0 ok,1 hungry,2 sleep,3 sick). */
 function agentSnapshot(runId: number): { id: number; x: number; y: number; state: number }[] {
@@ -48,16 +52,20 @@ const json = (v: unknown): { content: { type: 'text'; text: string }[] } => text
 const MUTATING = new Set(['create_experiment', 'advance', 'give_idea', 'finish_run', 'run_experiment', 'write_report', 'seed_recipe']);
 function logMutation(tool: string, detail: unknown, runId?: number): void {
   if (!MUTATING.has(tool)) return;
-  db.recordAction('mcp', tool, detail, runId);
+  // The audit trail is only auditable if it can be ordered against real time —
+  // every row used to land at 0 because nothing ever passed a clock.
+  db.recordAction('mcp', tool, detail, runId, Date.now());
 }
 
 const ACTOR = process.env['YGG_ACTOR'] ?? 'ai-engineer';
 
 /** Push a line onto the shared feed the lab tails — so the human sees it live. */
 function announce(kind: string, summary: string, opts: { runId?: number; data?: Record<string, unknown>; withAgents?: boolean } = {}): void {
-  const at = opts.runId !== undefined ? (sessions.get(opts.runId)?.exp.tick ?? 0) : 0;
+  // `tick` is the sim clock and is only meaningful for a live run; the wall
+  // clock is stamped by appendActivity. One field each, never one for both.
+  const tick = opts.runId !== undefined ? sessions.get(opts.runId)?.exp.tick : undefined;
   appendActivity({
-    at,
+    ...(tick !== undefined ? { tick } : {}),
     actor: ACTOR,
     kind,
     runId: opts.runId,
@@ -449,12 +457,19 @@ server.registerTool(
   'query_db',
   {
     title: 'Query the research DB (read-only)',
-    description: 'Run a single read-only SELECT against the research DB for novel questions. Tables: runs, metrics, events, knowledge_snapshots, actions. Writes are rejected.',
-    inputSchema: { sql: z.string(), params: z.array(z.union([z.string(), z.number(), z.null()])).optional() },
+    description:
+      'Run a single read-only SELECT (or WITH … SELECT) against the research DB for novel questions. Tables: runs, metrics, events, knowledge_snapshots, actions. Writes are rejected, and the query is abandoned if it exceeds the time budget.',
+    inputSchema: {
+      sql: z.string(),
+      params: z.array(z.union([z.string(), z.number(), z.null()])).optional(),
+      timeoutMs: z.number().int().positive().max(120_000).optional().describe('Wall-clock budget (default from YGG_QUERY_TIMEOUT_MS, else 5000).'),
+    },
   },
-  async ({ sql, params }) => {
+  async ({ sql, params, timeoutMs }) => {
     try {
-      return json(db.readonlyQuery(sql, params ?? []));
+      // Always the bounded path: a runaway CTE on this thread would silence the
+      // server for good, and `readonlyQuery` cannot be interrupted.
+      return json(await db.readonlyQueryBounded(sql, params ?? [], timeoutMs ?? QUERY_TIMEOUT_MS));
     } catch (e) {
       return text(`query rejected: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -468,9 +483,18 @@ server.registerTool(
   async () => json(listReports()),
 );
 
+/**
+ * A report slug is a plain file name, never a path. Rejected here as well as
+ * inside @yggdrasil/home so a bad slug fails with a useful message instead of
+ * a bare tool error — and so the boundary is visible in the tool schema.
+ */
+const SlugSchema = z
+  .string()
+  .refine(isSafeSlug, 'slug must be a plain name (letters, digits, dot, dash, underscore) — no path separators or traversal');
+
 server.registerTool(
   'read_report',
-  { title: 'Read a report', description: 'Read one shared report by slug (from list_reports).', inputSchema: { slug: z.string() } },
+  { title: 'Read a report', description: 'Read one shared report by slug (from list_reports).', inputSchema: { slug: SlugSchema } },
   async ({ slug }) => {
     const r = readReport(slug);
     return r ? json(r) : text(`no report "${slug}"`);
@@ -485,7 +509,7 @@ server.registerTool(
     inputSchema: {
       title: z.string(),
       body: z.string().describe('Markdown body.'),
-      slug: z.string().optional().describe('Omit to derive from the title; pass an existing slug to overwrite.'),
+      slug: SlugSchema.optional().describe('Omit to derive from the title; pass an existing slug to overwrite.'),
     },
   },
   async ({ title, body, slug }) => {

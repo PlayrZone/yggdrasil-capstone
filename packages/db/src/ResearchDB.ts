@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import { SCHEMA } from './schema.js';
+import { DEFAULT_QUERY_TIMEOUT_MS, runBoundedQuery } from './boundedQuery.js';
 
 // Loaded via createRequire so bundlers (Vite/vitest) don't try to resolve the
 // `node:sqlite` specifier at transform time — it's a recent built-in some
@@ -63,8 +64,13 @@ type SqlRow = Record<string, unknown>;
  */
 export class ResearchDB {
   private readonly db: DatabaseSyncType;
+  private readonly path: string;
+  /** Lazily opened SQLITE_OPEN_READONLY handle used by `readonlyQuery`. */
+  private reader: DatabaseSyncType | null = null;
+  private readerUnavailable = false;
 
   constructor(path = ':memory:') {
+    this.path = path;
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');
@@ -72,6 +78,14 @@ export class ResearchDB {
   }
 
   close(): void {
+    if (this.reader) {
+      try {
+        this.reader.close();
+      } catch {
+        /* already closed */
+      }
+      this.reader = null;
+    }
     this.db.close();
   }
 
@@ -125,7 +139,14 @@ export class ResearchDB {
     }
   }
 
-  recordAction(actor: string, action: string, detail?: unknown, runId?: number, at = 0): void {
+  /**
+   * Append to the audit trail. `at` defaults to the wall clock: it used to
+   * default to 0 and no caller ever passed one, so every mutation ever recorded
+   * claimed to have happened at the epoch and the log could not be ordered.
+   * Callers with a meaningful clock (a sim tick belongs in `detail`, not here)
+   * may still pass one explicitly.
+   */
+  recordAction(actor: string, action: string, detail?: unknown, runId?: number, at: number = Date.now()): void {
     this.db
       .prepare(`INSERT INTO actions (run_id, at, actor, action, detail) VALUES (?, ?, ?, ?, ?)`)
       .run(runId ?? null, at, actor, action, detail === undefined ? null : JSON.stringify(detail));
@@ -202,20 +223,99 @@ export class ResearchDB {
   }
 
   /**
-   * Read-only query escape hatch. Rejects anything that isn't a single
-   * SELECT (no semicolons, no writes) — the MCP server exposes this so Claude
-   * can ask novel research questions without write risk.
+   * A genuinely read-only connection to the same file. `node:sqlite` supports
+   * SQLITE_OPEN_READONLY, so the guarantee is SQLite's, not a regex's. An
+   * in-memory database has no file to reopen (a second `:memory:` handle is a
+   * different, empty database), so that case falls back to `PRAGMA query_only`
+   * on the main connection — also enforced by SQLite, just not by the handle.
+   */
+  private readOnlyConnection(): DatabaseSyncType | null {
+    if (this.path === ':memory:' || this.readerUnavailable) return null;
+    if (!this.reader) {
+      try {
+        this.reader = new DatabaseSync(this.path, { readOnly: true });
+      } catch {
+        this.readerUnavailable = true;
+        return null;
+      }
+    }
+    return this.reader;
+  }
+
+  /**
+   * Read-only query escape hatch — the MCP server exposes this so a client can
+   * ask novel research questions without write risk.
+   *
+   * The old gate was a regex denylist over raw SQL: it rejected `SELECT
+   * 'update'`, and it rejected every legitimate `WITH … SELECT` because the
+   * prefix had to be `select`. Allowing `WITH` is what a researcher needs and
+   * is exactly what a text check cannot make safe (`WITH x AS (…) INSERT …`
+   * is a write), so the guarantee moves to SQLite:
+   *  1. the statement must parse as a single query starting with SELECT/WITH —
+   *     `prepare` compiles only the first statement, so `sourceSQL` proves
+   *     nothing was smuggled behind a semicolon and silently dropped;
+   *  2. it executes on a connection SQLite itself refuses writes on.
    */
   readonlyQuery(sql: string, params: unknown[] = []): unknown[] {
-    const trimmed = sql.trim().replace(/;+\s*$/, '');
-    if (
-      !/^select\b/i.test(trimmed) ||
-      /;/.test(trimmed) ||
-      /\b(insert|update|delete|drop|alter|create|attach|pragma|replace)\b/i.test(trimmed)
-    ) {
-      throw new Error('readonlyQuery accepts a single SELECT statement only');
+    const trimmed = normalizeReadQuery(sql);
+    const reader = this.readOnlyConnection();
+    const conn = reader ?? this.db;
+    if (!reader) conn.exec('PRAGMA query_only = ON');
+    try {
+      const stmt = conn.prepare(trimmed);
+      // `prepare` compiles the first statement and discards the rest; compare
+      // what it actually compiled so a piggy-backed statement is an error and
+      // never a silent no-op.
+      if (stmt.sourceSQL.replace(/[\s;]+$/, '') !== trimmed) throw new Error('readonlyQuery accepts a single statement only');
+      return stmt.all(...(params as never[])) as unknown[];
+    } finally {
+      if (!reader) conn.exec('PRAGMA query_only = OFF');
     }
-    return this.db.prepare(trimmed).all(...(params as never[])) as unknown[];
+  }
+
+  /**
+   * The same query, with a wall-clock bound — what every untrusted caller (the
+   * MCP `query_db` tool) must use. `readonlyQuery` is synchronous and therefore
+   * unbounded: one recursive CTE pins the thread for the life of the process.
+   *
+   * A file-backed database gets a worker with its own read-only connection (see
+   * boundedQuery.ts). `:memory:` has no file for a second connection to open —
+   * a second `:memory:` handle is a different, empty database — so it falls back
+   * to the synchronous path. Tests use `:memory:`; the MCP server never does.
+   */
+  async readonlyQueryBounded(sql: string, params: unknown[] = [], timeoutMs = DEFAULT_QUERY_TIMEOUT_MS): Promise<unknown[]> {
+    const trimmed = normalizeReadQuery(sql);
+    if (this.path === ':memory:') return this.readonlyQuery(trimmed, params);
+    return runBoundedQuery(this.path, trimmed, params, timeoutMs);
+  }
+}
+
+/**
+ * Shared front gate: a single statement that starts with SELECT or WITH, with
+ * leading comments and trailing whitespace/semicolons removed. Enforcement of
+ * read-onlyness is SQLite's job; this only decides what is worth running.
+ */
+function normalizeReadQuery(sql: string): string {
+  if (typeof sql !== 'string') throw new Error('readonlyQuery expects SQL text');
+  const trimmed = stripLeadingComments(sql).replace(/[\s;]+$/, '');
+  if (!/^(select|with)\b/i.test(trimmed)) throw new Error('readonlyQuery accepts a single SELECT (or WITH … SELECT) statement only');
+  return trimmed;
+}
+
+/** SQL comments before the first keyword would defeat a prefix check. */
+function stripLeadingComments(sql: string): string {
+  let s = sql;
+  for (;;) {
+    const before = s;
+    s = s.trimStart();
+    if (s.startsWith('--')) {
+      const nl = s.indexOf('\n');
+      s = nl < 0 ? '' : s.slice(nl + 1);
+    } else if (s.startsWith('/*')) {
+      const end = s.indexOf('*/');
+      s = end < 0 ? '' : s.slice(end + 2);
+    }
+    if (s === before) return s;
   }
 }
 

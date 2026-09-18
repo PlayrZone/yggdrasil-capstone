@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ResearchDB } from '../src/index.js';
+import { QueryTimeoutError, ResearchDB } from '../src/index.js';
 
 describe('ResearchDB', () => {
   let db: ResearchDB;
@@ -64,6 +67,23 @@ describe('ResearchDB', () => {
     expect(rows[0].action).toBe('give_idea');
   });
 
+  it('timestamps an action with the wall clock by default (it used to default to 0)', () => {
+    const before = Date.now();
+    db.recordAction('mcp', 'advance', { ticks: 96 });
+    const after = Date.now();
+    const [row] = db.readonlyQuery('SELECT at FROM actions') as { at: number }[];
+    expect(row!.at).toBeGreaterThanOrEqual(before);
+    expect(row!.at).toBeLessThanOrEqual(after);
+  });
+
+  it('orders the audit trail by time', () => {
+    db.recordAction('mcp', 'create_experiment', {}, undefined, 1_700_000_000_000);
+    db.recordAction('mcp', 'advance', {}, undefined, 1_700_000_001_000);
+    db.recordAction('mcp', 'finish_run', {}, undefined, 1_700_000_002_000);
+    const rows = db.readonlyQuery('SELECT action FROM actions ORDER BY at') as { action: string }[];
+    expect(rows.map((r) => r.action)).toEqual(['create_experiment', 'advance', 'finish_run']);
+  });
+
   it('finishes a run', () => {
     const id = db.createRun({ seed: 's', agentCount: 10, backend: 'reflex', startedAt: 0 });
     db.finishRun(id, 8000, 9999);
@@ -78,5 +98,137 @@ describe('ResearchDB', () => {
     expect(() => db.readonlyQuery('SELECT 1; DROP TABLE runs')).toThrow();
     expect(() => db.readonlyQuery('UPDATE runs SET seed = 1')).toThrow();
     expect(db.readonlyQuery('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+  });
+});
+
+describe('readonlyQuery', () => {
+  let db: ResearchDB;
+  beforeEach(() => {
+    db = new ResearchDB(':memory:');
+    db.createRun({ seed: 'rq', agentCount: 1, backend: 'reflex', startedAt: 0 });
+  });
+  afterEach(() => db.close());
+
+  it('runs the reads a researcher actually writes', () => {
+    expect(db.readonlyQuery('SELECT seed FROM runs')).toEqual([{ seed: 'rq' }]);
+    expect(db.readonlyQuery('  select count(*) AS n from runs ')).toEqual([{ n: 1 }]);
+    expect(db.readonlyQuery('SELECT seed FROM runs WHERE seed = ?', ['rq'])).toEqual([{ seed: 'rq' }]);
+    expect(db.readonlyQuery('WITH c AS (SELECT seed FROM runs) SELECT seed FROM c')).toEqual([{ seed: 'rq' }]);
+    expect(db.readonlyQuery('SELECT 1 AS one;')).toEqual([{ one: 1 }]);
+    expect(db.readonlyQuery('SELECT\n  seed\nFROM runs')).toEqual([{ seed: 'rq' }]);
+  });
+
+  it('no longer rejects a SELECT that merely mentions a write keyword', () => {
+    // False positives of the old regex denylist — all perfectly safe reads.
+    expect(db.readonlyQuery("SELECT 'update' AS x")).toEqual([{ x: 'update' }]);
+    expect(db.readonlyQuery("SELECT 'drop table' AS x")).toEqual([{ x: 'drop table' }]);
+    expect(db.readonlyQuery("SELECT seed FROM runs WHERE seed != 'delete'")).toEqual([{ seed: 'rq' }]);
+  });
+
+  it('refuses statements that are not a single query', () => {
+    for (const sql of [
+      'DELETE FROM runs',
+      'UPDATE runs SET seed = 1',
+      'DROP TABLE runs',
+      "INSERT INTO runs (seed, agent_count, backend, started_at) VALUES ('x',1,'r',0)",
+      "ATTACH DATABASE 'other.db' AS other",
+      'PRAGMA table_info(runs)',
+      'SELECT 1; DROP TABLE runs',
+      "SELECT 1; INSERT INTO runs (seed, agent_count, backend, started_at) VALUES ('x',1,'r',0)",
+      '-- comment\nDELETE FROM runs',
+      '/* block */ DELETE FROM runs',
+      '',
+    ]) {
+      expect(() => db.readonlyQuery(sql), sql).toThrow();
+    }
+    expect(db.readonlyQuery('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 1 }]);
+  });
+
+  it('is enforced by SQLite, not by text matching: a CTE write is blocked at execution', () => {
+    // `WITH` has to be allowed for real research queries, and a `WITH … INSERT`
+    // passes every prefix check — so the guarantee has to come from the
+    // connection, and it does.
+    expect(() => db.readonlyQuery("WITH c AS (SELECT 1) INSERT INTO runs (seed, agent_count, backend, started_at) VALUES ('pwned',1,'r',0)")).toThrow();
+    expect(db.readonlyQuery('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 1 }]);
+  });
+
+  it('leaves the connection writable afterwards', () => {
+    expect(() => db.readonlyQuery('SELECT 1 AS one')).not.toThrow();
+    expect(() => db.readonlyQuery('DELETE FROM runs')).toThrow();
+    const id = db.createRun({ seed: 'after', agentCount: 1, backend: 'reflex', startedAt: 0 });
+    expect(db.getRun(id)!.seed).toBe('after');
+  });
+
+  /**
+   * `stmt.all()` is one synchronous native call: a recursive CTE pins the
+   * thread for good, and on the MCP server's only thread the process never
+   * answers again (the verifier killed it externally after 25 s). The bounded
+   * path must give up and leave the caller working.
+   */
+  it('bounds a runaway query and stays usable afterwards', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ygg-db-to-'));
+    const file = new ResearchDB(join(dir, 'research.db'));
+    try {
+      file.createRun({ seed: 'bounded', agentCount: 1, backend: 'reflex', startedAt: 0 });
+      expect(await file.readonlyQueryBounded('SELECT seed FROM runs', [], 5000)).toEqual([{ seed: 'bounded' }]);
+
+      const started = Date.now();
+      await expect(
+        file.readonlyQueryBounded('WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) n FROM c', [], 800),
+      ).rejects.toBeInstanceOf(QueryTimeoutError);
+      expect(Date.now() - started).toBeLessThan(6000);
+
+      // The caller is still alive and the DB still answers.
+      expect(await file.readonlyQueryBounded('SELECT seed FROM runs', [], 5000)).toEqual([{ seed: 'bounded' }]);
+      expect(file.readonlyQuery('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 1 }]);
+    } finally {
+      file.close();
+      // A timed-out worker is stuck inside SQLite and keeps a read handle on the
+      // file (terminate() cannot unwind a blocking native call), so removal can
+      // fail on Windows. Leaving a temp dir behind must not fail the test.
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
+      } catch {
+        /* the stranded worker still holds the file */
+      }
+    }
+  });
+
+  it('rejects a write and a multi-statement through the bounded path too', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ygg-db-bp-'));
+    const file = new ResearchDB(join(dir, 'research.db'));
+    try {
+      file.createRun({ seed: 'bp', agentCount: 1, backend: 'reflex', startedAt: 0 });
+      await expect(file.readonlyQueryBounded('DELETE FROM runs')).rejects.toThrow();
+      await expect(
+        file.readonlyQueryBounded("WITH c AS (SELECT 1) INSERT INTO runs (seed, agent_count, backend, started_at) VALUES ('pwned',1,'r',0)"),
+      ).rejects.toThrow();
+      await expect(file.readonlyQueryBounded('SELECT 1; DROP TABLE runs')).rejects.toThrow();
+      expect(await file.readonlyQueryBounded('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 1 }]);
+    } finally {
+      file.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the synchronous path for an in-memory database', async () => {
+    expect(await db.readonlyQueryBounded('SELECT seed FROM runs')).toEqual([{ seed: 'rq' }]);
+    await expect(db.readonlyQueryBounded('DELETE FROM runs')).rejects.toThrow();
+  });
+
+  it('uses a real read-only connection for a file-backed database', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ygg-db-'));
+    const file = new ResearchDB(join(dir, 'research.db'));
+    try {
+      const id = file.createRun({ seed: 'onDisk', agentCount: 2, backend: 'reflex', startedAt: 7 });
+      expect(file.readonlyQuery('SELECT seed FROM runs')).toEqual([{ seed: 'onDisk' }]);
+      expect(() => file.readonlyQuery("WITH c AS (SELECT 1) INSERT INTO runs (seed, agent_count, backend, started_at) VALUES ('pwned',1,'r',0)")).toThrow();
+      // The reader sees writes committed after it was opened.
+      file.finishRun(id, 96, 8);
+      expect(file.readonlyQuery('SELECT status FROM runs')).toEqual([{ status: 'finished' }]);
+    } finally {
+      file.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
