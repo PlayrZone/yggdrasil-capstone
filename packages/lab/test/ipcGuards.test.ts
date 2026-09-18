@@ -173,6 +173,22 @@ describe('estimateBytes', () => {
     expect(r.bytes).toBeLessThan(200_000);
   });
 
+  it('counts object keys in UTF-8 bytes, not UTF-16 units', () => {
+    // 'é' is one UTF-16 unit but two UTF-8 bytes.
+    expect(estimateBytes({ é: 1 }, 1000, 5).bytes).toBe(estimateBytes({ e: 1 }, 1000, 5).bytes + 1);
+    expect(estimateBytes({ '🌍': 1 }, 1000, 5).bytes).toBe(estimateBytes({ ab: 1 }, 1000, 5).bytes + 2);
+  });
+
+  it('abandons a very wide object as soon as the budget is gone', () => {
+    const wide: Record<string, number> = {};
+    for (let i = 0; i < 200_000; i++) wide[`k${i}`] = 1;
+    const r = estimateBytes(wide, 1024, 24);
+    expect(r.over).toBe(true);
+    // Charging for every key up front would have jumped straight past a million.
+    expect(r.bytes).toBeLessThan(4096);
+    expect(validateThinkInput(thinkInput({ wide })).ok).toBe(false);
+  });
+
   it('treats an over-deep graph as over budget', () => {
     let deep: unknown = 'leaf';
     for (let i = 0; i < 50; i++) deep = { deep };

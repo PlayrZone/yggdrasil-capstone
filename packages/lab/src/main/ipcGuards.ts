@@ -49,6 +49,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+const hasOwn = Object.prototype.hasOwnProperty;
+
 function finite(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
 }
@@ -144,14 +146,13 @@ export function estimateBytes(value: unknown, budget: number, maxDepth: number):
       }
     } else if (isPlainObject(v)) {
       bytes += 2;
-      // Object.keys, not Object.entries: one existing string per key instead of
-      // a fresh two-element array per key. Charge for the key count up front so
-      // an object with absurdly many keys blows the budget before we iterate.
-      const keys = Object.keys(v);
-      bytes += keys.length * 4;
-      for (const k of keys) {
+      // `for…in` with an own-check, not Object.keys/entries: no key array is
+      // materialised up front, so an object with a million keys blows the
+      // budget a few hundred keys in instead of paying for all of them.
+      for (const k in v) {
         if (done()) break;
-        bytes += k.length;
+        if (!hasOwn.call(v, k)) continue;
+        bytes += Buffer.byteLength(k, 'utf8') + 4;
         walk(v[k], depth + 1);
       }
     } else {

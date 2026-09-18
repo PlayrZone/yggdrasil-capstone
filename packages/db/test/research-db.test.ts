@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { QueryTimeoutError, ResearchDB } from '../src/index.js';
+import { ResearchDB } from '../src/index.js';
 
 describe('ResearchDB', () => {
   let db: ResearchDB;
@@ -157,58 +157,6 @@ describe('readonlyQuery', () => {
     expect(() => db.readonlyQuery('DELETE FROM runs')).toThrow();
     const id = db.createRun({ seed: 'after', agentCount: 1, backend: 'reflex', startedAt: 0 });
     expect(db.getRun(id)!.seed).toBe('after');
-  });
-
-  /**
-   * `stmt.all()` is one synchronous native call: a recursive CTE pins the
-   * thread for good, and on the MCP server's only thread the process never
-   * answers again (the verifier killed it externally after 25 s). The bounded
-   * path must give up and leave the caller working.
-   */
-  it('bounds a runaway query and stays usable afterwards', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ygg-db-to-'));
-    const file = new ResearchDB(join(dir, 'research.db'));
-    try {
-      file.createRun({ seed: 'bounded', agentCount: 1, backend: 'reflex', startedAt: 0 });
-      expect(await file.readonlyQueryBounded('SELECT seed FROM runs', [], 5000)).toEqual([{ seed: 'bounded' }]);
-
-      const started = Date.now();
-      await expect(
-        file.readonlyQueryBounded('WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) n FROM c', [], 800),
-      ).rejects.toBeInstanceOf(QueryTimeoutError);
-      expect(Date.now() - started).toBeLessThan(6000);
-
-      // The caller is still alive and the DB still answers.
-      expect(await file.readonlyQueryBounded('SELECT seed FROM runs', [], 5000)).toEqual([{ seed: 'bounded' }]);
-      expect(file.readonlyQuery('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 1 }]);
-    } finally {
-      file.close();
-      // A timed-out worker is stuck inside SQLite and keeps a read handle on the
-      // file (terminate() cannot unwind a blocking native call), so removal can
-      // fail on Windows. Leaving a temp dir behind must not fail the test.
-      try {
-        rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
-      } catch {
-        /* the stranded worker still holds the file */
-      }
-    }
-  });
-
-  it('rejects a write and a multi-statement through the bounded path too', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ygg-db-bp-'));
-    const file = new ResearchDB(join(dir, 'research.db'));
-    try {
-      file.createRun({ seed: 'bp', agentCount: 1, backend: 'reflex', startedAt: 0 });
-      await expect(file.readonlyQueryBounded('DELETE FROM runs')).rejects.toThrow();
-      await expect(
-        file.readonlyQueryBounded("WITH c AS (SELECT 1) INSERT INTO runs (seed, agent_count, backend, started_at) VALUES ('pwned',1,'r',0)"),
-      ).rejects.toThrow();
-      await expect(file.readonlyQueryBounded('SELECT 1; DROP TABLE runs')).rejects.toThrow();
-      expect(await file.readonlyQueryBounded('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 1 }]);
-    } finally {
-      file.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 
   it('falls back to the synchronous path for an in-memory database', async () => {

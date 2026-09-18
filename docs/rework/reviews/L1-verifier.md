@@ -1,9 +1,10 @@
-PASS (Round 2)
+PASS (Round 3 / L1b)
 
 # L1 — hostile verification of the security/integrity fixes
 
 Round 1: FAIL — five defects, one a renderer-reachable kill switch on the Electron main process.
-Round 2: PASS (see below) — all six re-verified fixed; nits only.
+Round 2: PASS — all six re-verified fixed; nits only.
+Round 3 (L1b): PASS — worker threads replaced by a killable child process; the 200%-of-a-core residual is gone.
 
 ## Defects
 
@@ -152,3 +153,79 @@ UTF-8 sizing via `Buffer.byteLength`.
   Linux/macOS a pre-existing `LegacyReport.md` would drop out of the listing. Windows-only today, but
   `@yggdrasil/home` is shared with the MCP server.
 - Every `query_db` now pays ~18–21 ms of worker startup.
+
+## Round 3 (L1b) — killable query child process (PASS)
+
+My Round 2 recommendation is implemented and it does what I asked for. No Electron launch. PIDs started:
+67168, 60800, 65664 (harnesses), 3948 (MCP under tsx), 65584 (dist) + their sub-parents and query children —
+**all confirmed gone by PID; zero `node.exe` query children left on the box.** No source edits; suites
+50/79/24/7 green; typechecks clean for home/db/mcp/lab-node. `packages/engine` and `lab/src/renderer`
+untouched (their working-tree entries are the other coders').
+
+**Process hygiene — the point of the change, and it holds.**
+- Warm child reused: pid stable across queries; cold spawn 124 ms, warm query ~0–2 ms.
+- Runaway → `QueryTimeoutError` → **that pid is really gone**, and the parent burned **0 ms CPU over a
+  1500 ms idle window** (the thread version burned ~200% of a core forever). Next query works.
+- **25 runaways in a row:** 25/25 timeouts, zero extra processes, normal query fine afterwards. No cap
+  needed any more — the stranded-thread cap that bricked `query_db` is gone.
+- **Concurrency:** queries are serialized through a promise queue; three concurrent callers each got their
+  **own** rows (AAA/BBB/CCC, no cross-talk), and a caller whose runaway timed out did **not** poison the
+  query queued behind it — that one returned its own rows, not the runaway's error.
+- `close()` mid-flight kills the child (SIGTERM), the in-flight promise rejects, pid gone.
+- Child killed externally → next query recovers on a fresh pid.
+- **Idle child holds no handle on the DB file:** renaming the file while the warm child idled succeeded.
+  (A first attempt showed `EBUSY` — that was the parent `ResearchDB`'s own read/write connection, not the
+  child; re-tested with a bare `BoundedQueryRunner` and the rename is clean.)
+- **Orphans — tested rigorously, none found.** The child was first *proven* to be spinning inside SQLite
+  (CPU 0.38 s → 3.17 s over 2.5 s = **112% of a core**), then the parent was SIGKILLed: the child was reaped
+  with it. Same on a graceful `process.exit(0)` with no `close()`, and same after the real MCP server was
+  SIGKILLed. So the "blocked event loop can't see stdin EOF" orphan I expected does not materialise on
+  Windows.
+
+**Safety unchanged** — through the real MCP `query_db` under `tsx src/index.ts` *and* from built `dist/`:
+DELETE/UPDATE/INSERT/DROP/VACUUM/ATTACH/PRAGMA and `--`, `/* */`, `/*/**/`, NBSP, BOM, VT prefixes rejected
+by the prefix gate; `WITH…INSERT/UPDATE/DELETE` rejected by SQLite ("attempt to write a readonly database");
+stacked statements and `INSERT…RETURNING` rejected by the `sourceSQL` comparison; `pragma_query_only(0)` and
+`pragma_writable_schema(1)` "too many arguments"; `load_extension` "not authorized"; `readfile`/`writefile`
+absent. The `runs` table was intact afterwards and the server kept answering.
+
+**No command-line injection.** SQL and params travel as JSON over stdin; `node -e` receives only the fixed
+`QUERY_CHILD_SOURCE` constant — nothing caller-controlled reaches argv or env. Confirmed with SQL carrying
+`"`, newlines, `` `whoami` ``, `$(calc.exe)`, `" & calc.exe & "` and `\", process.exit(1), \"`: all came back
+as literal column data, no process spawned. Params: objects/arrays/Buffers are refused by `node:sqlite`
+("Unknown named parameter"), a function binds as NULL, an 8 MB string param works.
+
+**Result bound holds and the parent stays flat.** 100 000+1 rows → "result exceeds 100000 rows"; one 200 MB
+cell (`printf('%.*c',2e8,'x')`) → "result exceeds 8388608 bytes"; `hex(randomblob(20MB))` and 200-column ×
+20 000-row wide rows likewise; `zeroblob(200MB)` fails cleanly inside the child ("Invalid array length") and
+the parent just sees the error. **Parent heap 17 → 18 MB across all of it.** `iterate()` rather than `all()`
+is the right call here.
+
+**ipcGuards — no regression.** Exotic values still O(1): `Uint8Array(64e6)`, `Float64Array(8e6)`,
+`ArrayBuffer(64e6)`, `Set(1e6)`, Date/RegExp/Error all 0.0–0.5 ms. `Map(1e6)`, `Array(1e7)`, cycles all
+≤0.1 ms. The Round 2 astral-**key** under-count is fixed (1.36× → 0.87, now conservative); string values
+stay at 1.00. `hasOwn` correctly skips inherited keys — a poisoned `Object.prototype` no longer leaks into
+the walk. Legit ThinkInput passes; the rate token is still taken first.
+
+### Nits (none blocking)
+- **The 1e6-key nit is not actually fixed, and the new comment overstates it.** `ipcGuards.ts:148-156` says
+  `for…in` means "an object with a million keys blows the budget a few hundred keys in instead of paying for
+  all of them". Measured: `validateThinkInput` still costs **168 ms** (Round 2: 178 ms), and a direct
+  benchmark shows `for…in` bailing after 200 keys on a 1e6-key object costs **199 ms** versus **159 ms** for
+  `Object.keys` — V8 builds the enumeration cache before the first iteration, so the early exit saves
+  nothing. Harmless (no amplification: the renderer pays more to build and clone it than main pays to walk
+  it), but the comment claims a guarantee that does not exist — correct the comment or drop the change.
+- Timeout budget includes the ~124 ms cold spawn, and MCP accepts `timeoutMs: 1`
+  (`mcp/src/index.ts:466` — `z.number().int().positive()`). Below ~100 ms on a cold child every query times
+  out and churns a process. Suggest a floor (250–500 ms), or start the clock after spawn.
+- The child's stderr tail is spliced into the caller-visible error: MCP clients see
+  `query child exited (SIGTERM): (node:68388) ExperimentalWarning: SQLite is an experimental feature…`.
+  Filter warnings, or only attach stderr on a non-zero exit.
+- `close()` during a query rejects with `query child exited (SIGTERM)` rather than something like
+  "database closed" — correct, just opaque.
+- The child measures the result with `s.length` (UTF-16) while the parent now measures UTF-8
+  (`boundedQuery.ts:86`); multibyte results under-count up to 3× against the 8 MB cap. Bounded, harmless.
+- `boundedQuery.ts:287` — on an id mismatch the reply line is left in `out` and never consumed, so the
+  promise would stall to its timeout. Unreachable today (queries are serialized and a timeout kills the
+  child), but it is a latent trap if the protocol ever becomes pipelined.
+- A param containing `\u0000` is silently truncated at the NUL by SQLite's text binding.

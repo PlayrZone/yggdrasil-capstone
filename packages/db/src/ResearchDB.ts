@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import { SCHEMA } from './schema.js';
-import { DEFAULT_QUERY_TIMEOUT_MS, runBoundedQuery } from './boundedQuery.js';
+import { BoundedQueryRunner, DEFAULT_QUERY_TIMEOUT_MS } from './boundedQuery.js';
 
 // Loaded via createRequire so bundlers (Vite/vitest) don't try to resolve the
 // `node:sqlite` specifier at transform time — it's a recent built-in some
@@ -68,6 +68,8 @@ export class ResearchDB {
   /** Lazily opened SQLITE_OPEN_READONLY handle used by `readonlyQuery`. */
   private reader: DatabaseSyncType | null = null;
   private readerUnavailable = false;
+  /** Lazily spawned warm child that runs time-bounded queries. */
+  private runner: BoundedQueryRunner | null = null;
 
   constructor(path = ':memory:') {
     this.path = path;
@@ -78,6 +80,8 @@ export class ResearchDB {
   }
 
   close(): void {
+    this.runner?.close();
+    this.runner = null;
     if (this.reader) {
       try {
         this.reader.close();
@@ -286,7 +290,13 @@ export class ResearchDB {
   async readonlyQueryBounded(sql: string, params: unknown[] = [], timeoutMs = DEFAULT_QUERY_TIMEOUT_MS): Promise<unknown[]> {
     const trimmed = normalizeReadQuery(sql);
     if (this.path === ':memory:') return this.readonlyQuery(trimmed, params);
-    return runBoundedQuery(this.path, trimmed, params, timeoutMs);
+    this.runner ??= new BoundedQueryRunner(this.path);
+    return this.runner.run(trimmed, params, timeoutMs);
+  }
+
+  /** The warm query child's pid, when one is running. Diagnostics and tests. */
+  queryChildPid(): number | undefined {
+    return this.runner?.childPid;
   }
 }
 
