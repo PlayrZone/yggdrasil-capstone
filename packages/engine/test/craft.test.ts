@@ -56,6 +56,26 @@ describe('CraftObservationMiner — learning a skill by watching', () => {
     expect(watcher.consolidate().find((r) => r.rule.kind === 'craft-recipe')).toBeUndefined();
   });
 
+  it('copies the demonstrated materials, so two watchers never share one object', () => {
+    resetIds();
+    // One Crafted event hands the SAME payload object to every witness; the
+    // engine's own recipe table is what rides in it.
+    const shown = { wood: 1, stone: 1 };
+    const a = new CraftObservationMiner();
+    const b = new CraftObservationMiner();
+    for (let i = 0; i < 8; i++) {
+      a.observe(mem(i * 10, 'Crafted', { objectKind: 'spear', craftInputs: shown, origin: 'observation' }));
+      b.observe(mem(i * 10, 'Crafted', { objectKind: 'spear', craftInputs: shown, origin: 'observation' }));
+    }
+    const ruleA = a.consolidate()[0]!.rule as Extract<KnowledgeRule, { kind: 'craft-recipe' }>;
+    const ruleB = b.consolidate()[0]!.rule as Extract<KnowledgeRule, { kind: 'craft-recipe' }>;
+    expect(ruleA.inputs).not.toBe(shown);
+    expect(ruleA.inputs).not.toBe(ruleB.inputs);
+    ruleA.inputs.wood = 99;
+    expect(shown.wood).toBe(1); // the world's recipe is untouched
+    expect(ruleB.inputs.wood).toBe(1); // and so is the other watcher's belief
+  });
+
   it('ignores testimony — a craft is learned by watching, not by being told', () => {
     resetIds();
     const miner = new CraftObservationMiner();

@@ -6,6 +6,8 @@
 // ── Core primitives (own, no Gahalla) ───────────────────────────────────────
 export { World } from './core/World.js';
 export type { WorldEvents } from './core/World.js';
+export { SpatialIndex } from './core/SpatialIndex.js';
+export type { VisitCounter } from './core/SpatialIndex.js';
 export type { Entity } from './core/Entity.js';
 export { EventBus } from './core/EventBus.js';
 export type { Listener } from './core/EventBus.js';

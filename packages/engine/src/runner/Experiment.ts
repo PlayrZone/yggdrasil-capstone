@@ -436,6 +436,9 @@ export class Experiment {
   advance(ticks: number): void {
     for (let i = 0; i < ticks; i++) {
       const tick = this.tick++;
+      // Positions written from outside the body (a host relocating a being
+      // between ticks) are re-homed here, before anything queries the world.
+      this.world.spatial.reconcile();
       this.resources.step(this.world, tick);
       this.wildlife.step(this.world, tick, this.bus);
       this.regularities.step(this.world, tick, this.bus);
@@ -515,28 +518,28 @@ export class Experiment {
       const t = this.agentEntity(id)!.components['Transform2D'] as { x: number; y: number };
       live.push({ id, mind, x: t.x, y: t.y });
     }
-    const r2 = CO_PRESENCE_RANGE * CO_PRESENCE_RANGE;
-    for (let i = 0; i < live.length; i++) {
-      const a = live[i]!;
-      for (let j = i + 1; j < live.length; j++) {
-        const b = live[j]!;
-        const dx = a.x - b.x;
-        const dy = a.y - b.y;
-        if (dx * dx + dy * dy <= r2) {
-          a.mind.relationships.coPresence(b.id, tick);
-          b.mind.relationships.coPresence(a.id, tick);
-          // Companions retell their stories — and a retelling can DISTORT
-          // (a detail lost, a beast made greater). Drift accumulates along the
-          // chain, so a memory drifts toward myth, and different tribes end up
-          // telling different versions of the same event.
-          // The retelling carries the story's own age (sa.firstTick), not the
-          // hour it was told — an old tale stays old in a new mouth.
-          if ((tick + a.id + b.id) % 3 === 0) {
-            const sa = a.mind.narratives.pickToRetell(tick);
-            if (sa) b.mind.narratives.remember(sa.id, mutateNarrative(sa.text, (b.id * 31 + sa.text.length) >>> 0), sa.x, sa.y, sa.firstTick, false);
-            const sb = b.mind.narratives.pickToRetell(tick);
-            if (sb) a.mind.narratives.remember(sb.id, mutateNarrative(sb.text, (a.id * 31 + sb.text.length) >>> 0), sb.x, sb.y, sb.firstTick, false);
-          }
+    // `live` is ascending by id (agentIds is), so taking each being's living
+    // neighbours ascending and keeping only the ones after it visits exactly
+    // the pairs — in exactly the order — the old O(n²) double loop did.
+    const byId = new Map(live.map((l) => [l.id, l]));
+    for (const a of live) {
+      for (const near of this.world.spatial.within('GahallianBody', a.x, a.y, CO_PRESENCE_RANGE)) {
+        if (near.id <= a.id) continue;
+        const b = byId.get(near.id);
+        if (!b) continue;
+        a.mind.relationships.coPresence(b.id, tick);
+        b.mind.relationships.coPresence(a.id, tick);
+        // Companions retell their stories — and a retelling can DISTORT
+        // (a detail lost, a beast made greater). Drift accumulates along the
+        // chain, so a memory drifts toward myth, and different tribes end up
+        // telling different versions of the same event.
+        // The retelling carries the story's own age (sa.firstTick), not the
+        // hour it was told — an old tale stays old in a new mouth.
+        if ((tick + a.id + b.id) % 3 === 0) {
+          const sa = a.mind.narratives.pickToRetell(tick);
+          if (sa) b.mind.narratives.remember(sa.id, mutateNarrative(sa.text, (b.id * 31 + sa.text.length) >>> 0), sa.x, sa.y, sa.firstTick, false);
+          const sb = b.mind.narratives.pickToRetell(tick);
+          if (sb) a.mind.narratives.remember(sb.id, mutateNarrative(sb.text, (a.id * 31 + sb.text.length) >>> 0), sb.x, sb.y, sb.firstTick, false);
         }
       }
     }
@@ -554,14 +557,17 @@ export class Experiment {
       const t = this.agentEntity(id)!.components['Transform2D'] as { x: number; y: number };
       eligible.push({ id, body, x: t.x, y: t.y });
     }
+    // Same pairing as the old O(n²) double loop: each candidate against the
+    // eligible ones after it, ascending by id — so the reproduction RNG is
+    // consumed in the same order, for the same pairs.
+    const eligibleById = new Map(eligible.map((e) => [e.id, e]));
     const used = new Set<number>();
-    for (let i = 0; i < eligible.length; i++) {
-      const A = eligible[i]!;
+    for (const A of eligible) {
       if (used.has(A.id)) continue;
-      for (let j = i + 1; j < eligible.length; j++) {
-        const B = eligible[j]!;
-        if (used.has(B.id)) continue;
-        if ((A.x - B.x) ** 2 + (A.y - B.y) ** 2 > REPRO_RANGE * REPRO_RANGE) continue;
+      for (const near of this.world.spatial.within('GahallianBody', A.x, A.y, REPRO_RANGE)) {
+        if (near.id <= A.id) continue;
+        const B = eligibleById.get(near.id);
+        if (!B || used.has(B.id)) continue;
         if (this.reproRng() > 0.5) continue; // togetherness doesn't always make a child
         this.bearChild(A, B, tick);
         used.add(A.id);
@@ -686,9 +692,8 @@ export class Experiment {
   /** Wild animals currently roaming (moving — read every frame). */
   animals(): { id: number; x: number; y: number; kind: string }[] {
     const out: { id: number; x: number; y: number; kind: string }[] = [];
-    this.world.forEach((e) => {
-      const a = e.components['Animal'] as Animal | undefined;
-      if (!a) return;
+    this.world.spatial.each('Animal', (e) => {
+      const a = e.components['Animal'] as Animal;
       const t = e.components['Transform2D'] as { x: number; y: number } | undefined;
       if (t) out.push({ id: e.id, x: t.x, y: t.y, kind: a.kind });
     });
@@ -698,10 +703,9 @@ export class Experiment {
   /** Static resource nodes (food, water, ore, …) for the world view (read once). */
   resourceNodes(): { id: number; x: number; y: number; kind: string }[] {
     const out: { id: number; x: number; y: number; kind: string }[] = [];
-    this.world.forEach((e) => {
+    this.world.spatial.each('ResourceNode', (e) => {
       if (e.components['Animal']) return; // animals are rendered separately
-      const n = e.components['ResourceNode'] as ResourceNode | undefined;
-      if (!n) return;
+      const n = e.components['ResourceNode'] as ResourceNode;
       const t = e.components['Transform2D'] as { x: number; y: number } | undefined;
       if (t) out.push({ id: e.id, x: t.x, y: t.y, kind: n.kind });
     });
@@ -711,9 +715,8 @@ export class Experiment {
   /** Structures the Gahallians have built (shelters, walls, containers, drops). */
   structures(): { id: number; x: number; y: number; kind: string; builtBy: number }[] {
     const out: { id: number; x: number; y: number; kind: string; builtBy: number }[] = [];
-    this.world.forEach((e) => {
-      const s = e.components['Structure'] as Structure | undefined;
-      if (!s) return;
+    this.world.spatial.each('Structure', (e) => {
+      const s = e.components['Structure'] as Structure;
       const t = e.components['Transform2D'] as { x: number; y: number } | undefined;
       if (t) out.push({ id: e.id, x: t.x, y: t.y, kind: s.kind, builtBy: s.builtBy });
     });

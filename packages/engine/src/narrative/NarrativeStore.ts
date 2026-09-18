@@ -105,8 +105,14 @@ export class NarrativeStore {
    * Take a story in. `firstTick` is the story's ORIGIN — a witness passes the
    * tick it happened, a teller passes the one it carries — never "now", or the
    * tale would reset its age at every retelling.
+   *
+   * A tale offered with no credible origin (not a finite tick, or before the
+   * world began) is not taken in at all: the store has no "now" to date it
+   * from, and an origin of 0 or NaN would silently make it the oldest myth
+   * alive. Every engine path supplies a real tick, so this only bites hearsay.
    */
   remember(id: string, text: string, x: number, y: number, firstTick: number, firsthand: boolean): void {
+    if (!Number.isFinite(firstTick) || firstTick < 0) return;
     const existing = this.stories.get(id);
     if (existing) {
       existing.timesHeard++; // heard again — it grows more familiar/told
@@ -125,7 +131,12 @@ export class NarrativeStore {
    * interpret; it carries no behavioural instruction.
    */
   seed(id: string, text: string, x: number, y: number, tick: number, timesHeard: number): void {
-    this.stories.set(id, { id, text, x, y, firstTick: tick, firsthand: false, timesHeard, retellable: 0 });
+    // Seeding never makes a tale YOUNGER: a story already carried from further
+    // back keeps its own origin, or re-seeding mid-run would reset its age and
+    // hand the researcher's hand an artificially new myth.
+    const existing = this.stories.get(id);
+    const firstTick = existing ? Math.min(existing.firstTick, tick) : tick;
+    this.stories.set(id, { id, text, x, y, firstTick, firsthand: false, timesHeard, retellable: 0 });
   }
 
   has(id: string): boolean {

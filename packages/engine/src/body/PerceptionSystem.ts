@@ -37,6 +37,16 @@ export interface TerrainField {
 const NEAR_WATER_RADIUS = 12;
 const IN_SHELTER_RADIUS = 4;
 
+// Hoisted so the per-tick, per-witness queries below allocate nothing.
+const IS_DRINKABLE = (entity: Entity): boolean => {
+  const node = entity.components['ResourceNode'] as ResourceNode;
+  return node.kind === 'waterSource' || node.kind === 'river';
+};
+const IS_SHELTER = (entity: Entity): boolean =>
+  (entity.components['Structure'] as Structure).kind === 'shelter';
+const IS_ALIVE = (entity: Entity): boolean =>
+  (entity.components['GahallianBody'] as GahallianBody).alive;
+
 /**
  * Radius + light-modified perception. One global event truth, N partial
  * views — perception is where subjectivity (and therefore rumor and
@@ -51,26 +61,8 @@ export class PerceptionSystem {
 
   /** Context features at a position — the miners' feature space. */
   contextAt(world: World, x: number, y: number, tick: number): ContextFeatures {
-    let nearWater = false;
-    let inShelter = false;
-    world.forEach((entity) => {
-      const t = entity.components['Transform2D'] as Transform2D | undefined;
-      if (!t) return;
-      const dx = t.x - x;
-      const dy = t.y - y;
-      const d2 = dx * dx + dy * dy;
-      const node = entity.components['ResourceNode'] as ResourceNode | undefined;
-      if (
-        (node?.kind === 'waterSource' || node?.kind === 'river') &&
-        d2 <= NEAR_WATER_RADIUS * NEAR_WATER_RADIUS
-      ) {
-        nearWater = true;
-      }
-      const structure = entity.components['Structure'] as Structure | undefined;
-      if (structure?.kind === 'shelter' && d2 <= IN_SHELTER_RADIUS * IN_SHELTER_RADIUS) {
-        inShelter = true;
-      }
-    });
+    const nearWater = world.spatial.anyWithin('ResourceNode', x, y, NEAR_WATER_RADIUS, IS_DRINKABLE);
+    const inShelter = world.spatial.anyWithin('Structure', x, y, IN_SHELTER_RADIUS, IS_SHELTER);
     const elevationBand = this.terrain?.elevationBand(x, y) ?? 0;
     return { nearWater, night: isNight(tick), inShelter, elevationBand };
   }
@@ -79,7 +71,6 @@ export class PerceptionSystem {
   worldViewFor(world: World, agentEntity: Entity, tick: number): WorldView {
     const self = agentEntity.components['Transform2D'] as Transform2D;
     const r = this.radius(tick);
-    const r2 = r * r;
     const view: WorldView = {
       tick,
       night: isNight(tick),
@@ -88,21 +79,26 @@ export class PerceptionSystem {
       resources: [],
       structures: [],
     };
-    world.forEach((entity) => {
-      if (entity.id === agentEntity.id) return;
-      const t = entity.components['Transform2D'] as Transform2D | undefined;
-      if (!t) return;
-      const dx = t.x - self.x;
-      const dy = t.y - self.y;
-      if (dx * dx + dy * dy > r2) return;
-
-      const body = entity.components['GahallianBody'] as GahallianBody | undefined;
-      if (body?.alive) view.agents.push({ id: entity.id, x: t.x, y: t.y });
-      const node = entity.components['ResourceNode'] as ResourceNode | undefined;
-      if (node) view.resources.push({ id: entity.id, kind: node.kind, x: t.x, y: t.y, stock: node.stock });
-      const structure = entity.components['Structure'] as Structure | undefined;
-      if (structure) view.structures.push({ id: entity.id, kind: structure.kind, x: t.x, y: t.y });
-    });
+    // Three ascending-by-id queries, which is exactly what the single ascending
+    // full scan this replaces pushed into these three lists.
+    for (const entity of world.spatial.within('GahallianBody', self.x, self.y, r)) {
+      if (entity.id === agentEntity.id) continue;
+      if (!(entity.components['GahallianBody'] as GahallianBody).alive) continue;
+      const t = entity.components['Transform2D'] as Transform2D;
+      view.agents.push({ id: entity.id, x: t.x, y: t.y });
+    }
+    for (const entity of world.spatial.within('ResourceNode', self.x, self.y, r)) {
+      if (entity.id === agentEntity.id) continue;
+      const node = entity.components['ResourceNode'] as ResourceNode;
+      const t = entity.components['Transform2D'] as Transform2D;
+      view.resources.push({ id: entity.id, kind: node.kind, x: t.x, y: t.y, stock: node.stock });
+    }
+    for (const entity of world.spatial.within('Structure', self.x, self.y, r)) {
+      if (entity.id === agentEntity.id) continue;
+      const structure = entity.components['Structure'] as Structure;
+      const t = entity.components['Transform2D'] as Transform2D;
+      view.structures.push({ id: entity.id, kind: structure.kind, x: t.x, y: t.y });
+    }
     return view;
   }
 
@@ -126,18 +122,10 @@ export class PerceptionSystem {
 
   /** Which living agents perceive an event at its location. */
   witnessesOf(world: World, event: SimEvent): number[] {
-    const r = this.radius(event.tick);
-    const r2 = r * r;
     const ids: number[] = [];
-    world.forEach((entity) => {
-      const body = entity.components['GahallianBody'] as GahallianBody | undefined;
-      if (!body?.alive) return;
-      const t = entity.components['Transform2D'] as Transform2D | undefined;
-      if (!t) return;
-      const dx = t.x - event.x;
-      const dy = t.y - event.y;
-      if (dx * dx + dy * dy <= r2) ids.push(entity.id);
-    });
+    for (const entity of world.spatial.within('GahallianBody', event.x, event.y, this.radius(event.tick))) {
+      if (IS_ALIVE(entity)) ids.push(entity.id);
+    }
     return ids;
   }
 }

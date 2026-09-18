@@ -61,6 +61,13 @@ function habitatOk(kind: AnimalKind, x: number, y: number): boolean {
  */
 const REFRESH = 12; // ticks between full entity rescans (perf — animals are slow)
 
+interface Person {
+  id: number;
+  x: number;
+  y: number;
+  body: GahallianBody;
+}
+
 export class WildlifeSystem {
   private readonly rng: () => number;
   private readonly herd: number;
@@ -69,7 +76,9 @@ export class WildlifeSystem {
   // tick (there are ~2000 resource entities). Slightly-stale positions are fine
   // for slow-moving wildlife.
   private animalCache: Entity[] = [];
-  private peopleCache: { id: number; x: number; y: number; body: GahallianBody }[] = [];
+  private peopleCache: Person[] = [];
+  /** Quarry lookup for the cached people — a predator asks by id every tick. */
+  private peopleById = new Map<number, Person>();
 
   constructor(seed: string, herd: number) {
     this.rng = mulberry32(hashSeed(`${seed}:wildlife`));
@@ -120,19 +129,17 @@ export class WildlifeSystem {
 
     // Rescan the world only periodically; reuse the caches in between.
     if (tick % REFRESH === 0 || this.animalCache.length === 0) {
-      const people: { id: number; x: number; y: number; body: GahallianBody }[] = [];
+      const people: Person[] = [];
       const animals: Entity[] = [];
-      world.forEach((e) => {
-        if (e.components['Animal']) {
-          animals.push(e);
-          return;
-        }
-        const body = e.components['GahallianBody'] as GahallianBody | undefined;
+      world.spatial.each('Animal', (e) => animals.push(e));
+      world.spatial.each('GahallianBody', (e) => {
+        const body = e.components['GahallianBody'] as GahallianBody;
         const t = e.components['Transform2D'] as Transform2D | undefined;
-        if (body?.alive && t) people.push({ id: e.id, x: t.x, y: t.y, body });
+        if (body.alive && t) people.push({ id: e.id, x: t.x, y: t.y, body });
       });
       this.animalCache = animals;
       this.peopleCache = people;
+      this.peopleById = new Map(people.map((p) => [p.id, p]));
     }
     const people = this.peopleCache;
     const animals = this.animalCache;
@@ -149,13 +156,13 @@ export class WildlifeSystem {
       alive++;
       const predator = !PREY.has(animal.kind);
       if (predator) this.stepPredator(world, animal, e.id, t, people, tick, bus);
-      else this.stepPrey(animal, t, animals, tick);
+      else this.stepPrey(world, animal, e.id, t, animals, tick);
     }
 
     if (alive < this.herd && this.rng() < 0.05) this.spawnOne(world, tick);
   }
 
-  private wander(animal: Animal, t: Transform2D, tick: number): void {
+  private wander(world: World, id: number, animal: Animal, t: Transform2D, tick: number): void {
     if (tick >= animal.changeAt) {
       animal.heading += (this.rng() - 0.5) * Math.PI;
       animal.changeAt = tick + 80 + Math.floor(this.rng() * 240);
@@ -167,12 +174,22 @@ export class WildlifeSystem {
       t.x = nx;
       t.y = ny;
       clampToWorld(t);
+      world.spatial.markMoved(id);
     } else {
       animal.heading += Math.PI * 0.7; // turn back into habitat
     }
   }
 
-  private moveToward(animal: Animal, t: Transform2D, tx: number, ty: number, tick: number, mult = 1): void {
+  private moveToward(
+    world: World,
+    id: number,
+    animal: Animal,
+    t: Transform2D,
+    tx: number,
+    ty: number,
+    tick: number,
+    mult = 1,
+  ): void {
     const dx = tx - t.x;
     const dy = ty - t.y;
     const d = Math.hypot(dx, dy) || 1;
@@ -183,13 +200,14 @@ export class WildlifeSystem {
       t.x = nx;
       t.y = ny;
       clampToWorld(t);
+      world.spatial.markMoved(id);
     } else {
       animal.changeAt = tick - 1; // force a new heading and graze instead
-      this.wander(animal, t, tick);
+      this.wander(world, id, animal, t, tick);
     }
   }
 
-  private stepPrey(animal: Animal, t: Transform2D, animals: Entity[], tick: number): void {
+  private stepPrey(world: World, animal: Animal, id: number, t: Transform2D, animals: Entity[], tick: number): void {
     // Bolt from the nearest predator in sight; otherwise graze.
     let nearest: Transform2D | null = null;
     let best = FEAR_R * FEAR_R;
@@ -203,8 +221,8 @@ export class WildlifeSystem {
         nearest = ot;
       }
     }
-    if (nearest) this.moveToward(animal, t, 2 * t.x - nearest.x, 2 * t.y - nearest.y, tick, 1.4);
-    else this.wander(animal, t, tick);
+    if (nearest) this.moveToward(world, id, animal, t, 2 * t.x - nearest.x, 2 * t.y - nearest.y, tick, 1.4);
+    else this.wander(world, id, animal, t, tick);
   }
 
   private stepPredator(
@@ -212,7 +230,7 @@ export class WildlifeSystem {
     animal: Animal,
     id: number,
     t: Transform2D,
-    people: { id: number; x: number; y: number; body: GahallianBody }[],
+    people: Person[],
     tick: number,
     bus: SimEventBus,
   ): void {
@@ -228,16 +246,16 @@ export class WildlifeSystem {
         }
       }
     }
-    const quarry = animal.targetId ? people.find((p) => p.id === animal.targetId) : undefined;
+    const quarry = animal.targetId ? this.peopleById.get(animal.targetId) : undefined;
     if (!quarry || !quarry.body.alive) {
       animal.targetId = 0;
-      this.wander(animal, t, tick);
+      this.wander(world, id, animal, t, tick);
       return;
     }
     const dist = Math.hypot(quarry.x - t.x, quarry.y - t.y);
     if (dist > GIVE_UP_DIST) {
       animal.targetId = 0; // lost it — go back to roaming
-      this.wander(animal, t, tick);
+      this.wander(world, id, animal, t, tick);
       return;
     }
     if (dist <= ATTACK_R + 2) {
@@ -271,7 +289,7 @@ export class WildlifeSystem {
         }
       }
     } else {
-      this.moveToward(animal, t, quarry.x, quarry.y, tick, 1);
+      this.moveToward(world, id, animal, t, quarry.x, quarry.y, tick, 1);
     }
   }
 }

@@ -100,13 +100,17 @@ export class AgentMind {
       // The LLM share path carries no location; reflex retelling (coPresencePass)
       // carries the real place. First write wins, so this only matters when an
       // LLM hears a story it has no other source for. The age comes from the
-      // teller's copy — a tale heard today may be generations old.
+      // teller's copy — a tale heard today may be generations old — but only
+      // when that claim is a real tick; otherwise the tale is dated from the
+      // moment it was heard rather than being refused by the store.
+      const claimed = stored.utterance.narrativeFirstTick;
+      const origin = claimed !== undefined && Number.isFinite(claimed) && claimed >= 0 ? claimed : stored.tick;
       this.narratives.remember(
         stored.utterance.narrativeId,
         stored.utterance.narrativeText,
         0,
         0,
-        stored.utterance.narrativeFirstTick ?? stored.tick,
+        origin,
         false,
       );
     }

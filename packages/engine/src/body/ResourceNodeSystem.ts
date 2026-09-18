@@ -88,9 +88,9 @@ export class ResourceNodeSystem {
   step(world: World, tick: number): void {
     if (tick <= 0) return;
     const growth = growthFactor(tick); // season gate for living nodes
-    world.forEach((entity) => {
-      const node = entity.components['ResourceNode'] as ResourceNode | undefined;
-      if (!node || node.regrowEvery <= 0 || node.stock >= node.maxStock) return;
+    world.spatial.each('ResourceNode', (entity) => {
+      const node = entity.components['ResourceNode'] as ResourceNode;
+      if (node.regrowEvery <= 0 || node.stock >= node.maxStock) return;
       if (tick % node.regrowEvery !== 0) return;
       if (SEASONAL.has(node.kind)) {
         // Winter halts plant regrowth; autumn is half (regrow every other cycle).

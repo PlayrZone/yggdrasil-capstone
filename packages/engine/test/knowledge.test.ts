@@ -42,6 +42,23 @@ describe('KnowledgeStore lifecycle', () => {
     expect(record.sourceMemoryIds).toEqual([1, 2]);
     expect(record.origin).toBe('experience');
   });
+
+  it('copies the rule on the way in, so two stores never share one belief object', () => {
+    // A miner's report can carry an object the world owns (the engine's recipe
+    // table rides on a Crafted event), and one report may be applied to several
+    // stores. Intake copies — the header's claim now holds for every path.
+    const recipe: KnowledgeRule = { kind: 'craft-recipe', output: 'spear', inputs: { wood: 1, stone: 1 } };
+    const report = { rule: recipe, confidence: 0.9, evidenceCount: 5, contradictionCount: 0, sourceMemoryIds: [] };
+    const a = new KnowledgeStore().applyEvidence(report, 10);
+    const b = new KnowledgeStore().applyEvidence(report, 10);
+    expect(a.rule).not.toBe(recipe);
+    expect(a.rule).not.toBe(b.rule);
+    const held = a.rule as Extract<KnowledgeRule, { kind: 'craft-recipe' }>;
+    expect(held.inputs).not.toBe(recipe.inputs);
+    held.inputs.wood = 99;
+    expect(recipe.inputs.wood).toBe(1);
+    expect((b.rule as Extract<KnowledgeRule, { kind: 'craft-recipe' }>).inputs.wood).toBe(1);
+  });
 });
 
 describe('testimony', () => {

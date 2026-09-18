@@ -32,6 +32,10 @@ const SICK_SAFETY_HIT = 15;
 
 const BUILD_COST: Record<BuildKind, number> = { shelter: 3, wall: 1, container: 2 };
 
+/** Hoisted so the per-agent, per-tick company query allocates nothing. */
+const IS_ALIVE = (entity: Entity): boolean =>
+  (entity.components['GahallianBody'] as GahallianBody).alive;
+
 /**
  * Hidden material relationships — the world's physics of toolmaking, NOT a
  * crafting menu. A pointed stone lashed to a shaft is a spear; the engine
@@ -72,9 +76,8 @@ export class YggdrasilSystem {
 
   step(world: World, tick: number, bus: SimEventBus): void {
     const agents: Entity[] = [];
-    world.forEach((entity) => {
-      const body = entity.components['GahallianBody'] as GahallianBody | undefined;
-      if (body?.alive) agents.push(entity);
+    world.spatial.each('GahallianBody', (entity) => {
+      if ((entity.components['GahallianBody'] as GahallianBody).alive) agents.push(entity);
     });
 
     for (const entity of agents) {
@@ -135,17 +138,14 @@ export class YggdrasilSystem {
     }
 
     const t = entity.components['Transform2D'] as Transform2D;
-    let companyNear = false;
-    world.forEach((other) => {
-      if (companyNear || other.id === entity.id) return;
-      const ob = other.components['GahallianBody'] as GahallianBody | undefined;
-      if (!ob?.alive) return;
-      const ot = other.components['Transform2D'] as Transform2D | undefined;
-      if (!ot) return;
-      const dx = ot.x - t.x;
-      const dy = ot.y - t.y;
-      if (dx * dx + dy * dy <= SOCIAL_RANGE * SOCIAL_RANGE) companyNear = true;
-    });
+    const companyNear = world.spatial.anyWithin(
+      'GahallianBody',
+      t.x,
+      t.y,
+      SOCIAL_RANGE,
+      IS_ALIVE,
+      entity.id,
+    );
     body.needs.socialConnection = clamp(
       body.needs.socialConnection + (companyNear ? -DECAY.socialNearOthers : DECAY.social),
     );
@@ -322,7 +322,7 @@ export class YggdrasilSystem {
       case 'MoveTo': {
         const target = this.resolvePoint(world, intent);
         if (!target) return reject('no-target');
-        if (this.moveToward(t, target.x, target.y)) this.advance(body);
+        if (this.moveToward(world, entity.id, t, target.x, target.y)) this.advance(body);
         return;
       }
       case 'Gather': {
@@ -637,7 +637,7 @@ export class YggdrasilSystem {
         const dx = tt.x - t.x;
         const dy = tt.y - t.y;
         if (dx * dx + dy * dy <= GIVE_RANGE * GIVE_RANGE) return this.advance(body);
-        this.moveToward(t, tt.x, tt.y);
+        this.moveToward(world, entity.id, t, tt.x, tt.y);
         return;
       }
       case 'Flee': {
@@ -653,6 +653,7 @@ export class YggdrasilSystem {
             t.x = fx;
             t.y = fy;
             clampToWorld(t);
+            world.spatial.markMoved(entity.id);
           }
         }
         return;
@@ -671,7 +672,7 @@ export class YggdrasilSystem {
   }
 
   /** Move one tick toward (x, y); true when arrived. Stays inside the world wall. */
-  private moveToward(t: Transform2D, x: number, y: number): boolean {
+  private moveToward(world: World, id: number, t: Transform2D, x: number, y: number): boolean {
     const dx = x - t.x;
     const dy = y - t.y;
     const d = Math.sqrt(dx * dx + dy * dy);
@@ -683,6 +684,7 @@ export class YggdrasilSystem {
     t.x = nx;
     t.y = ny;
     clampToWorld(t);
+    world.spatial.markMoved(id);
     return false;
   }
 
@@ -722,11 +724,12 @@ export class YggdrasilSystem {
   ): { id: number } | undefined {
     let best: { id: number } | undefined;
     let bestD = range * range;
-    world.forEach((entity) => {
-      const node = entity.components['ResourceNode'] as ResourceNode | undefined;
-      if (node?.kind !== kind) return;
-      const tt = entity.components['Transform2D'] as Transform2D | undefined;
-      if (!tt) return;
+    // Ascending by id, as the full scan was — so among equidistant nodes the
+    // same one still wins the `<=` tie-break.
+    for (const entity of world.spatial.within('ResourceNode', t.x, t.y, range)) {
+      const node = entity.components['ResourceNode'] as ResourceNode;
+      if (node.kind !== kind) continue;
+      const tt = entity.components['Transform2D'] as Transform2D;
       const dx = tt.x - t.x;
       const dy = tt.y - t.y;
       const d = dx * dx + dy * dy;
@@ -734,7 +737,7 @@ export class YggdrasilSystem {
         best = { id: entity.id };
         bestD = d;
       }
-    });
+    }
     return best;
   }
 

@@ -72,7 +72,7 @@ export class KnowledgeStore {
     const record: KnowledgeRecord = {
       id: this.nextId++,
       ruleKey: key,
-      rule: report.rule,
+      rule: copyRule(report.rule),
       statement: renderStatement(report.rule),
       confidence,
       evidenceCount: report.evidenceCount,

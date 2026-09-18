@@ -41,7 +41,11 @@ export class CraftObservationMiner implements ILearner {
       this.recipes.set(output, t);
     }
     t.seen += weight;
-    if (memory.craftInputs) t.inputs = memory.craftInputs; // what the demonstration showed going in
+    // What the demonstration showed going in — COPIED, because one Crafted event
+    // hands the same `inputs` object to every witness (and it is the engine's own
+    // recipe table), so keeping the reference would let every watcher's belief
+    // share one object with the world's physics.
+    if (memory.craftInputs) t.inputs = { ...memory.craftInputs };
     t.provenance.add(memory.id);
   }
 

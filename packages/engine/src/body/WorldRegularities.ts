@@ -56,9 +56,8 @@ export interface SeedInGround {
 export class WorldRegularitiesSystem {
   step(world: World, tick: number, bus: SimEventBus): void {
     const sprouted: number[] = [];
-    world.forEach((entity) => {
-      const seed = entity.components['SeedInGround'] as SeedInGround | undefined;
-      if (!seed) return;
+    world.spatial.each('SeedInGround', (entity) => {
+      const seed = entity.components['SeedInGround'] as SeedInGround;
       if (tick - seed.plantedTick >= SEED_SPROUT_TICKS) sprouted.push(entity.id);
     });
     for (const id of sprouted) {
