@@ -1,183 +1,311 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Experiment, TICKS_PER_DAY } from '@yggdrasil/engine';
-import { SimClock, SPEED_PRESETS } from './sim.js';
-import { BridgeBackend } from './bridgeBackend.js';
-import { World3D, type Agent3D } from './World3D.js';
+import { SimClient, type SimFault } from './sim/client.js';
+import { SPEED_PRESETS, type SpeedPreset } from './sim/presets.js';
+import type { AgentDetail, FeedItem, QueryRequest, QueryResults, StatsMessage, WorldMessage } from './sim/protocol.js';
+import { World3D } from './World3D.js';
 import { ActivityView } from './ActivityView.js';
 import { ReportsView } from './ReportsView.js';
-import { AnalysisView, type AnalysisSnapshot } from './AnalysisView.js';
+import { AnalysisView } from './AnalysisView.js';
 import { SocietyView } from './SocietyView.js';
 import { CultureView } from './CultureView.js';
-import type { SocietyReport, CultureReport, MythReport } from '@yggdrasil/engine';
 
 type Tab = 'world' | 'activity' | 'analysis' | 'society' | 'culture' | 'reports';
 
-interface FeedItem {
-  tick: number;
-  kind: 'speech' | 'event';
-  who: string;
-  text: string;
+const FEED_CAP = 50;
+
+/**
+ * Poll one of the worker's heavy read-outs while its tab is open. Never two in
+ * flight at once, never computed on this thread, and never at all while nobody
+ * is looking at it.
+ */
+function usePolled<K extends 'analysis' | 'society' | 'culture'>(
+  client: SimClient,
+  active: boolean,
+  name: K,
+  intervalMs: number,
+): QueryResults[K] | null {
+  const [value, setValue] = useState<QueryResults[K] | null>(null);
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
+    let inFlight = false;
+    const run = (): void => {
+      if (inFlight) return;
+      inFlight = true;
+      // `{ name }` is a QueryRequest by construction; TS can't narrow a generic
+      // key to its union member on its own.
+      void client.query({ name } as QueryRequest).then(
+        (result) => {
+          inFlight = false;
+          if (live) setValue(result as QueryResults[K]);
+        },
+        () => {
+          inFlight = false; // no world to ask; the next tick tries again
+        },
+      );
+    };
+    run();
+    const id = setInterval(run, intervalMs);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, [client, active, name, intervalMs]);
+  return value;
 }
 
-interface Stats {
-  day: number;
-  alive: number;
-  total: number;
-  knowledge: number;
-  exchanges: number;
-  conflicts: number;
-  sickness: number;
-  shares: number;
-  seedPlants: number;
-  sprouts: number;
-  builds: number;
-  backend: string;
-  deaths: number;
-  pending: number;
-  feed: FeedItem[];
+/**
+ * The speed read-out. A preset is a promise about wall-clock time per sim day,
+ * and a saturated CPU cannot keep it — so whenever the sim is more than 5% off
+ * the rate the button sells, both numbers are shown. Never advertise a speed
+ * the world is not doing.
+ */
+function SpeedLabel({ client, preset }: { client: SimClient; preset: SpeedPreset }): React.ReactElement {
+  const [achieved, setAchieved] = useState(0);
+  useEffect(
+    () =>
+      client.onStats((s) => {
+        // Coarse so the label does not flicker, and so this component re-renders
+        // far less often than the 4 Hz it is fed at.
+        const rounded = s.achievedMult >= 100 ? Math.round(s.achievedMult / 10) * 10 : Math.round(s.achievedMult);
+        setAchieved((prev) => (prev === rounded ? prev : rounded));
+      }),
+    [client],
+  );
+  const off = achieved > 0 && Math.abs(achieved - preset.mult) / preset.mult > 0.05;
+  return (
+    <label>
+      Speed — {preset.rate}
+      {off && <span className="achieved"> · {preset.mult}× asked · {achieved}× achieved</span>}
+    </label>
+  );
 }
 
-const dayOf = (tick: number): number => Math.floor(tick / TICKS_PER_DAY) + 1;
+/** The counters. Subscribes on its own so a stats tick never re-renders the canvas. */
+function LiveStats({ client }: { client: SimClient }): React.ReactElement | null {
+  const [stats, setStats] = useState<StatsMessage | null>(null);
+  useEffect(() => client.onStats(setStats), [client]);
+  if (!stats) return null;
+  return (
+    <section className="stats">
+      <div className="big">
+        <div><b>{stats.alive}</b><span>/ {stats.total} alive</span></div>
+        <div><b>Day {stats.day}</b><span>{stats.pending > 0 ? `${stats.pending} thinking` : 'reflex idle'}</span></div>
+        <div><b>{stats.knowledge}</b><span>knowledge</span></div>
+      </div>
+      <div className="mind">mind: {stats.backend}</div>
+      <table><tbody>
+        <tr><td>Exchanges</td><td>{stats.exchanges}</td><td>Conflicts</td><td>{stats.conflicts}</td></tr>
+        <tr><td>Sickness</td><td>{stats.sickness}</td><td>Shares</td><td>{stats.shares}</td></tr>
+        <tr><td>Seeds sown</td><td>{stats.seedPlants}</td><td>Sprouts</td><td>{stats.sprouts}</td></tr>
+        <tr><td>Builds</td><td>{stats.builds}</td><td>Deaths</td><td>{stats.deaths}</td></tr>
+      </tbody></table>
+    </section>
+  );
+}
 
-// Humanize raw event types for the feed.
-function eventPhrase(type: string, payload: Record<string, unknown>): string {
-  switch (type) {
-    case 'GatherSucceeded': return payload['dug'] ? `dug ${payload['objectKind']}` : `gathered ${payload['objectKind'] ?? 'something'}`;
-    case 'GatherFailed': return 'found nothing to gather';
-    case 'AteFood': return `ate ${payload['objectKind'] ?? 'food'}`;
-    case 'BecameSick': return 'fell sick';
-    case 'Recovered': return 'recovered';
-    case 'AgentDied': return `died (${payload['cause'] ?? 'unknown'})`;
-    case 'BuiltStructure': return `built a ${payload['buildKind'] ?? 'structure'}`;
-    case 'SeedDeposited': return 'planted a seed';
-    case 'PlantSprouted': return 'watched a seed sprout';
-    case 'GaveItem': return `shared ${payload['objectKind'] ?? 'an item'}`;
-    case 'AttackedAgent': return 'attacked another';
-    case 'AttackedByPredator': return `was attacked by a ${payload['predator'] ?? 'predator'}!`;
-    case 'FoughtPredator': return `fought off a ${payload['predator'] ?? 'predator'}`;
-    case 'KilledPredator': return `KILLED a ${payload['predator'] ?? 'predator'}!`;
-    case 'Crafted': return `crafted a ${payload['made'] ?? 'tool'}`;
-    case 'ChildBorn': return 'a child was born';
-    case 'SleptInShelter': case 'Slept': return 'slept';
-    // "IntentRejected" = a plan step the world wouldn't allow (e.g. out of range,
-    // no wood) — the agent just tries something else. Normal, not an error.
-    case 'IntentRejected': return `couldn't ${payload['intentKind'] ?? 'act'} (${payload['reason'] ?? '—'})`;
-    default: return type.replace(/([A-Z])/g, ' $1').trim().toLowerCase();
-  }
+/**
+ * What they're doing & saying — a bounded tail, newest first, appended from
+ * each stats tick.
+ *
+ * Rows are keyed by the line's own `seq`, and the two shapes a line can take
+ * carry different keys. With index keys (and one `<span>` morphing between
+ * `<b>…</b>: “text”` and plain text) React rewrites every row on every tick and
+ * eventually commits a deletion against a parent that no longer holds the node:
+ * `NotFoundError: Failed to execute 'removeChild'`, which takes the whole app
+ * down. That is a pre-existing fault — HEAD reproduces it on a tab switch after
+ * ~10 s of running — not something the worker introduced.
+ */
+function LiveFeed({ client }: { client: SimClient }): React.ReactElement | null {
+  const [feed, setFeed] = useState<FeedItem[]>([]);
+  useEffect(() => client.onWorld(() => setFeed([])), [client]); // a new world starts a new log
+  useEffect(
+    () =>
+      client.onStats((s) => {
+        if (s.newFeed.length === 0) return;
+        setFeed((prev) => {
+          const next = prev.slice();
+          for (let i = s.newFeed.length - 1; i >= 0; i--) next.unshift(s.newFeed[i]!);
+          return next.length > FEED_CAP ? next.slice(0, FEED_CAP) : next;
+        });
+      }),
+    [client],
+  );
+  if (feed.length === 0) return null;
+  return (
+    <section className="feed">
+      <label>What they're doing &amp; saying</label>
+      <ul>
+        {feed.map((e) => (
+          <li key={e.seq} className={e.kind}>
+            <span className="t">d{e.day}</span>{' '}
+            {e.kind === 'speech'
+              ? <span key="speech"><b>{e.who}</b>: “{e.text}”</span>
+              : <span key="event" className="ev">{e.who} · {e.text}</span>}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The selected being. Its own subscriber, so the stats cadence never touches it. */
+function Inspector({ client, onClose }: { client: SimClient; onClose: () => void }): React.ReactElement | null {
+  const [detail, setDetail] = useState<AgentDetail | null>(null);
+  useEffect(() => client.onDetail(setDetail), [client]);
+  if (!detail) return null;
+  return (
+    <div className="inspector">
+      <div className="ihead">
+        <b>{detail.name}</b>
+        <span>{detail.alive ? detail.region : 'dead'}{detail.archetype ? ` · ${detail.archetype}` : ''}</span>
+        <button onClick={onClose}>✕</button>
+      </div>
+      <div className="ineeds">
+        {Object.entries(detail.needs).map(([k, v]) => (
+          <div key={k} className="nrow"><span>{k}</span><span className="nbar"><i style={{ width: `${v}%`, background: v >= 75 ? '#e0524d' : v >= 50 ? '#e09a3a' : '#43d18a' }} /></span></div>
+        ))}
+      </div>
+      <div className="iknow">
+        <label>What {detail.name.split(' ')[0]} has learned ({detail.knowledge.length})</label>
+        <ul>
+          {detail.knowledge.slice(0, 12).map((k, i) => (
+            <li key={i}>{k.statement} <em>{Math.round(k.confidence * 100)}%</em></li>
+          ))}
+          {detail.knowledge.length === 0 && <li className="empty">nothing learned yet</li>}
+        </ul>
+      </div>
+    </div>
+  );
 }
 
 export function App(): React.ReactElement {
-  const clockRef = useRef<SimClock | null>(null);
+  const [client] = useState(() => new SimClient());
   const world3dRef = useRef<World3D | null>(null);
-  const rafRef = useRef<number>(0);
-  const lastFrameRef = useRef<number>(0);
-  const runningRef = useRef(false);
-  const speedRef = useRef(0);
+  const worldPayloadRef = useRef<WorldMessage | null>(null);
+  const tabRef = useRef<Tab>('world');
+  const hiddenRef = useRef({ beings: 0, wildlife: 0 });
 
   const [tab, setTab] = useState<Tab>('world');
   const [seed, setSeed] = useState('genesis-01');
   const [agentCount, setAgentCount] = useState(150);
   const [speedIdx, setSpeedIdx] = useState(3); // 30× (4 min/day) — motion is clearly visible; 1× stays for calm watching
   const [running, setRunning] = useState(false);
-  const [stats, setStats] = useState<Stats | null>(null);
   const [idea, setIdea] = useState('');
   const [version, setVersion] = useState('');
   const [updateMsg, setUpdateMsg] = useState('');
   const [llm, setLlm] = useState<{ hasKey: boolean; model: string }>({ hasKey: false, model: '' });
   const [keyInput, setKeyInput] = useState('');
-  const [analysis, setAnalysis] = useState<AnalysisSnapshot | null>(null);
-  const [society, setSociety] = useState<SocietyReport | null>(null);
-  const [culture, setCulture] = useState<CultureReport | null>(null);
-  const [myth, setMyth] = useState<MythReport | null>(null);
-  const selectedRef = useRef<number | null>(null);
-  const [selected, setSelected] = useState<ReturnType<Experiment['agentDetail']>>(null);
+  const [selected, setSelected] = useState<{ id: number; name: string } | null>(null);
+  const [notDrawn, setNotDrawn] = useState({ beings: 0, wildlife: 0 });
+  const [fault, setFault] = useState<SimFault | null>(null);
 
-  const sampleStats = useCallback((exp: Experiment): Stats => {
-    const feed: FeedItem[] = exp.recentEvents(50).map((e) => {
-      const utt = e.payload['utterance'] as { text?: string } | undefined;
-      if (e.type === 'UtteranceSpoken' && utt?.text) {
-        return { tick: e.tick, kind: 'speech', who: exp.nameOf(e.actorId), text: utt.text };
-      }
-      return { tick: e.tick, kind: 'event', who: exp.nameOf(e.actorId), text: eventPhrase(e.type, e.payload) };
-    });
-    return {
-      day: exp.day(),
-      alive: exp.aliveCount(),
-      total: exp.agentIds.length,
-      knowledge: exp.totalKnowledge(),
-      exchanges: exp.exchangeCount,
-      conflicts: exp.conflictCount,
-      sickness: exp.sicknessCount,
-      shares: exp.shareCount,
-      seedPlants: exp.seedPlantCount,
-      sprouts: exp.sproutCount,
-      builds: exp.buildCount,
-      backend: exp.backendLabel,
-      deaths: Object.values(exp.deathsByCause).reduce((a, b) => a + b, 0),
-      pending: exp.cognitionPending(),
-      feed,
-    };
-  }, []);
+  const analysis = usePolled(client, tab === 'analysis', 'analysis', 2500);
+  const society = usePolled(client, tab === 'society', 'society', 3000);
+  const culture = usePolled(client, tab === 'culture', 'culture', 3500);
 
-  // The 3D scene draws the interpolated agents standing on the terrain.
-  const drawWorld = useCallback((clock: SimClock) => {
-    const world = world3dRef.current;
-    if (!world) return;
-    const state = new Map(clock.exp.agentInfos().map((a) => [a.id, a]));
-    const agents: Agent3D[] = [];
-    for (const p of clock.interpolated()) {
-      const a = state.get(p.id);
-      const s = a ? (a.sick ? 3 : a.sleeping ? 2 : a.hungerCritical ? 1 : 0) : 0;
-      agents.push({ id: p.id, x: p.x, y: p.y, state: s });
-    }
-    world.update(agents);
-    world.updateAnimals(clock.exp.animals());
-    world.render();
-  }, []);
+  useEffect(() => () => client.dispose(), [client]);
 
   // Callback ref: spin up / tear down the WebGL world with the canvas element.
-  const canvasCb = useCallback((el: HTMLCanvasElement | null) => {
-    if (el) {
-      const world = new World3D(el, (id) => {
-        selectedRef.current = id;
-        setSelected(id !== null && clockRef.current ? clockRef.current.exp.agentDetail(id) : null);
-      });
-      const exp = clockRef.current?.exp;
-      world.setPopulation(360); // capacity headroom — the population grows as children are born
-      if (exp) {
-        world.setResources(exp.resourceNodes());
-        world.setAnimals(300);
+  const canvasCb = useCallback(
+    (el: HTMLCanvasElement | null) => {
+      if (el) {
+        const world = new World3D(el, (id) => client.select(id));
+        world3dRef.current = world;
+        // A deterministic handle for drivers: a being is ~2 px at the default
+        // camera, so a test that wants to click one has to be told where it is.
+        window.__ygg = { drawnIds: () => world.drawnIds(), screenPositionOf: (id) => world.screenPositionOf(id) };
+        const payload = worldPayloadRef.current;
+        if (payload) {
+          world.resetWorld();
+          world.setResources(payload.resources);
+        }
+      } else {
+        world3dRef.current?.dispose();
+        world3dRef.current = null;
+        delete window.__ygg;
       }
-      world3dRef.current = world;
-    } else {
-      world3dRef.current?.dispose();
-      world3dRef.current = null;
-    }
-  }, []);
+    },
+    [client],
+  );
 
-  const newExperiment = useCallback(() => {
-    const mindBackend = llm.hasKey ? new BridgeBackend(llm.model) : undefined;
-    const exp = new Experiment({ seed, agentCount, mindBackend });
-    clockRef.current = new SimClock(exp, () => performance.now());
-    world3dRef.current?.setPopulation(360); // headroom for newborns
-    world3dRef.current?.setResources(exp.resourceNodes());
-    world3dRef.current?.setAnimals(300);
-    world3dRef.current?.setSelected(null);
-    selectedRef.current = null;
+  // A new world: terrain stays, everything living in it is replaced.
+  useEffect(
+    () =>
+      client.onWorld((payload) => {
+        worldPayloadRef.current = payload;
+        const world = world3dRef.current;
+        if (world) {
+          world.resetWorld();
+          world.setResources(payload.resources);
+        }
+        setSelected(null);
+      }),
+    [client],
+  );
+
+  // Frames go straight from the worker into instance matrices — no React here.
+  useEffect(
+    () =>
+      client.onFrame((frame) => {
+        const world = world3dRef.current;
+        if (!world) return;
+        world.applyFrame(frame);
+        const missing = world.notDrawn;
+        if (missing.beings !== hiddenRef.current.beings || missing.wildlife !== hiddenRef.current.wildlife) {
+          hiddenRef.current = missing;
+          setNotDrawn(missing);
+        }
+      }),
+    [client],
+  );
+
+  // The sim died, wedged, or spoke the wrong protocol. Say so, stop pretending
+  // to run, and offer the way back.
+  useEffect(
+    () =>
+      client.onFault((f) => {
+        setFault(f);
+        if (f) setRunning(false); // the button must not read "Pause" over a dead world
+      }),
+    [client],
+  );
+
+  // Only the name/id is kept up here (the idea box needs it); the inspector
+  // keeps the detail itself, so a 2 Hz detail push re-renders nothing else.
+  useEffect(
+    () =>
+      client.onDetail((detail) => {
+        setSelected((prev) => {
+          if (!detail) return prev === null ? prev : null;
+          return prev && prev.id === detail.id && prev.name === detail.name ? prev : { id: detail.id, name: detail.name };
+        });
+      }),
+    [client],
+  );
+
+  const newWorld = useCallback(() => {
+    setRunning(false);
     setSelected(null);
-    setStats(sampleStats(exp));
-  }, [seed, agentCount, llm, sampleStats]);
+    client.setSpeed(SPEED_PRESETS[speedIdx]!.mult);
+    client.createWorld(seed, agentCount, llm.hasKey ? { model: llm.model } : null);
+  }, [client, seed, agentCount, llm, speedIdx]);
+
+  const restart = useCallback(() => {
+    client.restart();
+    world3dRef.current?.resetWorld();
+    hiddenRef.current = { beings: 0, wildlife: 0 };
+    setNotDrawn({ beings: 0, wildlife: 0 });
+    newWorld();
+  }, [client, newWorld]);
 
   // Load app version + LLM status once.
   useEffect(() => {
     const lab = window.lab;
-    if (!lab) {
-      newExperiment();
-      return;
-    }
+    if (!lab) return;
     void lab.getVersion().then(setVersion);
-    void lab.llmStatus().then((s) => setLlm(s));
-    const off = lab.onUpdate((channel) => {
+    void lab.llmStatus().then(setLlm);
+    return lab.onUpdate((channel) => {
       if (channel === 'updater:checking') setUpdateMsg('Checking for updates…');
       else if (channel === 'updater:available') setUpdateMsg('Update available — downloading…');
       else if (channel === 'updater:none') setUpdateMsg('');
@@ -185,100 +313,53 @@ export function App(): React.ReactElement {
       else if (channel === 'updater:ready') setUpdateMsg('Update ready — installs on quit.');
       else if (channel === 'updater:error') setUpdateMsg('');
     });
-    return off;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Build the first experiment once we know the LLM status (so it uses the
-  // bridge backend when a key is present).
+  // Build the first world once we know the LLM status (so it uses the bridge
+  // backend when a key is present), and rebuild if that status changes.
   useEffect(() => {
-    newExperiment();
+    newWorld();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [llm.hasKey, llm.model]);
 
-  // One persistent rAF loop reading running/speed from refs.
+  useEffect(() => { client.setRunning(running); }, [client, running]);
+  useEffect(() => { client.setSpeed(SPEED_PRESETS[speedIdx]!.mult); }, [client, speedIdx]);
   useEffect(() => {
-    let statTick = 0;
-    const loop = (now: number): void => {
-      const clock = clockRef.current;
-      if (clock) {
-        const dt = lastFrameRef.current ? now - lastFrameRef.current : 16;
-        lastFrameRef.current = now;
-        if (runningRef.current) {
-          clock.tickFrame(dt, SPEED_PRESETS[speedRef.current]!.mult);
-          if (statTick++ % 8 === 0) {
-            setStats(sampleStats(clock.exp));
-            world3dRef.current?.updateStructures(clock.exp.structures());
-            if (selectedRef.current !== null) setSelected(clock.exp.agentDetail(selectedRef.current));
-          }
-        }
-        drawWorld(clock); // smooth interpolation + orbit controls every frame
-      }
-      rafRef.current = requestAnimationFrame(loop);
-    };
-    rafRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [drawWorld, sampleStats]);
+    tabRef.current = tab;
+    client.setFrames(tab === 'world'); // don't pay for frames nobody is drawing
+  }, [client, tab]);
 
-  useEffect(() => { runningRef.current = running; }, [running]);
-  useEffect(() => { speedRef.current = speedIdx; }, [speedIdx]);
-
-  // Recompute the analysis snapshot while the Analysis tab is open (it walks
-  // every agent's memory, so only do it when it's being looked at).
+  // One persistent rAF: orbit damping + draw. The sim is not in this loop.
   useEffect(() => {
-    if (tab !== 'analysis') return;
-    const compute = (): void => {
-      const exp = clockRef.current?.exp;
-      if (exp) setAnalysis(exp.analysis());
+    let raf = 0;
+    const loop = (): void => {
+      if (tabRef.current === 'world') world3dRef.current?.render();
+      raf = requestAnimationFrame(loop);
     };
-    compute();
-    const id = setInterval(compute, 2500);
-    return () => clearInterval(id);
-  }, [tab]);
-
-  // The society/influence read-out — also walks all agents, so compute it only
-  // while its tab is open.
-  useEffect(() => {
-    if (tab !== 'society') return;
-    const compute = (): void => {
-      const exp = clockRef.current?.exp;
-      if (exp) setSociety(exp.society());
-    };
-    compute();
-    const id = setInterval(compute, 3000);
-    return () => clearInterval(id);
-  }, [tab]);
-
-  useEffect(() => {
-    if (tab !== 'culture') return;
-    const compute = (): void => {
-      const exp = clockRef.current?.exp;
-      if (exp) {
-        setCulture(exp.culture());
-        setMyth(exp.myth());
-      }
-    };
-    compute();
-    const id = setInterval(compute, 3500);
-    return () => clearInterval(id);
-  }, [tab]);
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   const saveKey = useCallback(async () => {
     const lab = window.lab;
     if (!lab || !keyInput.trim()) return;
     const status = await lab.setKey(keyInput.trim());
-    setLlm(status);
+    setLlm({ hasKey: status.hasKey, model: status.model });
     setKeyInput('');
   }, [keyInput]);
 
+  const clearSelection = useCallback(() => {
+    client.select(null);
+    world3dRef.current?.setSelected(null);
+    setSelected(null);
+  }, [client]);
+
   const sendIdea = useCallback(() => {
-    const clock = clockRef.current;
     const clean = idea.trim();
-    const target = selectedRef.current;
-    if (!clock || !clean || target === null) return;
-    clock.exp.giveIdea(clean, target); // a thought lands in ONE head — the selected one
+    if (!clean || !selected) return;
+    client.giveIdea(clean, selected.id); // a thought lands in ONE head — the selected one
     setIdea('');
-  }, [idea]);
+  }, [client, idea, selected]);
 
   const preset = SPEED_PRESETS[speedIdx]!;
 
@@ -307,114 +388,74 @@ export function App(): React.ReactElement {
         </div>
       )}
 
-      {tab === 'world' && (
-        <div className="body">
-          <div className="stage">
-            <canvas ref={canvasCb} className="world3d" />
-            <div className="legend">
-              <span><i style={{ background: '#43d18a' }} /> active</span>
-              <span><i style={{ background: '#e09a3a' }} /> hungry</span>
-              <span><i style={{ background: '#5b8bd0' }} /> sleeping</span>
-              <span><i style={{ background: '#e0524d' }} /> sick</span>
-              <span className="orbit">drag to orbit · scroll to zoom · click a Gahallian</span>
-            </div>
-
-            {selected && (
-              <div className="inspector">
-                <div className="ihead">
-                  <b>{selected.name}</b>
-                  <span>{selected.alive ? selected.region : 'dead'}{selected.archetype ? ` · ${selected.archetype}` : ''}</span>
-                  <button onClick={() => { selectedRef.current = null; setSelected(null); world3dRef.current?.setSelected(null); }}>✕</button>
-                </div>
-                <div className="ineeds">
-                  {Object.entries(selected.needs).map(([k, v]) => (
-                    <div key={k} className="nrow"><span>{k}</span><span className="nbar"><i style={{ width: `${v}%`, background: v >= 75 ? '#e0524d' : v >= 50 ? '#e09a3a' : '#43d18a' }} /></span></div>
-                  ))}
-                </div>
-                <div className="iknow">
-                  <label>What {selected.name.split(' ')[0]} has learned ({selected.knowledge.length})</label>
-                  <ul>
-                    {selected.knowledge.slice(0, 12).map((k, i) => (
-                      <li key={i}>{k.statement} <em>{Math.round(k.confidence * 100)}%</em></li>
-                    ))}
-                    {selected.knowledge.length === 0 && <li className="empty">nothing learned yet</li>}
-                  </ul>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <aside className="panel">
-            <section className="controls">
-              <div className="row">
-                <button className={running ? 'danger' : 'go'} onClick={() => setRunning((r) => !r)}>{running ? 'Pause' : 'Run'}</button>
-                <button onClick={() => { setRunning(false); newExperiment(); }}>New world</button>
-              </div>
-              <label>Seed<input value={seed} onChange={(e) => setSeed(e.target.value)} disabled={running} /></label>
-              <label>Population: {agentCount}
-                <input type="range" min={20} max={256} step={2} value={agentCount} disabled={running} onChange={(e) => setAgentCount(Number(e.target.value))} />
-              </label>
-              <label>Speed — {preset.rate}</label>
-              <div className="speeds">
-                {SPEED_PRESETS.map((p, i) => (
-                  <button key={p.mult} className={i === speedIdx ? 'sel' : ''} onClick={() => setSpeedIdx(i)}>{p.label}</button>
-                ))}
-              </div>
-            </section>
-
-            {stats && (
-              <section className="stats">
-                <div className="big">
-                  <div><b>{stats.alive}</b><span>/ {stats.total} alive</span></div>
-                  <div><b>Day {stats.day}</b><span>{stats.pending > 0 ? `${stats.pending} thinking` : 'reflex idle'}</span></div>
-                  <div><b>{stats.knowledge}</b><span>knowledge</span></div>
-                </div>
-                <div className="mind">mind: {stats.backend}</div>
-                <table><tbody>
-                  <tr><td>Exchanges</td><td>{stats.exchanges}</td><td>Conflicts</td><td>{stats.conflicts}</td></tr>
-                  <tr><td>Sickness</td><td>{stats.sickness}</td><td>Shares</td><td>{stats.shares}</td></tr>
-                  <tr><td>Seeds sown</td><td>{stats.seedPlants}</td><td>Sprouts</td><td>{stats.sprouts}</td></tr>
-                  <tr><td>Builds</td><td>{stats.builds}</td><td>Deaths</td><td>{stats.deaths}</td></tr>
-                </tbody></table>
-              </section>
-            )}
-
-            <section className="idea">
-              <label>Give a thought to {selected ? selected.name : 'one Gahallian'} (only you can)</label>
-              <div className="row">
-                <input
-                  value={idea}
-                  placeholder={selected ? `whisper to ${selected.name}…` : 'click a Gahallian first'}
-                  disabled={!selected}
-                  onChange={(e) => setIdea(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendIdea()}
-                />
-                <button className="go" disabled={!selected} onClick={sendIdea}>Send</button>
-              </div>
-              {!selected && <p className="ideahint">A thought lands in one head, not the whole world — click a Gahallian to choose who hears it.</p>}
-            </section>
-
-            {stats && (
-              <section className="feed">
-                <label>What they're doing & saying</label>
-                <ul>
-                  {stats.feed.slice().reverse().map((e, i) => (
-                    <li key={i} className={e.kind}>
-                      <span className="t">d{dayOf(e.tick)}</span>{' '}
-                      {e.kind === 'speech' ? <span><b>{e.who}</b>: “{e.text}”</span> : <span className="ev">{e.who} · {e.text}</span>}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-          </aside>
+      {fault && (
+        <div className="faultbar">
+          <span>■ The simulation stopped — {fault.reason}. The world is frozen at Day {fault.day || 1}; nothing you see below is advancing.</span>
+          <button className="go" onClick={restart}>Restart simulation</button>
         </div>
       )}
+
+      {/* Kept mounted across tabs: rebuilding terrain + 6000 trees on every tab
+          switch is a ~100 ms hitch for nothing. Hidden, it draws nothing. */}
+      <div className="body" style={{ display: tab === 'world' ? 'flex' : 'none' }}>
+        <div className="stage">
+          <canvas ref={canvasCb} className="world3d" />
+          <div className="legend">
+            <span><i style={{ background: '#43d18a' }} /> active</span>
+            <span><i style={{ background: '#e09a3a' }} /> hungry</span>
+            <span><i style={{ background: '#5b8bd0' }} /> sleeping</span>
+            <span><i style={{ background: '#e0524d' }} /> sick</span>
+            {notDrawn.beings > 0 && <span className="warn">{notDrawn.beings} Gahallians not drawn</span>}
+            {notDrawn.wildlife > 0 && <span className="warn">{notDrawn.wildlife} animals not drawn</span>}
+            <span className="orbit">drag to orbit · scroll to zoom · click a Gahallian</span>
+          </div>
+
+          <Inspector client={client} onClose={clearSelection} />
+        </div>
+
+        <aside className="panel">
+          <section className="controls">
+            <div className="row">
+              <button className={running ? 'danger' : 'go'} disabled={!!fault} onClick={() => setRunning((r) => !r)}>{running ? 'Pause' : 'Run'}</button>
+              <button onClick={newWorld} disabled={!!fault}>New world</button>
+            </div>
+            <label>Seed<input value={seed} onChange={(e) => setSeed(e.target.value)} disabled={running} /></label>
+            <label>Population: {agentCount}
+              <input type="range" min={20} max={256} step={2} value={agentCount} disabled={running} onChange={(e) => setAgentCount(Number(e.target.value))} />
+            </label>
+            <SpeedLabel client={client} preset={preset} />
+            <div className="speeds">
+              {SPEED_PRESETS.map((p, i) => (
+                <button key={p.mult} className={i === speedIdx ? 'sel' : ''} onClick={() => setSpeedIdx(i)}>{p.label}</button>
+              ))}
+            </div>
+          </section>
+
+          <LiveStats client={client} />
+
+          <section className="idea">
+            <label>Give a thought to {selected ? selected.name : 'one Gahallian'} (only you can)</label>
+            <div className="row">
+              <input
+                value={idea}
+                placeholder={selected ? `whisper to ${selected.name}…` : 'click a Gahallian first'}
+                disabled={!selected}
+                onChange={(e) => setIdea(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && sendIdea()}
+              />
+              <button className="go" disabled={!selected} onClick={sendIdea}>Send</button>
+            </div>
+            {!selected && <p className="ideahint">A thought lands in one head, not the whole world — click a Gahallian to choose who hears it.</p>}
+          </section>
+
+          <LiveFeed client={client} />
+        </aside>
+      </div>
 
       {tab === 'activity' && <ActivityView />}
       {tab === 'analysis' && <AnalysisView snap={analysis} />}
       {tab === 'society' && <SocietyView society={society} />}
-      {tab === 'culture' && <CultureView culture={culture} myth={myth} />}
+      {tab === 'culture' && <CultureView culture={culture?.culture ?? null} myth={culture?.myth ?? null} />}
       {tab === 'reports' && <ReportsView />}
     </div>
   );

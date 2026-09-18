@@ -8,5 +8,7 @@
     "types": ["node"],
     "verbatimModuleSyntax": false
   },
-  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "electron.vite.config.ts"]
+  // env.d.ts rides along because the tests typecheck renderer modules, and those
+  // reference the ambient `window.lab` / `window.__ygg` the renderer declares.
+  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "src/renderer/env.d.ts", "test/**/*.ts", "electron.vite.config.ts"]
 }

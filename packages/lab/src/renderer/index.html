@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+    <!-- worker-src is spelled out rather than left to the default-src fallback:
+         the simulation runs in a module Worker, and that must be an explicit,
+         same-origin-only grant. Nothing else was loosened. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline';" />
     <title>Yggdrasil Lab</title>
   </head>
   <body>

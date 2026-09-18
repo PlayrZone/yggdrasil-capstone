@@ -34,6 +34,10 @@ body {
 .world3d { flex: 1; min-height: 0; width: 100%; background: #0a0e12; border: 1px solid var(--line); border-radius: 6px; display: block; }
 .legend { display: flex; gap: 16px; color: var(--muted); font-size: 12px; align-items: center; justify-content: center; }
 .legend .orbit { margin-left: auto; font-style: italic; }
+/* Only ever rendered when the view is dropping beings — silence is the normal state. */
+.legend .warn { color: #e0524d; }
+/* Shown only when the sim is not keeping the speed the preset promises. */
+.controls .achieved { color: #e09a3a; }
 
 /* Selected-agent inspector (floats over the 3D view) */
 .stage { position: relative; }
@@ -99,6 +103,10 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 
 .keybar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #2a2017; border-bottom: 1px solid #4a3a1f; font-size: 12px; color: #e6c98a; }
 .keybar input { flex: 0 1 320px; background: #0c1216; border: 1px solid var(--line); color: var(--text); border-radius: 4px; padding: 5px 8px; }
+
+/* The sim died. Present only then, and impossible to read as anything else. */
+.faultbar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #3a1c1c; border-bottom: 1px solid #7a3030; font-size: 13px; color: #ffd9d6; }
+.faultbar span { flex: 1; }
 
 .stats .mind { color: var(--muted); font-size: 11px; margin: -4px 0 8px; }
 

@@ -1,12 +1,6 @@
 import React from 'react';
-import type { BeliefCluster, BeliefAccuracy, Archetype } from '@yggdrasil/engine';
-
-export interface AnalysisSnapshot {
-  diffusion: BeliefCluster[];
-  accuracy: BeliefAccuracy;
-  archetypes: { archetype: Archetype; count: number }[];
-  cultureCount: number;
-}
+import type { BeliefCluster } from '@yggdrasil/engine';
+import type { AnalysisSnapshot } from './sim/protocol.js';
 
 const ORIGIN = (c: BeliefCluster): string =>
   `${c.byExperience} learned · ${c.byObservation} saw · ${c.byTestimony} were told`;

@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { heightAt, regionAt, WORLD } from '@yggdrasil/engine';
 import type { Region } from '@yggdrasil/engine';
+import { KIND_UNKNOWN, type FrameMessage, type ResourcePayload, type StructureUpdate } from './sim/protocol.js';
 
 // Resource node → marker colour. Trees/rivers are skipped (decor + water cover them).
 const RESOURCE_RGB: Record<string, [number, number, number]> = {
@@ -23,6 +24,7 @@ const ANIMAL_RGB: Record<string, THREE.Color> = {
   crocodile: new THREE.Color(0.2, 0.34, 0.2),
 };
 const ANIMAL_SIZE: Record<string, number> = { hare: 0.65, deer: 1, boar: 1.1, fish: 0.6, wolf: 1.15, bear: 1.6, crocodile: 1.5 };
+const DEFAULT_ANIMAL_RGB = ANIMAL_RGB['deer']!;
 
 const HSCALE = 9; // vertical exaggeration of the heightmap
 const SEA = 0.85; // sea level in world-height units
@@ -52,25 +54,21 @@ function hash2(i: number, j: number): number {
   return h - Math.floor(h);
 }
 
-export interface Agent3D {
-  id: number;
-  x: number;
-  y: number;
-  state: number;
-}
-
-export interface Structure3D {
-  id: number;
-  x: number;
-  y: number;
-  kind: string;
+/** Instance capacity for `n` things — grown with headroom, never shrunk. */
+function capacityFor(n: number): number {
+  return Math.max(64, Math.ceil(n * 1.5));
 }
 
 /**
  * A 3D view of the same continent the sim runs on (terrain from the engine's
- * heightAt/regionAt), ringed by a boundary wall. Agents are instanced capsules
- * on the surface; built structures appear as huts/walls/containers; clicking an
- * agent selects it.
+ * heightAt/regionAt), ringed by a boundary wall. Beings are instanced capsules
+ * on the surface; built structures appear as huts/walls/containers; clicking a
+ * being selects it.
+ *
+ * It consumes frames from the sim worker as typed arrays and writes them
+ * straight into instance matrices — no per-frame maps, no arrays of objects,
+ * and the instance capacity grows with the population, so a being is never
+ * silently dropped from the view.
  */
 export class World3D {
   private readonly renderer: THREE.WebGLRenderer;
@@ -78,11 +76,14 @@ export class World3D {
   private readonly camera: THREE.PerspectiveCamera;
   private readonly controls: OrbitControls;
   private agents: THREE.InstancedMesh | null = null;
-  private instanceIds: number[] = [];
-  private readonly lastPos = new Map<number, { x: number; y: number }>();
-  private readonly headings = new Map<number, number>();
+  private instanceIds = new Int32Array(0);
+  /** Scene-space centre of each drawn being, for the selection probe. */
+  private instancePos = new Float32Array(0);
+  private instanceCount = 0;
   private resourceMesh: THREE.InstancedMesh | null = null;
   private animalMesh: THREE.InstancedMesh | null = null;
+  /** Animal kind names by wire code, extended as the worker assigns them. */
+  private animalKinds: string[] = [];
   private readonly dummy = new THREE.Object3D();
   private readonly raycaster = new THREE.Raycaster();
   private readonly structureGroup = new THREE.Group();
@@ -92,6 +93,12 @@ export class World3D {
   private ro: ResizeObserver | null = null;
   private downX = 0;
   private downY = 0;
+  /** Alive in the sim but not drawn by this view. Expected to stay 0. */
+  private hiddenBeings = 0;
+  private hiddenWildlife = 0;
+  private readonly probe = new THREE.Vector3();
+  private readonly onPointerDown: (e: PointerEvent) => void;
+  private readonly onPointerUp: (e: PointerEvent) => void;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -133,11 +140,13 @@ export class World3D {
     this.selectionMarker.visible = false;
     this.scene.add(this.selectionMarker);
 
-    canvas.addEventListener('pointerdown', (e) => {
+    this.onPointerDown = (e: PointerEvent): void => {
       this.downX = e.clientX;
       this.downY = e.clientY;
-    });
-    canvas.addEventListener('pointerup', (e) => this.handleClick(e));
+    };
+    this.onPointerUp = (e: PointerEvent): void => this.handleClick(e);
+    canvas.addEventListener('pointerdown', this.onPointerDown);
+    canvas.addEventListener('pointerup', this.onPointerUp);
 
     this.resize();
     this.ro = new ResizeObserver(() => this.resize());
@@ -275,121 +284,200 @@ export class World3D {
     return mergeGeometries([body, nose]) ?? body;
   }
 
-  setPopulation(count: number): void {
+  /** Forget the previous world's beings and buildings (a new world was created). */
+  resetWorld(): void {
     if (this.agents) {
-      this.scene.remove(this.agents);
-      this.agents.geometry.dispose();
-      (this.agents.material as THREE.Material).dispose();
+      this.agents.count = 0;
+      this.agents.boundingSphere = null;
     }
-    const mesh = new THREE.InstancedMesh(World3D.agentGeometry(), new THREE.MeshStandardMaterial({ roughness: 0.6 }), Math.max(1, count));
+    if (this.animalMesh) this.animalMesh.count = 0;
+    this.instanceCount = 0;
+    this.hiddenBeings = 0;
+    this.hiddenWildlife = 0;
+    this.selectedId = null;
+    this.selectionMarker.visible = false;
+    for (const child of [...this.structureGroup.children]) {
+      this.structureGroup.remove(child);
+      disposeObject(child);
+    }
+    this.seenStructures.clear();
+  }
+
+  private ensureAgentCapacity(n: number): THREE.InstancedMesh {
+    const existing = this.agents;
+    if (existing && existing.instanceMatrix.count >= n) return existing;
+    if (existing) {
+      this.scene.remove(existing);
+      existing.geometry.dispose();
+      (existing.material as THREE.Material).dispose();
+    }
+    const mesh = new THREE.InstancedMesh(World3D.agentGeometry(), new THREE.MeshStandardMaterial({ roughness: 0.6 }), capacityFor(n));
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.count = 0;
     this.scene.add(mesh);
     this.agents = mesh;
-    this.lastPos.clear();
-    this.headings.clear();
-    // New world → forget old structures so they rebuild.
-    for (const child of [...this.structureGroup.children]) this.structureGroup.remove(child);
-    this.seenStructures.clear();
+    if (this.instanceIds.length < mesh.instanceMatrix.count) {
+      this.instanceIds = new Int32Array(mesh.instanceMatrix.count);
+      this.instancePos = new Float32Array(mesh.instanceMatrix.count * 3);
+    }
+    return mesh;
+  }
+
+  private ensureAnimalCapacity(n: number): THREE.InstancedMesh {
+    const existing = this.animalMesh;
+    if (existing && existing.instanceMatrix.count >= n) return existing;
+    if (existing) {
+      this.scene.remove(existing);
+      existing.geometry.dispose();
+      (existing.material as THREE.Material).dispose();
+    }
+    const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(4, 4, 7), new THREE.MeshStandardMaterial({ roughness: 0.8 }), capacityFor(n));
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.count = 0;
+    this.scene.add(mesh);
+    this.animalMesh = mesh;
+    return mesh;
   }
 
   /** Build the static resource-node markers (call once per world). */
-  setResources(list: { x: number; y: number; kind: string }[]): void {
+  setResources(res: ResourcePayload): void {
     if (this.resourceMesh) {
       this.scene.remove(this.resourceMesh);
       this.resourceMesh.geometry.dispose();
       (this.resourceMesh.material as THREE.Material).dispose();
       this.resourceMesh = null;
     }
-    const shown = list.filter((r) => RESOURCE_RGB[r.kind]);
-    if (shown.length === 0) return;
-    const mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(3.2, 0), new THREE.MeshStandardMaterial({ roughness: 0.7, flatShading: true }), shown.length);
+    const rgbByCode = res.kinds.map((k) => RESOURCE_RGB[k]);
+    let shown = 0;
+    for (let i = 0; i < res.count; i++) if (rgbByCode[res.kind[i]!]) shown++;
+    if (shown === 0) return;
+    const mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(3.2, 0), new THREE.MeshStandardMaterial({ roughness: 0.7, flatShading: true }), shown);
     const c = new THREE.Color();
-    shown.forEach((r, i) => {
-      const [cr, cg, cb] = RESOURCE_RGB[r.kind]!;
-      this.dummy.scale.set(1, 1, 1);
-      this.dummy.rotation.set(0, 0, 0);
-      this.dummy.position.set(r.x - HALF, heightAt(r.x, r.y) * HSCALE + 3, r.y - HALF);
+    this.dummy.scale.set(1, 1, 1);
+    this.dummy.rotation.set(0, 0, 0);
+    let at = 0;
+    for (let i = 0; i < res.count; i++) {
+      const rgb = rgbByCode[res.kind[i]!];
+      if (!rgb) continue;
+      const x = res.pos[i * 2]!;
+      const y = res.pos[i * 2 + 1]!;
+      this.dummy.position.set(x - HALF, heightAt(x, y) * HSCALE + 3, y - HALF);
       this.dummy.updateMatrix();
-      mesh.setMatrixAt(i, this.dummy.matrix);
-      mesh.setColorAt(i, c.setRGB(cr, cg, cb));
-    });
+      mesh.setMatrixAt(at, this.dummy.matrix);
+      mesh.setColorAt(at, c.setRGB(rgb[0], rgb[1], rgb[2]));
+      at++;
+    }
     mesh.instanceColor!.needsUpdate = true;
     this.scene.add(mesh);
     this.resourceMesh = mesh;
   }
 
-  /** (Re)create the animal instance mesh (a generous cap for the roaming herd). */
-  setAnimals(cap: number): void {
-    if (this.animalMesh) {
-      this.scene.remove(this.animalMesh);
-      this.animalMesh.geometry.dispose();
-      (this.animalMesh.material as THREE.Material).dispose();
-    }
-    const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(4, 4, 7), new THREE.MeshStandardMaterial({ roughness: 0.8 }), Math.max(1, cap));
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.count = 0;
-    this.scene.add(mesh);
-    this.animalMesh = mesh;
-  }
+  /**
+   * Draw one frame from the worker. The arrays are transferred and go straight
+   * back, so everything needed later (the ids behind a click) is copied here.
+   */
+  applyFrame(f: FrameMessage): void {
+    if (f.animalKinds.length) this.animalKinds = this.animalKinds.concat(f.animalKinds);
+    if (f.structures.length) this.addStructures(f.structures);
 
-  updateAnimals(list: { x: number; y: number; kind: string }[]): void {
-    const mesh = this.animalMesh;
-    if (!mesh) return;
-    const n = Math.min(list.length, mesh.instanceMatrix.count);
-    for (let i = 0; i < n; i++) {
-      const a = list[i]!;
-      const sz = ANIMAL_SIZE[a.kind] ?? 1;
-      this.dummy.scale.set(sz, sz, sz);
-      this.dummy.rotation.set(0, 0, 0);
-      this.dummy.position.set(a.x - HALF, heightAt(a.x, a.y) * HSCALE + 3 * sz, a.y - HALF);
+    const mesh = this.ensureAgentCapacity(f.beings);
+    this.dummy.scale.set(1, 1, 1);
+    for (let i = 0; i < f.beings; i++) {
+      const x = f.arrays.pos[i * 2]!;
+      const y = f.arrays.pos[i * 2 + 1]!;
+      const id = f.arrays.ids[i]!;
+      const surface = heightAt(x, y) * HSCALE;
+      this.dummy.rotation.set(0, f.arrays.heading[i]!, 0);
+      this.dummy.position.set(x - HALF, surface + 5, y - HALF);
       this.dummy.updateMatrix();
       mesh.setMatrixAt(i, this.dummy.matrix);
-      mesh.setColorAt(i, ANIMAL_RGB[a.kind] ?? ANIMAL_RGB['deer']!);
-    }
-    mesh.count = n;
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  }
-
-  update(agents: Agent3D[]): void {
-    const mesh = this.agents;
-    if (!mesh) return;
-    const n = Math.min(agents.length, mesh.instanceMatrix.count);
-    this.instanceIds.length = 0;
-    for (let i = 0; i < n; i++) {
-      const a = agents[i]!;
-      const surface = heightAt(a.x, a.y) * HSCALE;
-      // Face the direction of travel (scene x = world x, scene z = world y).
-      const last = this.lastPos.get(a.id);
-      let heading = this.headings.get(a.id) ?? 0;
-      if (last) {
-        const dx = a.x - last.x;
-        const dz = a.y - last.y;
-        if (dx * dx + dz * dz > 0.0004) heading = Math.atan2(dx, dz);
-      }
-      this.headings.set(a.id, heading);
-      this.lastPos.set(a.id, { x: a.x, y: a.y });
-      this.dummy.scale.set(1, 1, 1);
-      this.dummy.rotation.set(0, heading, 0);
-      this.dummy.position.set(a.x - HALF, surface + 5, a.y - HALF);
-      this.dummy.updateMatrix();
-      mesh.setMatrixAt(i, this.dummy.matrix);
-      mesh.setColorAt(i, STATE_RGB[a.state] ?? STATE_RGB[0]!);
-      this.instanceIds.push(a.id);
-      if (a.id === this.selectedId) {
-        this.selectionMarker.position.set(a.x - HALF, surface + 35, a.y - HALF);
+      mesh.setColorAt(i, STATE_RGB[f.arrays.state[i]!] ?? STATE_RGB[0]!);
+      this.instanceIds[i] = id;
+      this.instancePos[i * 3] = x - HALF;
+      this.instancePos[i * 3 + 1] = surface + 5;
+      this.instancePos[i * 3 + 2] = y - HALF;
+      if (id === this.selectedId) {
+        this.selectionMarker.position.set(x - HALF, surface + 35, y - HALF);
         this.selectionMarker.visible = true;
       }
     }
-    mesh.count = n;
+    this.instanceCount = f.beings;
+    mesh.count = f.beings;
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    if (this.selectedId === null || !this.instanceIds.includes(this.selectedId)) this.selectionMarker.visible = false;
+    // Every instance moved, so the cached sphere `InstancedMesh.raycast` culls
+    // against is stale — and three only ever computes it when it is null. Left
+    // alone it is whatever the first frame happened to contain (after a
+    // `resetWorld()`, an empty sphere of radius −1), and clicks stop hitting.
+    mesh.boundingSphere = null;
+    if (this.selectedId === null || !this.drawsId(this.selectedId)) this.selectionMarker.visible = false;
+    this.hiddenBeings = Math.max(0, f.beingsAlive - f.beings);
+    this.hiddenWildlife = Math.max(0, f.wildlifeTotal - f.wildlife);
+
+    const animals = this.ensureAnimalCapacity(f.wildlife);
+    this.dummy.rotation.set(0, 0, 0);
+    for (let i = 0; i < f.wildlife; i++) {
+      const code = f.arrays.wildKind[i]!;
+      const name = code === KIND_UNKNOWN ? undefined : this.animalKinds[code];
+      const sz = (name === undefined ? undefined : ANIMAL_SIZE[name]) ?? 1;
+      const rgb = (name === undefined ? undefined : ANIMAL_RGB[name]) ?? DEFAULT_ANIMAL_RGB;
+      const x = f.arrays.wildPos[i * 2]!;
+      const y = f.arrays.wildPos[i * 2 + 1]!;
+      this.dummy.scale.set(sz, sz, sz);
+      this.dummy.position.set(x - HALF, heightAt(x, y) * HSCALE + 3 * sz, y - HALF);
+      this.dummy.updateMatrix();
+      animals.setMatrixAt(i, this.dummy.matrix);
+      animals.setColorAt(i, rgb);
+    }
+    animals.count = f.wildlife;
+    animals.instanceMatrix.needsUpdate = true;
+    if (animals.instanceColor) animals.instanceColor.needsUpdate = true;
   }
 
-  /** Add meshes for any newly-built structures (they're static once built). */
-  updateStructures(list: Structure3D[]): void {
+  /** What this view failed to draw — 0/0 unless something is wrong. */
+  get notDrawn(): { beings: number; wildlife: number } {
+    return { beings: this.hiddenBeings, wildlife: this.hiddenWildlife };
+  }
+
+  /** The ids this view is currently drawing, in instance order. */
+  drawnIds(): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < this.instanceCount; i++) out.push(this.instanceIds[i]!);
+    return out;
+  }
+
+  /**
+   * Where a given being currently is on screen, in client coordinates, or null
+   * if it is not drawn or is behind the camera.
+   *
+   * A Gahallian is a couple of pixels at the default camera (audit 02, item 1),
+   * which makes clicking one by guesswork hopeless — a hostile reviewer missed
+   * on 384 tries. This is the deterministic way in: a driver asks where a known
+   * being is and clicks exactly there, so selection is something that can be
+   * proven rather than assumed.
+   */
+  screenPositionOf(id: number): { x: number; y: number } | null {
+    for (let i = 0; i < this.instanceCount; i++) {
+      if (this.instanceIds[i] !== id) continue;
+      this.probe.set(this.instancePos[i * 3]!, this.instancePos[i * 3 + 1]!, this.instancePos[i * 3 + 2]!);
+      this.probe.project(this.camera);
+      if (this.probe.z > 1) return null; // behind the camera
+      const rect = this.canvas.getBoundingClientRect();
+      return {
+        x: rect.left + ((this.probe.x + 1) / 2) * rect.width,
+        y: rect.top + ((1 - this.probe.y) / 2) * rect.height,
+      };
+    }
+    return null;
+  }
+
+  private drawsId(id: number): boolean {
+    for (let i = 0; i < this.instanceCount; i++) if (this.instanceIds[i] === id) return true;
+    return false;
+  }
+
+  /** Add meshes for newly-built structures (they're static once built). */
+  private addStructures(list: StructureUpdate[]): void {
     for (const s of list) {
       if (this.seenStructures.has(s.id)) continue;
       this.seenStructures.add(s.id);
@@ -397,7 +485,7 @@ export class World3D {
     }
   }
 
-  private makeStructure(s: Structure3D): THREE.Object3D {
+  private makeStructure(s: StructureUpdate): THREE.Object3D {
     const base = heightAt(s.x, s.y) * HSCALE;
     const g = new THREE.Group();
     if (s.kind === 'shelter') {
@@ -435,7 +523,7 @@ export class World3D {
     this.raycaster.setFromCamera(ndc, this.camera);
     const hits = this.raycaster.intersectObject(mesh);
     const inst = hits[0]?.instanceId;
-    if (inst !== undefined && inst < this.instanceIds.length) {
+    if (inst !== undefined && inst < this.instanceCount) {
       const id = this.instanceIds[inst]!;
       this.setSelected(id);
       this.onSelect?.(id);
@@ -451,16 +539,57 @@ export class World3D {
   }
 
   private resize(): void {
-    const w = this.canvas.clientWidth || 800;
-    const h = this.canvas.clientHeight || 600;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    if (w === 0 || h === 0) return; // hidden — keep the last good size
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
 
   dispose(): void {
+    this.canvas.removeEventListener('pointerdown', this.onPointerDown);
+    this.canvas.removeEventListener('pointerup', this.onPointerUp);
     this.ro?.disconnect();
+    this.ro = null;
     this.controls.dispose();
+    // Everything this view created hangs off the scene: terrain, water, wall,
+    // 6000 trees, rocks, resources, animals, beings, structures, the marker.
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    this.scene.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        geometries.add(obj.geometry);
+        if (Array.isArray(obj.material)) for (const m of obj.material) materials.add(m);
+        else materials.add(obj.material);
+      }
+    });
+    for (const g of geometries) g.dispose();
+    for (const m of materials) disposeMaterial(m);
+    this.scene.clear();
+    this.agents = null;
+    this.animalMesh = null;
+    this.resourceMesh = null;
+    this.instanceIds = new Int32Array(0);
+    this.instancePos = new Float32Array(0);
+    this.instanceCount = 0;
     this.renderer.dispose();
+    this.renderer.forceContextLoss();
   }
+}
+
+function disposeMaterial(m: THREE.Material): void {
+  for (const value of Object.values(m)) {
+    if (value && typeof value === 'object' && (value as { isTexture?: boolean }).isTexture) (value as THREE.Texture).dispose();
+  }
+  m.dispose();
+}
+
+function disposeObject(root: THREE.Object3D): void {
+  root.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    obj.geometry.dispose();
+    if (Array.isArray(obj.material)) for (const m of obj.material) disposeMaterial(m);
+    else disposeMaterial(obj.material);
+  });
 }
