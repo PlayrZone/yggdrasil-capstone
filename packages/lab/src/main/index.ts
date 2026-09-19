@@ -2,10 +2,11 @@ import { app, BrowserWindow, ipcMain, Menu, nativeImage, safeStorage, Tray } fro
 import path from 'node:path';
 import electronUpdaterPkg from 'electron-updater';
 import { FireworksMindBackend } from '@yggdrasil/engine';
-import type { IMindBackend, ThinkInput } from '@yggdrasil/engine';
+import type { IMindBackend } from '@yggdrasil/engine';
 import { listReports, readReport, recentActivity, tailActivity, writeReport, type ActivityTail } from '@yggdrasil/home';
 import { TRAY_ICON_DATA_URL } from './trayIcon.js';
-import { guardLlmComplete, llmRateLimiter } from './ipcGuards.js';
+import { llmRateLimiter } from './ipcGuards.js';
+import { llmComplete } from './llmBridge.js';
 import { effectiveKey, effectiveModel, keyAtRest, migrateKeyAtRest, saveKey, savedModel, SettingsError, setSecretStore, type KeyAtRest } from './settings.js';
 
 const { autoUpdater } = electronUpdaterPkg;
@@ -183,18 +184,11 @@ app.whenReady().then(() => {
   });
 
   // LLM consciousness bridge — the renderer's minds reason through here so the
-  // Fireworks key stays in main. The payload is renderer-controlled and the
-  // endpoint is billed, so it is validated and rate-limited before it costs
-  // anything. Throws a tagged error when no key is set.
-  ipcMain.handle('llm:complete', async (_e, input: unknown, retryError?: unknown) => {
-    const gate = guardLlmComplete(llmRate, input, retryError);
-    if (!gate.ok) throw new Error(gate.code === 'RATE_LIMITED' ? 'RATE_LIMITED' : `BAD_THINK_INPUT: ${gate.reason}`);
-    const backend = getBackend();
-    if (!backend) throw new Error('NO_LLM_KEY');
-    // Structurally checked above; the engine's prompt builder reads only the
-    // fields validateThinkInput bounds.
-    return backend.complete(input as ThinkInput, retryError as string | undefined);
-  });
+  // Fireworks key stays in main. Both halves cross: the prompt the engine
+  // composed (retry feedback already inside `prompt.user`) and the situation it
+  // was composed from. Both are renderer-controlled and the endpoint is billed,
+  // so llmBridge validates and rate-limits before anything costs money.
+  ipcMain.handle('llm:complete', (_e, prompt: unknown, input: unknown) => llmComplete(llmRate, getBackend, prompt, input));
   ipcMain.handle('llm:status', () => llmStatus());
   // Reports the rejection instead of throwing, so a mistyped key cannot leave
   // the renderer with an unhandled rejection.

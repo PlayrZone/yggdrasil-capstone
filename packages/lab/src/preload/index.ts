@@ -54,8 +54,11 @@ const api = {
     return () => handlers.forEach(({ ch, h }) => ipcRenderer.removeListener(ch, h));
   },
 
-  // LLM consciousness bridge (key stays in main).
-  llmComplete: (input: unknown, retryError?: string): Promise<string> => ipcRenderer.invoke('llm:complete', input, retryError),
+  // LLM consciousness bridge (key stays in main). The prompt is composed once,
+  // in the engine, with any retry feedback already appended to `prompt.user`;
+  // `input` rides along for backends that reason rather than transport. Neither
+  // side may rebuild one from the other.
+  llmComplete: (prompt: unknown, input: unknown): Promise<string> => ipcRenderer.invoke('llm:complete', prompt, input),
   llmStatus: (): Promise<LlmStatus> => ipcRenderer.invoke('llm:status'),
   setKey: (key: string, model?: string): Promise<LlmStatus & { error?: string }> => ipcRenderer.invoke('settings:setKey', key, model),
   getSettings: (): Promise<LlmStatus & { savedModel: string | null }> => ipcRenderer.invoke('settings:get'),

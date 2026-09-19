@@ -298,7 +298,7 @@ export class SimClient {
         break;
       }
       case 'llm-request':
-        this.forwardThink(message.reqId, message.input);
+        this.forwardThink(message.reqId, message.prompt, message.input);
         break;
       case 'ready':
         if (message.version !== PROTOCOL_VERSION) {
@@ -317,15 +317,15 @@ export class SimClient {
    * and schema-checked in main, where the key lives), and the raw text goes
    * back to the worker. Nothing about the key moves.
    *
-   * It forwards the ThinkInput, because that is what the preload bridge and
-   * main's validator still accept. The engine has since moved to sending the
-   * composed prompt instead, and the worker already puts it on this wire — but
-   * main is the only place that can start using it, so until it does, a
-   * conscious mind's retry feedback is composed on the far side as before.
+   * Both halves are forwarded untouched: the prompt the engine composed — retry
+   * feedback already appended to `prompt.user` — and the situation behind it.
+   * This thread is a wire, not a party to the conversation; it must never
+   * rebuild one half from the other, because a prompt rebuilt here would differ
+   * from the one the run record says was sent.
    */
-  private forwardThink(reqId: number, input: unknown): void {
+  private forwardThink(reqId: number, prompt: unknown, input: unknown): void {
     const lab = window.lab;
-    const call = lab ? lab.llmComplete(input) : Promise.reject(new Error('NO_BRIDGE'));
+    const call = lab ? lab.llmComplete(prompt, input) : Promise.reject(new Error('NO_BRIDGE'));
     void call.then(
       (text) => this.post({ kind: 'llm-result', reqId, text }),
       (error: unknown) => this.post({ kind: 'llm-result', reqId, error: error instanceof Error ? error.message : String(error) }),

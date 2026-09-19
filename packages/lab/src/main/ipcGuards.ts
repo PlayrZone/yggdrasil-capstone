@@ -1,9 +1,16 @@
 /**
- * Guards for the IPC surface. `llm:complete` is the sharp edge: it takes a
- * renderer-supplied object and forwards it to a paid endpoint with the API key
- * attached, so a compromised or buggy renderer could previously spend money at
- * whatever rate and payload size it liked. Everything here is pure so it can be
- * tested without Electron.
+ * Guards for the IPC surface. `llm:complete` is the sharp edge: it takes
+ * renderer-supplied objects and forwards them to a paid endpoint with the API
+ * key attached, so a compromised or buggy renderer could previously spend money
+ * at whatever rate and payload size it liked. Everything here is pure so it can
+ * be tested without Electron.
+ *
+ * The call carries two halves. The PROMPT is the one that gets billed — the
+ * engine composes it once, retry feedback already appended to `prompt.user`,
+ * and a transport backend sends those bytes and nothing else. The INPUT is the
+ * situation behind it, for backends that reason rather than transport; nothing
+ * downstream may rebuild a prompt from it. So both are bounded, but the prompt
+ * is bounded tightly and exactly, because it is the thing that costs money.
  */
 
 export type Check = { ok: true } | { ok: false; reason: string };
@@ -33,7 +40,18 @@ export const THINK_LIMITS = {
   social: 1024,
   tragedyPlaces: 64,
   string: 16384,
-  retryError: 4096,
+} as const;
+
+/**
+ * Bounds on the composed prompt, in UTF-8 BYTES — the unit a provider bills in.
+ * `system` is a fixed preamble and `user` is the situation plus, on a retry,
+ * the appended rejection reason; a real one runs a few kilobytes, so 64 KiB a
+ * field leaves room for an unusually storied mind and still refuses a payload
+ * built to run up a bill.
+ */
+export const PROMPT_LIMITS = {
+  field: 64 * 1024,
+  total: 128 * 1024,
 } as const;
 
 /**
@@ -165,17 +183,62 @@ export function estimateBytes(value: unknown, budget: number, maxDepth: number):
   return { bytes, over: bytes > budget, cyclic, exotic };
 }
 
+/** Structurally the engine's `ThinkPrompt`, restated so this file imports nothing. */
+export interface ThinkPromptShape {
+  system: string;
+  user: string;
+}
+
+export type PromptCheck = { ok: true; prompt: ThinkPromptShape } | { ok: false; reason: string };
+
+/**
+ * Validate the composed prompt — the billed half of the call.
+ *
+ * Unlike a ThinkInput, this has no forward-compatible shape to preserve: the
+ * engine's contract says a transport backend sends exactly `{system, user}`, so
+ * anything else is either a bug or an attempt to smuggle extra billable text
+ * past a field cap. Hence exact keys, not merely required ones.
+ *
+ * Returns a FRESH object on success, and that copy is what gets forwarded: it
+ * pins the two strings at the instant they were measured, so nothing clever on
+ * the caller's object — an accessor, a hidden property — can change what is
+ * sent after it was approved.
+ */
+export function validateThinkPrompt(prompt: unknown): PromptCheck {
+  if (!isPlainObject(prompt)) return { ok: false, reason: 'prompt must be a plain object' };
+  // Key-by-key with an own-check rather than Object.keys: an object carrying a
+  // million strangers is refused at the first one, without materialising a key
+  // array. It also catches a JSON-parsed `__proto__`, which is an own key here.
+  for (const k in prompt) {
+    if (!hasOwn.call(prompt, k)) continue;
+    if (k !== 'system' && k !== 'user') return { ok: false, reason: `unexpected key ${JSON.stringify(k.slice(0, 64))}` };
+  }
+  const fields: string[] = [];
+  let total = 0;
+  for (const k of ['system', 'user'] as const) {
+    if (!hasOwn.call(prompt, k)) return { ok: false, reason: `${k} is missing` };
+    const v = prompt[k];
+    if (typeof v !== 'string') return { ok: false, reason: `${k} must be a string` };
+    if (v.length === 0) return { ok: false, reason: `${k} must not be empty` };
+    // A UTF-8 encoding is never shorter than the string's UTF-16 length, so an
+    // over-long field is refused before it is measured.
+    if (v.length > PROMPT_LIMITS.field || Buffer.byteLength(v, 'utf8') > PROMPT_LIMITS.field) {
+      return { ok: false, reason: `${k} exceeds ${PROMPT_LIMITS.field} bytes` };
+    }
+    total += Buffer.byteLength(v, 'utf8');
+    fields.push(v);
+  }
+  if (total > PROMPT_LIMITS.total) return { ok: false, reason: `prompt exceeds ${PROMPT_LIMITS.total} bytes` };
+  return { ok: true, prompt: { system: fields[0]!, user: fields[1]! } };
+}
+
 /**
  * Validate what the renderer claims is a ThinkInput. Known fields are checked
  * by shape; unknown ones are tolerated (the engine's prompt builder only reads
  * known fields) but still counted against the size budget, so an unknown key
  * cannot be used to smuggle megabytes past the cap.
  */
-export function validateThinkInput(input: unknown, retryError?: unknown): Check {
-  if (retryError !== undefined) {
-    if (typeof retryError !== 'string') return fail('retryError must be a string');
-    if (retryError.length > THINK_LIMITS.retryError) return fail('retryError too long');
-  }
+export function validateThinkInput(input: unknown): Check {
   if (!isPlainObject(input)) return fail('input must be an object');
 
   const snapshot = input['snapshot'];
@@ -276,17 +339,28 @@ export function llmRateLimiter(): RateLimiter {
   return new RateLimiter(envInt('YGG_LLM_MAX_PER_WINDOW', 600, 1, 100_000), envInt('YGG_LLM_RATE_WINDOW_MS', 60_000, 1_000, 3_600_000));
 }
 
-export type LlmGate = { ok: true } | { ok: false; code: 'RATE_LIMITED' | 'BAD_THINK_INPUT'; reason: string };
+export type LlmGate =
+  | { ok: true; prompt: ThinkPromptShape }
+  | { ok: false; code: 'RATE_LIMITED' | 'BAD_THINK_PROMPT' | 'BAD_THINK_INPUT'; reason: string };
 
 /**
- * The whole `llm:complete` gate, in the order that matters: the token is taken
- * FIRST. Validation is bounded but not free, and a limiter placed after it
- * bounds only the paid call, leaving the validator itself as an unmetered
- * target — which is exactly how a flood of junk payloads used to reach it.
+ * The whole `llm:complete` gate, in the order that matters.
+ *
+ * The token is taken FIRST. Validation is bounded but not free, and a limiter
+ * placed after it bounds only the paid call, leaving the validator itself as an
+ * unmetered target — which is exactly how a flood of junk payloads used to
+ * reach it. A rejected call still costs a token, deliberately.
+ *
+ * Then the PROMPT, before the input: the prompt is what gets sent and billed,
+ * and the input is only along for the ride. A legacy caller passing the old
+ * `(input, retryError)` pair therefore fails here, cleanly — a ThinkInput is
+ * not `{system, user}` — instead of being forwarded as if it were a prompt.
  */
-export function guardLlmComplete(rate: RateLimiter, input: unknown, retryError: unknown, now?: number): LlmGate {
+export function guardLlmComplete(rate: RateLimiter, prompt: unknown, input: unknown, now?: number): LlmGate {
   if (!rate.tryTake(now)) return { ok: false, code: 'RATE_LIMITED', reason: 'rate limit exceeded' };
-  const check = validateThinkInput(input, retryError);
+  const promptCheck = validateThinkPrompt(prompt);
+  if (!promptCheck.ok) return { ok: false, code: 'BAD_THINK_PROMPT', reason: promptCheck.reason };
+  const check = validateThinkInput(input);
   if (!check.ok) return { ok: false, code: 'BAD_THINK_INPUT', reason: check.reason };
-  return { ok: true };
+  return { ok: true, prompt: promptCheck.prompt };
 }

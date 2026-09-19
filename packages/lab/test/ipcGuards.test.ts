@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { RateLimiter, THINK_LIMITS, estimateBytes, guardLlmComplete, llmRateLimiter, validateThinkInput } from '../src/main/ipcGuards.js';
+import {
+  PROMPT_LIMITS,
+  RateLimiter,
+  THINK_LIMITS,
+  estimateBytes,
+  guardLlmComplete,
+  llmRateLimiter,
+  validateThinkInput,
+  validateThinkPrompt,
+} from '../src/main/ipcGuards.js';
+
+/** What the engine actually composes: a system preamble and the situation. */
+function thinkPrompt(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { system: 'You are the mind of Gahallian #12.', user: 'You are hungry. What do you do?', ...over };
+}
 
 /** A minimal ThinkInput of the shape AgentMind.buildThinkInput really produces. */
 function thinkInput(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -27,10 +41,159 @@ function thinkInput(over: Record<string, unknown> = {}): Record<string, unknown>
   };
 }
 
+describe('validateThinkPrompt', () => {
+  it('accepts what the engine actually composes, and hands back a copy of it', () => {
+    const sent = thinkPrompt();
+    const r = validateThinkPrompt(sent);
+    expect(r).toEqual({ ok: true, prompt: sent });
+    // A copy, not the caller's object: what was measured is what gets billed.
+    expect(r.ok === true && r.prompt).not.toBe(sent);
+  });
+
+  it('accepts a null-prototype prompt — that is still genuinely plain', () => {
+    const bare = Object.assign(Object.create(null) as Record<string, unknown>, thinkPrompt());
+    expect(validateThinkPrompt(bare).ok).toBe(true);
+  });
+
+  it.each([
+    ['not an object', 'a string'],
+    ['null', null],
+    ['undefined', undefined],
+    ['an array', ['system', 'user']],
+    ['a missing user', { system: 'you are' }],
+    ['a missing system', { user: 'what now?' }],
+    ['an empty object', {}],
+    ['an extra key', thinkPrompt({ junk: 'pay for this too' })],
+    ['a numeric system', thinkPrompt({ system: 42 })],
+    ['a null user', thinkPrompt({ user: null })],
+    ['an undefined user', thinkPrompt({ user: undefined })],
+    ['an empty system', thinkPrompt({ system: '' })],
+    ['an empty user', thinkPrompt({ user: '' })],
+  ])('rejects %s', (_name, prompt) => {
+    expect(validateThinkPrompt(prompt).ok).toBe(false);
+  });
+
+  it('rejects every non-plain object structured clone can carry', () => {
+    for (const exotic of [
+      new Map([
+        ['system', 'a'],
+        ['user', 'b'],
+      ]),
+      new Set(['system']),
+      new Date(),
+      new Uint8Array(8),
+      new ArrayBuffer(8),
+      /re/g,
+      new Error('boom'),
+      Object.assign(
+        new (class Prompt {
+          declare system: string;
+          declare user: string;
+        })(),
+        thinkPrompt(),
+      ),
+    ]) {
+      expect(validateThinkPrompt(exotic).ok, String(exotic)).toBe(false);
+    }
+  });
+
+  it('rejects prototype tricks', () => {
+    // An object whose prototype is someone else's is not a plain object, even
+    // when it answers `system` and `user` correctly.
+    const planted = Object.assign(Object.create({ evil: true }) as Record<string, unknown>, thinkPrompt());
+    expect(validateThinkPrompt(planted).ok).toBe(false);
+    // JSON.parse makes `__proto__` an OWN enumerable key, so it shows up as a
+    // stranger rather than silently redefining the prototype.
+    const parsed: unknown = JSON.parse('{"__proto__":{"evil":true},"system":"you are","user":"what now?"}');
+    expect(validateThinkPrompt(parsed).ok).toBe(false);
+    // Inherited system/user do not count as present.
+    expect(validateThinkPrompt(Object.create(thinkPrompt()) as unknown).ok).toBe(false);
+  });
+
+  it('measures the fields in UTF-8 bytes, not UTF-16 units', () => {
+    // Exactly at the cap in ASCII is fine.
+    expect(validateThinkPrompt(thinkPrompt({ user: 'x'.repeat(PROMPT_LIMITS.field) })).ok).toBe(true);
+    expect(validateThinkPrompt(thinkPrompt({ user: 'x'.repeat(PROMPT_LIMITS.field + 1) })).ok).toBe(false);
+    // 4 bytes per astral char but 2 UTF-16 units: counting units would have let
+    // 80 KiB of billable text through a 64 KiB cap.
+    const astral = '🌍'.repeat(PROMPT_LIMITS.field / 4 + 1);
+    expect(astral.length).toBeLessThan(PROMPT_LIMITS.field);
+    const r = validateThinkPrompt(thinkPrompt({ user: astral }));
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.reason).toMatch(/bytes/);
+    // Two bytes per 'é', one UTF-16 unit — the same trick, just below astral.
+    expect(validateThinkPrompt(thinkPrompt({ system: 'é'.repeat(PROMPT_LIMITS.field / 2 + 1) })).ok).toBe(false);
+  });
+
+  it('holds a total budget that the per-field caps already imply', () => {
+    // 2 × field === total, so two maximal fields sit exactly ON the ceiling and
+    // pass. The total only ever bites if a field cap is later raised.
+    expect(PROMPT_LIMITS.field * 2).toBe(PROMPT_LIMITS.total);
+    const maxed = { system: 'x'.repeat(PROMPT_LIMITS.field), user: 'y'.repeat(PROMPT_LIMITS.field) };
+    expect(validateThinkPrompt(maxed).ok).toBe(true);
+  });
+
+  /**
+   * The hazard the input validator was hardened against — a value whose mere
+   * inspection allocates per element — must not reappear on the prompt slot.
+   * A 64e6-element view used to kill main outright; here it is a prototype
+   * check away from rejection.
+   */
+  it('rejects a huge TypedArray in the prompt slot in O(1)', () => {
+    for (const n of [1e6, 64e6]) {
+      const t0 = process.hrtime.bigint();
+      expect(validateThinkPrompt(new Uint8Array(n)).ok, `n=${n}`).toBe(false);
+      expect(Number(process.hrtime.bigint() - t0) / 1e6, `n=${n}`).toBeLessThan(50);
+    }
+  });
+
+  it('refuses an object of a million strangers at the price of one enumeration', () => {
+    const wide: Record<string, unknown> = thinkPrompt();
+    for (let i = 0; i < 1_000_000; i++) wide[`k${i}`] = 'x';
+    // V8 materialises the key list for `for…in` whatever is done with the keys,
+    // so exactness cannot be checked for less than a single pass. What must not
+    // happen is per-key work ON TOP of that pass — so the validator is measured
+    // against a `for…in` that does nothing at all.
+    let t = process.hrtime.bigint();
+    for (const k in wide) {
+      void k;
+      break;
+    }
+    const baseline = Number(process.hrtime.bigint() - t) / 1e6;
+    t = process.hrtime.bigint();
+    expect(validateThinkPrompt(wide).ok).toBe(false);
+    const measured = Number(process.hrtime.bigint() - t) / 1e6;
+    expect(measured, `${measured}ms vs a ${baseline}ms bare enumeration`).toBeLessThan(baseline * 1.5 + 25);
+  });
+
+  it('bounds the stranger key it names, so a reason cannot itself be a payload', () => {
+    const r = validateThinkPrompt(thinkPrompt({ ['k'.repeat(100_000)]: 1 }));
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.reason.length).toBeLessThan(200);
+  });
+
+  it('cannot be changed after it is approved', () => {
+    // An accessor is flattened by structured clone in the real world, but the
+    // copy makes the guarantee unconditional: what was measured is what ships.
+    let reads = 0;
+    const sneaky = {
+      system: 'you are',
+      get user(): string {
+        return reads++ === 0 ? 'a short question' : 'x'.repeat(1_000_000);
+      },
+    };
+    const r = validateThinkPrompt(sneaky);
+    expect(r.ok === true && r.prompt.user).toBe('a short question');
+  });
+
+  it('rejects a ThinkInput handed in where a prompt belongs', () => {
+    expect(validateThinkPrompt(thinkInput()).ok).toBe(false);
+  });
+});
+
 describe('validateThinkInput', () => {
   it('accepts what the engine actually sends', () => {
     expect(validateThinkInput(thinkInput())).toEqual({ ok: true });
-    expect(validateThinkInput(thinkInput(), 'previous reply was not JSON')).toEqual({ ok: true });
     expect(
       validateThinkInput(
         thinkInput({
@@ -61,11 +224,6 @@ describe('validateThinkInput', () => {
     ['a relationships object instead of a Map', thinkInput({ relationships: { 7: {} } })],
   ])('rejects %s', (_name, input) => {
     expect(validateThinkInput(input).ok).toBe(false);
-  });
-
-  it('rejects a bad retryError before looking at anything else', () => {
-    expect(validateThinkInput(thinkInput(), 42).ok).toBe(false);
-    expect(validateThinkInput(thinkInput(), 'x'.repeat(THINK_LIMITS.retryError + 1)).ok).toBe(false);
   });
 
   it('caps every renderer-controlled array', () => {
@@ -221,14 +379,33 @@ describe('RateLimiter', () => {
   it('meters the validator too: a rejected payload still costs a token', () => {
     // With the limiter behind validation, junk payloads were unmetered and the
     // validator itself was the unprotected target.
-    const rl = new RateLimiter(2, 60_000);
-    expect(guardLlmComplete(rl, 'not an object', undefined, 0)).toMatchObject({ code: 'BAD_THINK_INPUT' });
-    expect(guardLlmComplete(rl, { snapshot: null }, undefined, 1)).toMatchObject({ code: 'BAD_THINK_INPUT' });
-    expect(guardLlmComplete(rl, thinkInput(), undefined, 2)).toMatchObject({ code: 'RATE_LIMITED' });
+    const rl = new RateLimiter(3, 60_000);
+    expect(guardLlmComplete(rl, 'not a prompt', thinkInput(), 0)).toMatchObject({ code: 'BAD_THINK_PROMPT' });
+    expect(guardLlmComplete(rl, thinkPrompt(), 'not an object', 1)).toMatchObject({ code: 'BAD_THINK_INPUT' });
+    expect(guardLlmComplete(rl, thinkPrompt(), { snapshot: null }, 2)).toMatchObject({ code: 'BAD_THINK_INPUT' });
+    expect(guardLlmComplete(rl, thinkPrompt(), thinkInput(), 3)).toMatchObject({ code: 'RATE_LIMITED' });
   });
 
-  it('passes a valid payload through the gate', () => {
-    expect(guardLlmComplete(new RateLimiter(5, 60_000), thinkInput(), undefined, 0)).toEqual({ ok: true });
+  it('passes a valid prompt and input through the gate', () => {
+    const gate = guardLlmComplete(new RateLimiter(5, 60_000), thinkPrompt(), thinkInput(), 0);
+    expect(gate).toEqual({ ok: true, prompt: thinkPrompt() });
+  });
+
+  it('checks the prompt before the input — the prompt is what is billed', () => {
+    const gate = guardLlmComplete(new RateLimiter(5, 60_000), 'not a prompt', 'not an input', 0);
+    expect(gate).toMatchObject({ code: 'BAD_THINK_PROMPT' });
+  });
+
+  /**
+   * The engine composes the prompt once now; `retryError` is gone and its
+   * feedback rides inside `prompt.user`. A caller still on the old shape puts a
+   * ThinkInput in the prompt slot, and that must die at the gate rather than be
+   * forwarded to a paid endpoint as if it were messages.
+   */
+  it('rejects the legacy (input, retryError) call shape', () => {
+    const rl = new RateLimiter(5, 60_000);
+    expect(guardLlmComplete(rl, thinkInput(), 'previous reply was not JSON', 0)).toMatchObject({ code: 'BAD_THINK_PROMPT' });
+    expect(guardLlmComplete(rl, thinkInput(), undefined, 1)).toMatchObject({ code: 'BAD_THINK_PROMPT' });
   });
 
   it('builds a generous default limiter that env can override', () => {
