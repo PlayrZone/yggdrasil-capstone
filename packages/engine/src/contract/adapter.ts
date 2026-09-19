@@ -220,6 +220,21 @@ export interface WorldAdapter {
    *  the order a closed-vocabulary refusal lists them in. */
   readonly kinds: readonly KindSchema[];
   readonly kindById: ReadonlyMap<KindId, KindSchema>;
+  /**
+   * THIS WORLD ANSWERS FOR AN ARGUMENT AT ITS EDGE (W1-B3 verifier, the fail).
+   *
+   * Absent — the default, and the forager continent's — a plan step is held at
+   * the mind→body edge only to the ACTS this world declares. An argument the act
+   * does not take rides through to the body, which either acts without it or
+   * refuses the act as physics; and a physical refusal is an event the being
+   * REMEMBERS. Refusing such a step one step earlier deletes that memory, which
+   * is a change to what the being learns dressed up as validation.
+   *
+   * `true` makes the edge refuse it instead, for a world whose body has no
+   * answer of its own — the toy world, where an aimless take can be refused
+   * nowhere else. A world says which of the two it is; the edge does not decide.
+   */
+  readonly strictArgs?: boolean;
   readonly time: TimeOps;
   readonly cognitionDefaults: CognitionDefaults;
   /** The world's own survival instinct, until W1-D. Absent is legal. */

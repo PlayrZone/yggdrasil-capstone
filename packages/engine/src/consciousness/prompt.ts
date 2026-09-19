@@ -1,4 +1,4 @@
-import { actionVocabulary } from '../contract/actions.js';
+import { actionVocabulary, argumentShapes } from '../contract/actions.js';
 import type { WorldAdapter } from '../contract/adapter.js';
 import type { DriveLevels } from '../contract/ids.js';
 import type { KnowledgeRecord, ThinkInput } from '../contract/types.js';
@@ -36,17 +36,20 @@ export function retryPrompt(base: ThinkPrompt, retryError: string | undefined): 
 
 /**
  * `world` says what can be DONE here: the verb list below is the adapter's own
- * `actions`, in its own order, so a second world offers its own verbs and this
- * file holds none (W1-B3). What remains of this world in here is PROSE — the
- * needs paragraph, the argument shapes, "it is night" — and that is B5's, which
- * renders it from the lexicon. Both steps are byte-for-byte: `record.test.ts`
- * replays stored inputs through this function and compares the bytes.
+ * `actions` in its own order, and the argument paragraph under it is those
+ * acts' own `params` — so a second world offers its own verbs with its own
+ * shapes, and this file holds neither (W1-B3, and its verifier's backlog 2).
+ * What remains of this world in here is PROSE — the needs paragraph, "it is
+ * night" — and that is B5's, which renders it from the lexicon. Every step is
+ * byte-for-byte: `record.test.ts` replays stored inputs through this function
+ * and compares the bytes.
  */
 export function buildThinkPrompt(input: ThinkInput, world: WorldAdapter): ThinkPrompt {
   const { snapshot, knowledge, recalledMemories, worldView, goals, trigger } = input;
   const t = snapshot.traits;
   const needs = snapshot.needs;
   const intentVocab = actionVocabulary(world);
+  const argShapes = argumentShapes(world);
   // The header quotes one pair of thresholds for all four drives, which is what
   // this world's four share. B5 renders the paragraph per drive from the
   // lexicon; until then the first drive's numbers are the ones it always was.
@@ -79,10 +82,12 @@ export function buildThinkPrompt(input: ThinkInput, world: WorldAdapter): ThinkP
     `"thought" is a short first-person sentence: what you are thinking and WHY you choose this —`,
     `including what you make of any story or person that matters to you now. Speak as yourself.`,
     `INTENT kind is one of: ${intentVocab}.`,
-    `Intent args: MoveTo{x,y|targetId}, Gather{targetId}, Eat{objectKind}, Build{buildKind,x,y},`,
-    `Dig{} (dig the ground where you stand), Give{targetId,objectKind}, Deposit{objectKind,targetId?}, Sleep{durationTicks}, Idle{durationTicks},`,
-    `Craft{} (try combining the raw materials you carry — whether anything useful results, and what, is for you to DISCOVER through trying),`,
-    `Flee{x,y}, Follow{targetId}, Speak{} (put speech in utterances).`,
+    // The shapes are the world's, like the verbs above them: what each act
+    // takes is `ActionBinding.params`, and the prose a param list cannot hold —
+    // which acts are described, in what order, where the lines break — is
+    // declared beside them (W1-B3 verifier, backlog 2). A world that describes
+    // none says nothing here rather than being handed another world's.
+    ...(argShapes.length === 0 ? [] : [`Intent args: ${argShapes[0]!}`, ...argShapes.slice(1)]),
     `To ASK someone something — to seek what they know — use a "request" utterance addressed to them.`,
     `To TEACH, use "share-knowledge" with "ruleRef" set to the [number] of one thing from WHAT YOU KNOW;`,
     `to RETELL a tale, use "share-episode" with "narrativeRef" set to the (ref …) of one story you carry.`,

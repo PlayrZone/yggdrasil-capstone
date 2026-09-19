@@ -1,5 +1,6 @@
 import { CRAFT_RECIPES } from '../body/index.js';
 import { emptyContext, heardEvent } from '../contract/adapter.js';
+import type { WorldGate } from '../contract/gate.js';
 import type { SimEvent } from '../contract/types.js';
 import type { Needs, ObjectKind } from '../worlds/forager/types.js';
 import type { SimRuntime } from './Runtime.js';
@@ -24,14 +25,21 @@ function clampNeed(v: number): number {
  * Clamped to 0, in place, and only where the value is unusable: a deed nobody
  * can measure the effect of moved nothing. Key order is untouched, so a
  * well-formed authored event is byte-identical through here.
+ *
+ * COUNTED, because a rewrite nobody is told about is indistinguishable from a
+ * driver that wrote what came out (W1-B3 verifier, backlog 5). It goes on the
+ * run's own gate, beside every other thing the edge had to refuse or repair.
  */
-function clampAuthoredDeltas(payload: Record<string, unknown>): void {
+function clampAuthoredDeltas(payload: Record<string, unknown>, gate: WorldGate): void {
   for (const slot of ['needDeltas', 'targetNeedDeltas']) {
     const deltas = payload[slot];
     if (typeof deltas !== 'object' || deltas === null) continue;
     const row = deltas as Record<string, unknown>;
     for (const [drive, value] of Object.entries(row)) {
-      if (typeof value !== 'number' || !Number.isFinite(value)) row[drive] = 0;
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        row[drive] = 0;
+        gate.noteAuthoredClamp();
+      }
     }
   }
 }
@@ -129,7 +137,7 @@ export class Interventions {
    */
   authorEvent(event: SimEvent): number {
     const rt = this.rt;
-    clampAuthoredDeltas(event.payload);
+    clampAuthoredDeltas(event.payload, rt.gate);
     const witnesses = rt.perception.witnessesOf(rt.world, event);
     rt.scaffold.authoredEvent(event, witnesses);
     rt.bus.emit(event);

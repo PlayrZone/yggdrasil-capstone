@@ -43,11 +43,18 @@ export function makeToyWorld(id: string, salience: number): WorldAdapter {
       // Eating: the only thing the one context feature can be mined against.
       { id: 'AteFood', salience: salience / 4 },
     ],
+    // THIS WORLD HAS NO BODY TO ANSWER FOR AN ARGUMENT, so its own edge does:
+    // an aimless `Snaffle`, a `Nibble` at the lever, a nap longer than it can
+    // sit through, and an argument an act does not take at all are all refused
+    // at the mind→body edge and counted as `badParam`. The forager continent
+    // declares the opposite and means it — there the body refuses, and its
+    // refusal is a memory. Keeping one world of each is what keeps both paths
+    // through `WorldGate.admitIntent` under test.
+    strictArgs: true,
     // FOUR VERBS, FOUR CORE VERBS, AND NOT ONE OF THEM IS A FORAGER VERB
     // (W1-B3). A mind parsed against this world must accept `Snaffle` and
     // refuse `Gather`; a prompt built for it must offer these and not those.
-    // `Snaffle` is the only REQUIRED param anywhere in the repo — this world
-    // has no body to refuse an aimless take, so its own edge does.
+    // `Snaffle` is the only REQUIRED param anywhere in the repo.
     actions: [
       { id: 'Shuffle', core: 'Move', params: [{ id: 'x', type: 'number' }, { id: 'y', type: 'number' }] },
       { id: 'Snaffle', core: 'Take', params: [{ id: 'targetId', type: 'ref', required: true }] },

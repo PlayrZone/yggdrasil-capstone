@@ -21,6 +21,7 @@ import type { CognitionRecorder } from '../record/CognitionRecorder.js';
 import { ScaffoldLedger } from '../record/ScaffoldLedger.js';
 import { actionForCore } from '../contract/actions.js';
 import { traitCurveValue } from '../contract/adapter.js';
+import { WorldGate } from '../contract/gate.js';
 import type { CognitionDefaults, WorldAdapter } from '../contract/adapter.js';
 import type { Intent, MindOutput, SimEvent, Traits } from '../contract/types.js';
 import { generationOf } from './kinship.js';
@@ -89,6 +90,13 @@ export class SimRuntime implements RuntimeView, SocietyHost {
   /** Every sanctioned intervention a driver makes, written down. Always on:
    *  it is bookkeeping beside the sim, never inside it. */
   readonly scaffold = new ScaffoldLedger();
+  /**
+   * THE HOST'S OWN EDGE. Each mind has a gate for what IT is handed; this one
+   * counts what a host hands the WORLD from outside — today, the need-changes
+   * an authored event carried that no being could feel. It is per run rather
+   * than per being because an authored deed is nobody's.
+   */
+  readonly gate = new WorldGate();
   readonly cognitionLog: CognitionLog | null;
   readonly backendLabel: string;
 
@@ -304,11 +312,13 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     ];
     // THE OUTBOUND EDGE, named in one place (W1-B3). A plan leaves a mind
     // carrying opaque ids; the body executes this world's own narrow kinds. The
-    // adapter is what says the two agree, so every step is held to it here —
-    // an action this world does not declare, an argument it cannot take, a kind
-    // it has never heard of — and a step that fails is dropped and counted on
-    // the being's own gate. The rest of the plan is handed over exactly as
-    // before, and the body still validates each step against physics.
+    // adapter is what says the two agree, so every step is held to it here — an
+    // act this world does not declare is dropped and counted on the being's own
+    // gate. An ARGUMENT the act does not declare is a question for the world
+    // (`strictArgs`): this one's body answers for it, so the step goes through
+    // untouched and its refusal is an event the being remembers. The rest of
+    // the plan is handed over exactly as before, and the body still validates
+    // every step against physics.
     const gate = this.minds.get(agentId)?.gate;
     const plan = gate ? composed.filter((intent) => gate.admitIntent(this.adapter, intent)) : composed;
     this.body.setPlan(body, plan as BodyIntent[]);

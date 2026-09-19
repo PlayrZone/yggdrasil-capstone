@@ -108,8 +108,8 @@ interface ParamBase {
    * The act cannot mean anything without it. DECLARED, NOT ENFORCED at the
    * mind→body edge in a world whose body answers for itself: refusing an
    * argument-less act here would delete the body's own refusal, and that
-   * refusal is an event beings remember. A world with no such answer marks its
-   * params required and `checkIntent` refuses them.
+   * refusal is an event beings remember. A world with no such answer sets
+   * `strictArgs` and marks its params required, and the edge refuses them.
    */
   readonly required?: boolean;
 }
@@ -151,15 +151,81 @@ export interface SpeechParam extends ParamBase {
 
 export type ParamSchema = NumberParam | RefParam | KindParam | EnumParam | SpeechParam;
 
+/**
+ * HOW AN ACT IS WRITTEN IN THE PROMPT'S ARGUMENT PARAGRAPH (W1-B3 verifier,
+ * backlog 2). The paragraph used to be four lines of one world's argument
+ * shapes typed out inside the mind, so a second world was shown the forager
+ * continent's — the same leak B3 closed for the VERB list and left open for the
+ * shapes it had just declared.
+ *
+ * The shapes themselves come from `params`; what cannot be derived is declared
+ * here, because every part of it is a statement about this world's prose:
+ * WHICH acts the paragraph bothers to describe, in what ORDER, and where it
+ * breaks its lines. Absent means the paragraph does not mention this act at
+ * all — which is today's text, not an omission to be tidied up: three of the
+ * forager world's sixteen acts are missing from it, and B5 (the lexicon) is
+ * where that is decided, not here.
+ */
+export interface PromptArgs {
+  /** Where this act falls in the paragraph. */
+  readonly at: number;
+  /** The text between the braces, when the declared params do not say it —
+   *  `x,y|targetId` is "one or the other", which a param list cannot be. */
+  readonly shape?: string;
+  /** What follows the braces, in parentheses. */
+  readonly gloss?: string;
+  /** The paragraph breaks its line after this act. */
+  readonly endsLine?: boolean;
+}
+
 export interface ActionBinding {
   readonly id: ActionId;
   readonly core: CoreVerb;
   readonly params: readonly ParamSchema[];
+  /** How a prompt writes this act's arguments. Absent = it does not. */
+  readonly promptArgs?: PromptArgs;
 }
 
 /** The world's verbs as a prompt lists them, in declared order. */
 export function actionVocabulary(world: WorldAdapter): string {
   return world.actions.map((action) => action.id).join(', ');
+}
+
+/**
+ * THE ARGUMENT-SHAPE PARAGRAPH, as lines, from what the world declared. Empty
+ * in a world that describes no act's arguments — a prompt then says nothing
+ * about them rather than quoting another world's.
+ *
+ * A speech param is never written: the engine composes an utterance out of what
+ * a mind said, so a model cannot put one in a plan and telling it otherwise
+ * would be a lie about the contract.
+ */
+export function argumentShapes(world: WorldAdapter): string[] {
+  const written: { readonly at: number; readonly text: string; readonly breaks: boolean }[] = [];
+  for (const action of world.actions) {
+    const how = action.promptArgs;
+    if (how === undefined) continue;
+    const shape = how.shape ?? action.params.filter((p) => p.type !== 'speech').map((p) => p.id).join(',');
+    written.push({
+      at: how.at,
+      text: `${action.id}{${shape}}${how.gloss === undefined ? '' : ` ${how.gloss}`}`,
+      breaks: how.endsLine === true,
+    });
+  }
+  if (written.length === 0) return [];
+  written.sort((a, b) => a.at - b.at);
+  const lines: string[] = [];
+  let line = '';
+  for (let i = 0; i < written.length; i++) {
+    const entry = written[i]!;
+    line += entry.text;
+    if (i === written.length - 1) lines.push(`${line}.`);
+    else if (entry.breaks) {
+      lines.push(`${line},`);
+      line = '';
+    } else line += ', ';
+  }
+  return lines;
 }
 
 /** The first action this world binds to a core verb, or undefined. */
@@ -209,15 +275,21 @@ export function planArguments(world: WorldAdapter): ParamSchema[] {
 export type IntentRefusal = 'undeclared-action' | 'bad-param';
 
 /**
- * THE MIND→BODY EDGE, asked of one intent. An action the world never declared,
- * an argument the action does not take, a kind it has never heard of, a number
- * it cannot act on: each is refused, because past this point the body would
- * either execute something the world does not contain or silently ignore the
- * part of the decision it could not read.
+ * CAN THIS WORLD MEAN THIS INTENT? An action it never declared, an argument
+ * that action does not take, a kind it has never heard of, a number it cannot
+ * act on: each is something the world's own tables say is not an act of this
+ * world.
+ *
+ * IT IS A QUESTION, NOT A VERDICT. What is done about an answer belongs to the
+ * edge (`WorldGate.admitIntent`), and the two parts differ: an undeclared
+ * ACTION is refused everywhere, because nothing downstream could execute it,
+ * while an undeclared ARGUMENT is refused only in a world that asked for it
+ * (`WorldAdapter.strictArgs`). In a world whose body answers for itself the
+ * argument rides through, and the body's own refusal is an event a being
+ * remembers — see `strictArgs` for why deleting that is not validation.
  *
  * It asks only about what the WORLD says. Whether the act is possible HERE AND
- * NOW — in range, in stock, affordable — stays the body's, and its refusal is
- * an event a being remembers.
+ * NOW — in range, in stock, affordable — stays the body's.
  */
 export function checkIntent(world: WorldAdapter, intent: Intent): IntentRefusal | null {
   const action = world.actionById.get(intent.kind);

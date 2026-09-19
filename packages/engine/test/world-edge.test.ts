@@ -121,6 +121,8 @@ describe('an event the world does not declare forms no memory', () => {
       undeclaredTestimony: 0,
       undeclaredAction: 0,
       badParam: 0,
+      deferredParam: 0,
+      authoredClamp: 0,
     });
   });
 });

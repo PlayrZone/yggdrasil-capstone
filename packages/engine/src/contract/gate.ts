@@ -20,10 +20,12 @@ import type { Intent, KnowledgeRule, MemoryRecord } from './types.js';
  * them — they are an instrument, like `ProvenanceLevel` — so a refusal cannot
  * steer anything.
  *
- * In the forager continent every count stays at 0: the adapter declares all 29
- * of that world's events (pinned in `test/world-tables-transcribed.test.ts`),
+ * In the forager continent every REFUSAL count stays at 0: the adapter declares
+ * all 29 of that world's events (pinned in `test/world-tables-transcribed.test.ts`),
  * its four drives are the four the body has, and every mined rule is built out
- * of ids that came from the adapter in the first place.
+ * of ids that came from the adapter in the first place. `deferredParam` is the
+ * exception and is not a refusal: it counts what a MODEL offered that this
+ * world's acts do not declare, and the body still answers for every one.
  */
 export interface WorldGateCounts {
   /** SimEvents whose type this world does not declare. No memory was formed. */
@@ -36,8 +38,23 @@ export interface WorldGateCounts {
   readonly undeclaredTestimony: number;
   /** Intents naming an action this world does not declare. Not handed to the body. */
   readonly undeclaredAction: number;
-  /** Intents carrying an argument the action cannot take, or a value it cannot mean. */
+  /**
+   * Intents carrying an argument the action cannot take, or a value it cannot
+   * mean, REFUSED — which happens only in a world that set `strictArgs`.
+   */
   readonly badParam: number;
+  /**
+   * The same thing HANDED OVER, in a world that did not. The body answers for
+   * it there, so this counts a tolerance rather than a fault: non-zero says a
+   * mind is offering arguments its world's acts do not declare (the commonest
+   * thing a model gets wrong), and zero is what a reflex run reads.
+   */
+  readonly deferredParam: number;
+  /**
+   * Slots in a HOST-AUTHORED event's payload holding a need-change no being
+   * could feel, rewritten to 0 on their way in (W1-B3 verifier, backlog 5).
+   */
+  readonly authoredClamp: number;
 }
 
 /**
@@ -52,6 +69,8 @@ export class WorldGate {
   private undeclaredTestimony = 0;
   private undeclaredAction = 0;
   private badParam = 0;
+  private deferredParam = 0;
+  private authoredClamp = 0;
 
   get counts(): WorldGateCounts {
     return {
@@ -61,28 +80,58 @@ export class WorldGate {
       undeclaredTestimony: this.undeclaredTestimony,
       undeclaredAction: this.undeclaredAction,
       badParam: this.badParam,
+      deferredParam: this.deferredParam,
+      authoredClamp: this.authoredClamp,
     };
   }
 
   /**
    * THE OUTBOUND EDGE (W1-B3): one step of a plan, on its way from a mind to
-   * the body. Until now a plan crossed on a single narrowing cast — the mind
-   * held opaque ids and the body executed this world's own narrow kinds, and
-   * nothing asked whether the two agreed. An intent this world cannot mean is
-   * refused HERE: past this point the body would either act on something the
-   * world does not contain or silently drop the part of the decision it could
-   * not read, which is the class of bug `bad-arg` exists to stop in the parser.
+   * the body. A plan crosses carrying opaque ids and the body executes this
+   * world's own narrow kinds, so something has to say the two agree.
    *
-   * The rest of the plan is unaffected — a being that asks for one impossible
-   * thing still does the others. Zero on every count in the forager world: its
-   * reflex policy and its parser both speak the adapter's own vocabulary.
+   * WHAT IS REFUSED HERE IS AN UNDECLARED ACTION, and only that. Nothing
+   * downstream could execute one — the body's dispatch has no arm for it — so
+   * refusing it changes nothing that could otherwise have happened, and it is
+   * unreachable from this world's parser (which checks `kind` against the same
+   * table) and from its reflex policy (which emits the acts it was given).
+   *
+   * AN UNDECLARED ARGUMENT IS NOT REFUSED unless the world asked for that
+   * (`WorldAdapter.strictArgs`). This is the W1-B3 verifier's one FAIL: in a
+   * world whose body answers for itself, `Eat{targetId}` reached the body and
+   * came back as five remembered `IntentRejected`s, and dropping it here
+   * deleted them — the being was left never having tried. What a step CAN be
+   * refused for at the edge is therefore a property of the world, not a habit
+   * of this class, and both ways through are counted.
+   *
+   * The rest of the plan is unaffected either way — a being that asks for one
+   * impossible thing still does the others.
    */
   admitIntent(world: WorldAdapter, intent: Intent): boolean {
     const refusal = checkIntent(world, intent);
     if (refusal === null) return true;
-    if (refusal === 'undeclared-action') this.undeclaredAction++;
-    else this.badParam++;
+    if (refusal === 'undeclared-action') {
+      this.undeclaredAction++;
+      return false;
+    }
+    if (!world.strictArgs) {
+      this.deferredParam++;
+      return true;
+    }
+    this.badParam++;
     return false;
+  }
+
+  /**
+   * A need-change a host authored that no being could feel (`undefined`, a
+   * word, `NaN`), on its way to being rewritten as 0 by `Interventions`. The
+   * rewrite is right — a deed nobody can measure moved nothing, and a `NaN`
+   * importance makes one being's eviction order depend on the JS engine's sort
+   * — but it was completely silent, so a run could differ from what its driver
+   * wrote with nothing anywhere saying so (W1-B3 verifier, backlog 5).
+   */
+  noteAuthoredClamp(): void {
+    this.authoredClamp++;
   }
 
   /** An event arriving from the body. Undefined = this world has no such event. */

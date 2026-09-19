@@ -12,12 +12,18 @@ import {
   kindsWithTag,
   planArguments,
 } from '../src/index.js';
-import type { CoreVerb, Intent, KindParam } from '../src/index.js';
+import type { CoreVerb, Intent } from '../src/index.js';
+import { argumentShapes } from '../src/contract/actions.js';
+// Not through the barrel: `KindParam` is not one of its exports (and adding it
+// belongs to whoever needs it from outside the package, not to a test).
+import type { KindParam } from '../src/contract/actions.js';
+import { WorldGate } from '../src/contract/gate.js';
 import { toyWorld } from './fixtures/toyAdapter.js';
 import {
   WAS_ARG_ORDER,
   WAS_BUILD_KIND_LIST,
   WAS_GOAL_NEEDS,
+  WAS_INTENT_ARG_LINES,
   WAS_INTENT_KINDS,
   WAS_INTENT_VOCAB,
   WAS_OBJECT_KIND_LIST,
@@ -113,6 +119,42 @@ describe('the forager verbs, as they stood before the move', () => {
         }
       }
     }
+  });
+
+  /**
+   * The paragraph under the verb line was four lines of THIS world's shapes
+   * typed inside the mind, so a second world was shown them too (B3 verifier,
+   * backlog 2). It is rendered from the acts now, and these are its old bytes.
+   */
+  it('renders the prompt’s argument paragraph byte for byte', () => {
+    expect(argumentShapes(foragerAdapter)).toEqual([...WAS_INTENT_ARG_LINES]);
+  });
+
+  it('takes the names in the braces from the params, not from prose', () => {
+    // The only two the params cannot say: "one or the other", and "optional".
+    const said = foragerAdapter.actions.filter((a) => a.promptArgs?.shape !== undefined).map((a) => a.id);
+    expect(said).toEqual(['MoveTo', 'Deposit']);
+    const paragraph = argumentShapes(foragerAdapter).join('\n');
+    for (const action of foragerAdapter.actions) {
+      if (action.promptArgs === undefined || action.promptArgs.shape !== undefined) continue;
+      // Speech is never written: a mind cannot put an utterance in a plan.
+      const written = action.params.filter((p) => p.type !== 'speech').map((p) => p.id).join(',');
+      expect(paragraph, action.id).toContain(`${action.id}{${written}}`);
+    }
+  });
+
+  /** Today's bytes, not today's bytes improved: B5 owns this prose. */
+  it('describes thirteen of the sixteen acts, and names the three it omits', () => {
+    expect(foragerAdapter.actions.filter((a) => a.promptArgs === undefined).map((a) => a.id)).toEqual([
+      'Drink',
+      'Withdraw',
+      'Attack',
+    ]);
+  });
+
+  it('says nothing at all about a world that describes no act', () => {
+    expect(toyWorld.actions.every((a) => a.promptArgs === undefined)).toBe(true);
+    expect(argumentShapes(toyWorld)).toEqual([]);
   });
 
   it('reads an intent’s arguments in the order the parser read them', () => {
@@ -232,6 +274,79 @@ describe('an intent is held to what the world declares', () => {
     // …and a bound it declares is a bound the edge keeps.
     expect(checkIntent(toyWorld, { kind: 'Dawdle', durationTicks: 99 })).toBeNull();
     expect(checkIntent(toyWorld, { kind: 'Dawdle', durationTicks: 100 })).toBe('bad-param');
+  });
+});
+
+/**
+ * WHAT THE EDGE DOES ABOUT AN ANSWER IS THE WORLD'S TO SAY (B3 verifier, the
+ * FAIL). `checkIntent` above asks whether a world can MEAN an intent; these ask
+ * what `WorldGate` then does with it, which is not the same question and was
+ * the one behavioural change in the step.
+ */
+describe('the edge refuses an act, and defers an argument', () => {
+  it('refuses an act no world declares, wherever it came from', () => {
+    const gate = new WorldGate();
+    expect(gate.admitIntent(foragerAdapter, { kind: 'Teleport' })).toBe(false);
+    expect(gate.admitIntent(toyWorld, { kind: 'Gather', targetId: 1 })).toBe(false);
+    expect(gate.counts.undeclaredAction).toBe(2);
+    expect(gate.counts.badParam).toBe(0);
+    expect(gate.counts.deferredParam).toBe(0);
+  });
+
+  /**
+   * The body answers for this one, and its answer is an `IntentRejected` the
+   * being REMEMBERS. Refusing it here deleted five of them per `Eat{targetId}`
+   * and stopped a fully-argumented `MoveTo` moving anyone.
+   */
+  it('hands the forager body an argument the act does not declare', () => {
+    const gate = new WorldGate();
+    const strays: Intent[] = [
+      { kind: 'Eat', targetId: 4 },
+      { kind: 'MoveTo', x: 1, y: 2, targetId: 3, objectKind: 'berry', buildKind: 'shelter', durationTicks: 5 },
+      { kind: 'Sleep', objectKind: 'berry' },
+      { kind: 'Gather', x: 1, y: 2 },
+      { kind: 'Idle', buildKind: 'shelter' },
+      // A key this world has never heard of at all, which the parser would
+      // have dropped — the reflex path and a host can still write one.
+      { kind: 'Eat', objectKind: 'berry', wizard: 7 } as unknown as Intent,
+    ];
+    for (const intent of strays) expect(gate.admitIntent(foragerAdapter, intent), intent.kind).toBe(true);
+    expect(gate.counts.deferredParam).toBe(strays.length);
+    expect(gate.counts.badParam).toBe(0);
+  });
+
+  it('leaves the step exactly as it was — same fields, same order', () => {
+    const gate = new WorldGate();
+    const intent = { kind: 'Eat', x: 1, targetId: 4, objectKind: 'berry' } as unknown as Intent;
+    const before = Object.keys(intent);
+    expect(gate.admitIntent(foragerAdapter, intent)).toBe(true);
+    expect(Object.keys(intent)).toEqual(before);
+    expect(intent).toEqual({ kind: 'Eat', x: 1, targetId: 4, objectKind: 'berry' });
+  });
+
+  it('refuses the very same steps in a world that asked its edge to', () => {
+    const gate = new WorldGate();
+    expect(toyWorld.strictArgs).toBe(true);
+    expect(foragerAdapter.strictArgs).toBeUndefined();
+    // An aimless take, a nap it cannot sit through, a kind the arg may not
+    // name, and an argument the act does not take at all.
+    const refused: Intent[] = [
+      { kind: 'Snaffle' },
+      { kind: 'Dawdle', durationTicks: 100 },
+      { kind: 'Nibble', objectKind: 'lever' },
+      { kind: 'Shuffle', x: 1, y: 2, targetId: 3 },
+    ];
+    for (const intent of refused) expect(gate.admitIntent(toyWorld, intent), intent.kind).toBe(false);
+    expect(gate.counts.badParam).toBe(refused.length);
+    expect(gate.counts.deferredParam).toBe(0);
+    expect(gate.admitIntent(toyWorld, { kind: 'Snaffle', targetId: 2 })).toBe(true);
+  });
+
+  it('counts a host’s unusable authored need-change, so the rewrite is not silent', () => {
+    const gate = new WorldGate();
+    expect(gate.counts.authoredClamp).toBe(0);
+    gate.noteAuthoredClamp();
+    expect(gate.counts.authoredClamp).toBe(1);
   });
 });
 

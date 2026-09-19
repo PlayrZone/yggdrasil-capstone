@@ -13,8 +13,12 @@ import {
   policyFor,
 } from '../src/index.js';
 import type { AgentSnapshot, MindOutput, ThinkInput, WorldView } from '../src/index.js';
+import { Interventions } from '../src/runner/Interventions.js';
+import { SimRuntime } from '../src/runner/Runtime.js';
+import { scenarioFor } from '../src/runner/Scenario.js';
 import { toyWorld } from './fixtures/toyAdapter.js';
 import {
+  WAS_INTENT_ARG_LINES,
   WAS_INTENT_KINDS,
   WAS_INTENT_VOCAB,
   WAS_NEED_HINT,
@@ -118,12 +122,28 @@ describe('the prompt offers the world’s verbs', () => {
     expect(prompt.user).toContain('NEEDS (0 satisfied, 100 desperate — 60+ pressing, 85+ critical):');
   });
 
+  /**
+   * …AND THE PARAGRAPH UNDER IT (B3 verifier, backlog 2), which was still typed
+   * out inside the mind. Asserted as the whole four-line block in place, so a
+   * line break or a comma moving is a failure, not a near miss.
+   */
+  it('renders the argument paragraph, in place, byte for byte', () => {
+    const prompt = buildThinkPrompt(thinkInput(foragerAdapter), foragerAdapter);
+    expect(prompt.system).toContain(
+      `INTENT kind is one of: ${WAS_INTENT_VOCAB}.\nIntent args: ${WAS_INTENT_ARG_LINES.join('\n')}\n`,
+    );
+  });
+
   it('offers a different world its own verbs, and none of this one’s', () => {
     const prompt = buildThinkPrompt(thinkInput(toyWorld), toyWorld);
     expect(prompt.system).toContain('INTENT kind is one of: Shuffle, Snaffle, Nibble, Dawdle.');
     for (const verb of WAS_INTENT_KINDS) {
       expect(prompt.system, verb).not.toContain(`, ${verb},`);
     }
+    // Not one of the forager's argument shapes either — the toy world declares
+    // no paragraph, so it is told nothing rather than told about berries.
+    expect(prompt.system).not.toContain('Intent args:');
+    for (const line of WAS_INTENT_ARG_LINES) expect(prompt.system, line).not.toContain(line);
     // Its thresholds, too — the toy world's hunger presses at 10, not at 60.
     expect(prompt.user).toContain('100 desperate — 10+ pressing, 20+ critical');
   });
@@ -168,12 +188,12 @@ describe('a world with no instinct of its own', () => {
 describe('the mind→body edge over a real run', () => {
   /**
    * An argument the PARSER cannot fault — `buildKind: "shelter"` is a perfectly
-   * good structure — given to a verb that does not take one. It used to reach
-   * the body on a narrowing cast and be silently ignored; now the world says
-   * `Eat` takes no such argument and the step is dropped, counted, and the rest
-   * of the plan handed over exactly as before.
+   * good structure — given to a verb that does not take one. B3 dropped the
+   * step here; the verifier showed that deletes the BODY's refusal, which is an
+   * event the being remembers. It goes through, the body answers for it, and
+   * the tolerance is counted (`deferredParam`) rather than passed over.
    */
-  it('drops the step the world cannot mean, keeps the rest, and counts it', async () => {
+  it('hands the body a step the world does not declare, and counts the tolerance', async () => {
     const exp = new Experiment({
       seed: 'b3-refusal',
       agentCount: 4,
@@ -193,14 +213,49 @@ describe('the mind→body edge over a real run', () => {
     const id = exp.agentIds[0]!;
     exp.makeConscious(id);
     const gate = exp.minds.get(id)!.gate;
-    for (let t = 0; t < 1600 && gate.counts.badParam === 0; t += 10) {
+    for (let t = 0; t < 1600 && gate.counts.deferredParam === 0; t += 10) {
       exp.advance(10);
       await new Promise<void>((r) => setTimeout(r, 0));
     }
-    expect(gate.counts.badParam).toBe(1);
+    expect(gate.counts.deferredParam).toBe(1);
+    expect(gate.counts.badParam).toBe(0);
     expect(gate.counts.undeclaredAction).toBe(0);
-    // The body holds the step the world CAN mean, and not the one it cannot.
-    expect(exp.agentBody(id)!.plan.map((i) => i.kind)).toEqual(['Idle']);
+    // Both steps reached the body, in the order they were decided.
+    expect(exp.agentBody(id)!.plan.map((i) => i.kind)).toEqual(['Eat', 'Idle']);
+  }, 20_000);
+
+  /**
+   * The other half of the edge is UNREACHABLE from here, and that is the point:
+   * a plan naming an act this world does not declare is refused by the parser
+   * as `bad-intent` long before the gate sees it, and this world's reflex policy
+   * emits only the acts it was given. `world-actions.test.ts` holds the gate to
+   * it directly; nothing in a run can make it fire.
+   */
+  it('never sees an undeclared act at all — the parser has it first', async () => {
+    const exp = new Experiment({
+      seed: 'b3-undeclared',
+      agentCount: 4,
+      mindBackend: new MockMindBackend({
+        policy: {
+          think: (): MindOutput => ({
+            goals: [],
+            plan: [{ kind: 'Snaffle', targetId: 2 }],
+            utterances: [],
+          }),
+        },
+      }),
+    });
+    const id = exp.agentIds[0]!;
+    exp.makeConscious(id);
+    const log = exp.cognitionLog!;
+    for (let t = 0; t < 1600 && log.count === 0; t += 10) {
+      exp.advance(10);
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+    const record = log.recent(1)[0]!;
+    expect(record.valid).toBe(false);
+    expect(record.error).toContain('bad-intent');
+    expect(exp.minds.get(id)!.gate.counts.undeclaredAction).toBe(0);
   }, 20_000);
 
   it('refuses nothing in a world whose policy and parser speak its own tables', () => {
@@ -214,6 +269,8 @@ describe('the mind→body edge over a real run', () => {
         undeclaredTestimony: 0,
         undeclaredAction: 0,
         badParam: 0,
+        deferredParam: 0,
+        authoredClamp: 0,
       });
     }
   });
@@ -262,6 +319,59 @@ describe('importance is a number, whatever it is handed', () => {
     expect(event.payload['needDeltas']).toEqual({ hunger: 0, rest: -10 });
     const memories = exp.minds.get(actor)!.memory.all().filter((m) => m.type === 'AteFood');
     for (const memory of memories) expect(Number.isFinite(memory.importance)).toBe(true);
+  });
+
+  /**
+   * …AND THE CLAMP SAYS SO (B3 verifier, backlog 5). It rewrites a driver's
+   * event in place and used to do it in total silence, so a run could differ
+   * from what its driver wrote with no count anywhere non-zero. The run's own
+   * gate carries it — a mind's gate counts what THAT being was handed, and an
+   * authored deed is nobody's.
+   */
+  it('counts every unusable slot it rewrites, on the run’s own gate', () => {
+    const options = { seed: 'b3-authored-count', agentCount: 6 };
+    const runtime = new SimRuntime(options, scenarioFor(options));
+    const host = new Interventions(runtime);
+    runtime.advance(120);
+    expect(runtime.gate.counts.authoredClamp).toBe(0);
+    host.authorEvent({
+      tick: runtime.tick,
+      type: 'AteFood',
+      actorId: runtime.agentIds[0]!,
+      targetIds: [],
+      x: 0,
+      y: 0,
+      // Three no being could feel, one it could, and one slot that is not a
+      // need-change at all — the count is of values rewritten, not of events.
+      payload: {
+        needDeltas: { hunger: undefined, rest: Number.NaN, safety: -3 },
+        targetNeedDeltas: { socialConnection: 'lots' },
+        cause: 'violence',
+      } as Record<string, unknown>,
+    });
+    expect(runtime.gate.counts.authoredClamp).toBe(3);
+    // Nothing else on the gate moved: this is the host's edge, not a mind's.
+    expect(runtime.gate.counts.undeclaredEvent).toBe(0);
+    expect(runtime.gate.counts.badParam).toBe(0);
+  });
+
+  it('counts nothing when a driver writes what the engine writes', () => {
+    const options = { seed: 'b3-authored-clean', agentCount: 6 };
+    const runtime = new SimRuntime(options, scenarioFor(options));
+    const host = new Interventions(runtime);
+    runtime.advance(120);
+    const payload = { needDeltas: { hunger: -40, rest: 2 } } as Record<string, unknown>;
+    host.authorEvent({
+      tick: runtime.tick,
+      type: 'AteFood',
+      actorId: runtime.agentIds[0]!,
+      targetIds: [],
+      x: 0,
+      y: 0,
+      payload,
+    });
+    expect(payload['needDeltas']).toEqual({ hunger: -40, rest: 2 });
+    expect(runtime.gate.counts.authoredClamp).toBe(0);
   });
 });
 

@@ -40,6 +40,19 @@ export const WAS_GOAL_NEEDS: readonly NeedKey[] = ['hunger', 'rest', 'safety', '
 export const WAS_INTENT_VOCAB =
   'MoveTo, Gather, Dig, Eat, Drink, Sleep, Build, Deposit, Withdraw, Give, Attack, Craft, Speak, Follow, Flee, Idle';
 
+/**
+ * consciousness/prompt.ts's ARGUMENT PARAGRAPH, byte for byte: the four lines
+ * of the system prompt that followed the verb line, as they were typed out
+ * inside the mind. Three of the sixteen verbs above never appear in it, and
+ * that is reproduced rather than repaired — see `worlds/forager/actions.ts`.
+ */
+export const WAS_INTENT_ARG_LINES: readonly string[] = [
+  'MoveTo{x,y|targetId}, Gather{targetId}, Eat{objectKind}, Build{buildKind,x,y},',
+  'Dig{} (dig the ground where you stand), Give{targetId,objectKind}, Deposit{objectKind,targetId?}, Sleep{durationTicks}, Idle{durationTicks},',
+  'Craft{} (try combining the raw materials you carry — whether anything useful results, and what, is for you to DISCOVER through trying),',
+  'Flee{x,y}, Follow{targetId}, Speak{} (put speech in utterances).',
+];
+
 /** The order `parsePlan` read them in, statement by statement. */
 export const WAS_ARG_ORDER: readonly string[] = ['x', 'y', 'targetId', 'objectKind', 'buildKind', 'durationTicks'];
 

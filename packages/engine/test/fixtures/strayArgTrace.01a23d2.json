@@ -1,0 +1,1377 @@
+{
+  "capturedFrom": "01a23d2",
+  "capturedWhat": "What the forager world did with a plan step carrying an argument its action does not declare, one commit BEFORE W1-B3 moved the mind-to-body edge.",
+  "capturedHow": "git worktree add --detach <tmp> 01a23d2, with node_modules junctioned from the main checkout (junctions removed with rmdir before the worktree itself). test/fixtures/strayArgCohort.ts was copied in unchanged and run by a one-line scratch test that wrote this trace. Nothing in the old tree was edited and nothing was committed there. Re-capture the same way if the cohort ever changes.",
+  "producedBy": "packages/engine/test/fixtures/strayArgCohort.ts - runStrayArgCohort()",
+  "assertedBy": "packages/engine/test/world-stray-args.test.ts",
+  "trace": {
+    "script": [
+      "1833:Follow/stray",
+      "1828:MoveTo/valid",
+      "1832:Attack/all",
+      "1830:Sleep/stray",
+      "1831:Withdraw/valid",
+      "1829:Dig/all",
+      "1828:MoveTo/stray",
+      "1832:Craft/valid",
+      "1833:Follow/all",
+      "1831:Withdraw/stray",
+      "1830:Sleep/all",
+      "1829:Eat/valid",
+      "1831:Withdraw/all",
+      "1828:MoveTo/all",
+      "1830:Build/valid",
+      "1832:Craft/stray",
+      "1833:Flee/valid",
+      "1831:Give/valid",
+      "1829:Eat/stray",
+      "1828:Gather/valid",
+      "1830:Build/stray",
+      "1831:Give/stray",
+      "1832:Craft/all",
+      "1833:Flee/stray",
+      "1829:Eat/all",
+      "1828:Gather/stray",
+      "1830:Build/all",
+      "1831:Give/all",
+      "1832:Speak/valid",
+      "1833:Flee/all",
+      "1831:Attack/valid",
+      "1829:Drink/valid",
+      "1828:Gather/all",
+      "1830:Deposit/valid",
+      "1831:Attack/stray",
+      "1832:Speak/stray",
+      "1828:Dig/valid",
+      "1829:Drink/stray",
+      "1830:Deposit/stray",
+      "1833:Idle/valid",
+      "1831:Attack/all",
+      "1832:Speak/all",
+      "1828:Dig/stray",
+      "1830:Deposit/all",
+      "1829:Drink/all",
+      "1831:Craft/valid",
+      "1833:Idle/stray",
+      "1831:Craft/stray",
+      "1828:Dig/all",
+      "1832:Follow/valid",
+      "1830:Withdraw/valid",
+      "1829:Sleep/valid",
+      "1833:Idle/all",
+      "1831:Craft/all",
+      "1828:Eat/valid",
+      "1830:Withdraw/stray",
+      "1832:Follow/stray",
+      "1829:Sleep/stray",
+      "1831:Speak/valid",
+      "1833:MoveTo/valid",
+      "1830:Withdraw/all",
+      "1828:Eat/stray",
+      "1831:Speak/stray",
+      "1832:Follow/all",
+      "1829:Sleep/all",
+      "1830:Give/valid",
+      "1831:Speak/all",
+      "1828:Eat/all",
+      "1833:MoveTo/stray",
+      "1832:Flee/valid",
+      "1829:Build/valid",
+      "1831:Follow/valid",
+      "1830:Give/stray",
+      "1828:Drink/valid",
+      "1833:MoveTo/all",
+      "1831:Follow/stray",
+      "1832:Flee/stray",
+      "1829:Build/stray",
+      "1830:Give/all",
+      "1828:Drink/stray",
+      "1831:Follow/all",
+      "1833:Gather/valid",
+      "1832:Flee/all",
+      "1830:Attack/valid",
+      "1829:Build/all",
+      "1831:Flee/valid",
+      "1828:Drink/all",
+      "1831:Flee/stray",
+      "1830:Attack/stray",
+      "1832:Idle/valid",
+      "1833:Gather/stray",
+      "1829:Deposit/valid",
+      "1828:Sleep/valid",
+      "1831:Flee/all",
+      "1830:Attack/all",
+      "1828:Sleep/stray",
+      "1832:Idle/stray",
+      "1829:Deposit/stray",
+      "1833:Gather/all",
+      "1831:Idle/valid",
+      "1830:Craft/valid",
+      "1831:Idle/stray",
+      "1828:Sleep/all",
+      "1832:Idle/all",
+      "1829:Deposit/all",
+      "1833:Dig/valid",
+      "1831:Idle/all",
+      "1830:Craft/stray",
+      "1828:Build/valid",
+      "1832:MoveTo/valid",
+      "1829:Withdraw/valid",
+      "1831:MoveTo/valid",
+      "1833:Dig/stray",
+      "1830:Craft/all"
+    ],
+    "records": [
+      {
+        "being": 1833,
+        "tick": 7,
+        "appliedTick": 10,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Follow\",\"x\":120,\"y\":140,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1828,
+        "tick": 14,
+        "appliedTick": 20,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"MoveTo\",\"x\":120,\"y\":140,\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 16,
+        "appliedTick": 20,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Attack\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 42,
+        "appliedTick": 50,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Sleep\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 60,
+        "appliedTick": 70,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Withdraw\",\"targetId\":4,\"objectKind\":\"berry\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 67,
+        "appliedTick": 70,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Dig\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 119,
+        "appliedTick": 120,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"MoveTo\",\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 136,
+        "appliedTick": 140,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Craft\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 138,
+        "appliedTick": 140,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Follow\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1831,
+        "tick": 139,
+        "appliedTick": 140,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Withdraw\",\"x\":120,\"y\":140,\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 144,
+        "appliedTick": 150,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Sleep\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 184,
+        "appliedTick": 190,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Eat\",\"objectKind\":\"berry\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 218,
+        "appliedTick": 220,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Withdraw\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 224,
+        "appliedTick": 230,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"MoveTo\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 246,
+        "appliedTick": 250,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Build\",\"x\":120,\"y\":140,\"buildKind\":\"shelter\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 256,
+        "appliedTick": 260,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Craft\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 269,
+        "appliedTick": 270,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Flee\",\"x\":120,\"y\":140},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1831,
+        "tick": 297,
+        "appliedTick": 300,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Give\",\"targetId\":4,\"objectKind\":\"berry\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 301,
+        "appliedTick": 310,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Eat\",\"x\":120,\"y\":140,\"targetId\":4,\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 329,
+        "appliedTick": 330,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Gather\",\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 348,
+        "appliedTick": 350,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Build\",\"targetId\":4,\"objectKind\":\"berry\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 376,
+        "appliedTick": 380,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Give\",\"x\":120,\"y\":140,\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 376,
+        "appliedTick": 380,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Craft\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 400,
+        "appliedTick": 410,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Flee\",\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 418,
+        "appliedTick": 420,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Eat\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1828,
+        "tick": 434,
+        "appliedTick": 440,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Gather\",\"x\":120,\"y\":140,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 450,
+        "appliedTick": 460,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Build\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 455,
+        "appliedTick": 460,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Give\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 496,
+        "appliedTick": 500,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 531,
+        "appliedTick": 540,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Flee\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 534,
+        "appliedTick": 540,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Attack\",\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 535,
+        "appliedTick": 540,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Drink\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 539,
+        "appliedTick": 540,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Gather\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1830,
+        "tick": 552,
+        "appliedTick": 560,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Deposit\",\"targetId\":4,\"objectKind\":\"berry\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 613,
+        "appliedTick": 620,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Attack\",\"x\":120,\"y\":140,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 616,
+        "appliedTick": 620,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 644,
+        "appliedTick": 650,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Dig\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 652,
+        "appliedTick": 660,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Drink\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 654,
+        "appliedTick": 660,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Deposit\",\"x\":120,\"y\":140,\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 662,
+        "appliedTick": 670,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Idle\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 692,
+        "appliedTick": 700,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Attack\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1832,
+        "tick": 736,
+        "appliedTick": 740,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 749,
+        "appliedTick": 750,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Dig\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 756,
+        "appliedTick": 760,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Deposit\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 769,
+        "appliedTick": 770,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Drink\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 771,
+        "appliedTick": 780,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Craft\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 793,
+        "appliedTick": 800,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Idle\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 850,
+        "appliedTick": 860,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Craft\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 854,
+        "appliedTick": 860,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Dig\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1832,
+        "tick": 856,
+        "appliedTick": 860,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Follow\",\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 858,
+        "appliedTick": 860,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Withdraw\",\"targetId\":4,\"objectKind\":\"berry\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 886,
+        "appliedTick": 890,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Sleep\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 924,
+        "appliedTick": 930,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Idle\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 929,
+        "appliedTick": 930,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Craft\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 959,
+        "appliedTick": 960,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Eat\",\"objectKind\":\"berry\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 960,
+        "appliedTick": 970,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Withdraw\",\"x\":120,\"y\":140,\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 976,
+        "appliedTick": 980,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Follow\",\"x\":120,\"y\":140,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1829,
+        "tick": 1003,
+        "appliedTick": 1010,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Sleep\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1008,
+        "appliedTick": 1010,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 1055,
+        "appliedTick": 1060,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"MoveTo\",\"x\":120,\"y\":140,\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1062,
+        "appliedTick": 1070,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Withdraw\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 1064,
+        "appliedTick": 1070,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Eat\",\"x\":120,\"y\":140,\"targetId\":4,\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1087,
+        "appliedTick": 1090,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 1096,
+        "appliedTick": 1100,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Follow\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 1120,
+        "appliedTick": 1130,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Sleep\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1164,
+        "appliedTick": 1170,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Give\",\"targetId\":4,\"objectKind\":\"berry\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1166,
+        "appliedTick": 1170,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 1169,
+        "appliedTick": 1170,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Eat\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 1186,
+        "appliedTick": 1190,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"MoveTo\",\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 1216,
+        "appliedTick": 1220,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Flee\",\"x\":120,\"y\":140},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 1237,
+        "appliedTick": 1240,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Build\",\"x\":120,\"y\":140,\"buildKind\":\"shelter\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1245,
+        "appliedTick": 1250,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Follow\",\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1266,
+        "appliedTick": 1270,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Give\",\"x\":120,\"y\":140,\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1828,
+        "tick": 1274,
+        "appliedTick": 1280,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Drink\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 1317,
+        "appliedTick": 1320,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"MoveTo\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1324,
+        "appliedTick": 1330,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Follow\",\"x\":120,\"y\":140,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 1336,
+        "appliedTick": 1340,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Flee\",\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 1354,
+        "appliedTick": 1360,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Build\",\"targetId\":4,\"objectKind\":\"berry\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1368,
+        "appliedTick": 1370,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Give\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 1379,
+        "appliedTick": 1380,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Drink\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1403,
+        "appliedTick": 1410,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Follow\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1833,
+        "tick": 1448,
+        "appliedTick": 1450,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Gather\",\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 1456,
+        "appliedTick": 1460,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Flee\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1470,
+        "appliedTick": 1480,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Attack\",\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 1471,
+        "appliedTick": 1480,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Build\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1482,
+        "appliedTick": 1490,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Flee\",\"x\":120,\"y\":140},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 1484,
+        "appliedTick": 1490,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Drink\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1561,
+        "appliedTick": 1570,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Flee\",\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1572,
+        "appliedTick": 1580,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Attack\",\"x\":120,\"y\":140,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1832,
+        "tick": 1576,
+        "appliedTick": 1580,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Idle\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 1579,
+        "appliedTick": 1580,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Gather\",\"x\":120,\"y\":140,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 1588,
+        "appliedTick": 1590,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Deposit\",\"targetId\":4,\"objectKind\":\"berry\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 1589,
+        "appliedTick": 1590,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Sleep\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1640,
+        "appliedTick": 1650,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Flee\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1674,
+        "appliedTick": 1680,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Attack\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 1694,
+        "appliedTick": 1700,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Sleep\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 1696,
+        "appliedTick": 1700,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Idle\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1829,
+        "tick": 1705,
+        "appliedTick": 1710,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Deposit\",\"x\":120,\"y\":140,\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 1710,
+        "appliedTick": 1720,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Gather\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1719,
+        "appliedTick": 1720,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Idle\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1776,
+        "appliedTick": 1780,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Craft\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1798,
+        "appliedTick": 1800,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Idle\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 1799,
+        "appliedTick": 1800,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Sleep\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 1816,
+        "appliedTick": 1820,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Idle\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 1822,
+        "appliedTick": 1830,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Deposit\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1833,
+        "tick": 1841,
+        "appliedTick": 1850,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Dig\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1877,
+        "appliedTick": 1880,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Idle\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1878,
+        "appliedTick": 1880,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Craft\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1828,
+        "tick": 1904,
+        "appliedTick": 1910,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Build\",\"x\":120,\"y\":140,\"buildKind\":\"shelter\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1832,
+        "tick": 1936,
+        "appliedTick": 1940,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"MoveTo\",\"x\":120,\"y\":140,\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1829,
+        "tick": 1939,
+        "appliedTick": 1940,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Withdraw\",\"targetId\":4,\"objectKind\":\"berry\"},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1831,
+        "tick": 1956,
+        "appliedTick": 1960,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"MoveTo\",\"x\":120,\"y\":140,\"targetId\":4},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      },
+      {
+        "being": 1833,
+        "tick": 1972,
+        "appliedTick": 1980,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Speak\",\"utterance\":{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}},{\"kind\":\"Dig\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[{\"speechAct\":\"inform\",\"text\":\"the berries by the water\"}]}"
+      },
+      {
+        "being": 1830,
+        "tick": 1980,
+        "appliedTick": 1990,
+        "valid": true,
+        "resolved": "{\"goals\":[],\"plan\":[{\"kind\":\"Craft\",\"x\":120,\"y\":140,\"targetId\":4,\"objectKind\":\"berry\",\"buildKind\":\"shelter\",\"durationTicks\":5},{\"kind\":\"Idle\",\"durationTicks\":3}],\"utterances\":[]}"
+      }
+    ],
+    "rejections": [
+      {
+        "tick": 20,
+        "actor": 1832,
+        "intentKind": "Attack",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 70,
+        "actor": 1831,
+        "intentKind": "Withdraw",
+        "reason": "no-container"
+      },
+      {
+        "tick": 120,
+        "actor": 1828,
+        "intentKind": "MoveTo",
+        "reason": "no-target"
+      },
+      {
+        "tick": 140,
+        "actor": 1831,
+        "intentKind": "Withdraw",
+        "reason": "no-object-kind"
+      },
+      {
+        "tick": 140,
+        "actor": 1832,
+        "intentKind": "Craft",
+        "reason": "nothing-to-craft"
+      },
+      {
+        "tick": 190,
+        "actor": 1829,
+        "intentKind": "Eat",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 220,
+        "actor": 1831,
+        "intentKind": "Withdraw",
+        "reason": "no-container"
+      },
+      {
+        "tick": 260,
+        "actor": 1832,
+        "intentKind": "Craft",
+        "reason": "nothing-to-craft"
+      },
+      {
+        "tick": 300,
+        "actor": 1831,
+        "intentKind": "Give",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 310,
+        "actor": 1829,
+        "intentKind": "Eat",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 330,
+        "actor": 1828,
+        "intentKind": "Gather",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 350,
+        "actor": 1830,
+        "intentKind": "Build",
+        "reason": "not-enough-wood"
+      },
+      {
+        "tick": 380,
+        "actor": 1831,
+        "intentKind": "Give",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 380,
+        "actor": 1832,
+        "intentKind": "Craft",
+        "reason": "nothing-to-craft"
+      },
+      {
+        "tick": 410,
+        "actor": 1833,
+        "intentKind": "Flee",
+        "reason": "no-threat"
+      },
+      {
+        "tick": 421,
+        "actor": 1829,
+        "intentKind": "Eat",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 440,
+        "actor": 1828,
+        "intentKind": "Gather",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 460,
+        "actor": 1830,
+        "intentKind": "Build",
+        "reason": "not-enough-wood"
+      },
+      {
+        "tick": 460,
+        "actor": 1831,
+        "intentKind": "Give",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 500,
+        "actor": 1832,
+        "intentKind": "Speak",
+        "reason": "nothing-to-say"
+      },
+      {
+        "tick": 540,
+        "actor": 1829,
+        "intentKind": "Drink",
+        "reason": "no-water"
+      },
+      {
+        "tick": 540,
+        "actor": 1831,
+        "intentKind": "Attack",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 541,
+        "actor": 1828,
+        "intentKind": "Gather",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 560,
+        "actor": 1830,
+        "intentKind": "Deposit",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 620,
+        "actor": 1831,
+        "intentKind": "Attack",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 620,
+        "actor": 1832,
+        "intentKind": "Speak",
+        "reason": "nothing-to-say"
+      },
+      {
+        "tick": 660,
+        "actor": 1829,
+        "intentKind": "Drink",
+        "reason": "no-water"
+      },
+      {
+        "tick": 660,
+        "actor": 1830,
+        "intentKind": "Deposit",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 701,
+        "actor": 1831,
+        "intentKind": "Attack",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 740,
+        "actor": 1832,
+        "intentKind": "Speak",
+        "reason": "nothing-to-say"
+      },
+      {
+        "tick": 760,
+        "actor": 1830,
+        "intentKind": "Deposit",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 770,
+        "actor": 1829,
+        "intentKind": "Drink",
+        "reason": "no-water"
+      },
+      {
+        "tick": 780,
+        "actor": 1831,
+        "intentKind": "Craft",
+        "reason": "nothing-to-craft"
+      },
+      {
+        "tick": 860,
+        "actor": 1830,
+        "intentKind": "Withdraw",
+        "reason": "no-container"
+      },
+      {
+        "tick": 860,
+        "actor": 1831,
+        "intentKind": "Craft",
+        "reason": "nothing-to-craft"
+      },
+      {
+        "tick": 930,
+        "actor": 1831,
+        "intentKind": "Craft",
+        "reason": "nothing-to-craft"
+      },
+      {
+        "tick": 960,
+        "actor": 1828,
+        "intentKind": "Eat",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 970,
+        "actor": 1830,
+        "intentKind": "Withdraw",
+        "reason": "no-object-kind"
+      },
+      {
+        "tick": 1010,
+        "actor": 1831,
+        "intentKind": "Speak",
+        "reason": "nothing-to-say"
+      },
+      {
+        "tick": 1070,
+        "actor": 1828,
+        "intentKind": "Eat",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 1070,
+        "actor": 1830,
+        "intentKind": "Withdraw",
+        "reason": "no-container"
+      },
+      {
+        "tick": 1090,
+        "actor": 1831,
+        "intentKind": "Speak",
+        "reason": "nothing-to-say"
+      },
+      {
+        "tick": 1170,
+        "actor": 1828,
+        "intentKind": "Eat",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 1170,
+        "actor": 1830,
+        "intentKind": "Give",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 1170,
+        "actor": 1831,
+        "intentKind": "Speak",
+        "reason": "nothing-to-say"
+      },
+      {
+        "tick": 1190,
+        "actor": 1833,
+        "intentKind": "MoveTo",
+        "reason": "no-target"
+      },
+      {
+        "tick": 1240,
+        "actor": 1829,
+        "intentKind": "Build",
+        "reason": "not-enough-wood"
+      },
+      {
+        "tick": 1271,
+        "actor": 1830,
+        "intentKind": "Give",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 1280,
+        "actor": 1828,
+        "intentKind": "Drink",
+        "reason": "no-water"
+      },
+      {
+        "tick": 1340,
+        "actor": 1832,
+        "intentKind": "Flee",
+        "reason": "no-threat"
+      },
+      {
+        "tick": 1360,
+        "actor": 1829,
+        "intentKind": "Build",
+        "reason": "not-enough-wood"
+      },
+      {
+        "tick": 1370,
+        "actor": 1830,
+        "intentKind": "Give",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 1380,
+        "actor": 1828,
+        "intentKind": "Drink",
+        "reason": "no-water"
+      },
+      {
+        "tick": 1450,
+        "actor": 1833,
+        "intentKind": "Gather",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 1480,
+        "actor": 1829,
+        "intentKind": "Build",
+        "reason": "not-enough-wood"
+      },
+      {
+        "tick": 1480,
+        "actor": 1830,
+        "intentKind": "Attack",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 1490,
+        "actor": 1828,
+        "intentKind": "Drink",
+        "reason": "no-water"
+      },
+      {
+        "tick": 1570,
+        "actor": 1831,
+        "intentKind": "Flee",
+        "reason": "no-threat"
+      },
+      {
+        "tick": 1580,
+        "actor": 1833,
+        "intentKind": "Gather",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 1581,
+        "actor": 1830,
+        "intentKind": "Attack",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 1590,
+        "actor": 1829,
+        "intentKind": "Deposit",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 1680,
+        "actor": 1830,
+        "intentKind": "Attack",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 1710,
+        "actor": 1829,
+        "intentKind": "Deposit",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 1720,
+        "actor": 1833,
+        "intentKind": "Gather",
+        "reason": "out-of-range"
+      },
+      {
+        "tick": 1780,
+        "actor": 1830,
+        "intentKind": "Craft",
+        "reason": "nothing-to-craft"
+      },
+      {
+        "tick": 1831,
+        "actor": 1829,
+        "intentKind": "Deposit",
+        "reason": "not-in-inventory"
+      },
+      {
+        "tick": 1880,
+        "actor": 1830,
+        "intentKind": "Craft",
+        "reason": "nothing-to-craft"
+      },
+      {
+        "tick": 1910,
+        "actor": 1828,
+        "intentKind": "Build",
+        "reason": "not-enough-wood"
+      },
+      {
+        "tick": 1940,
+        "actor": 1829,
+        "intentKind": "Withdraw",
+        "reason": "no-container"
+      },
+      {
+        "tick": 1990,
+        "actor": 1830,
+        "intentKind": "Craft",
+        "reason": "nothing-to-craft"
+      }
+    ],
+    "rejectionsByReason": {
+      "out-of-range": 13,
+      "no-container": 5,
+      "no-target": 2,
+      "no-object-kind": 2,
+      "nothing-to-craft": 9,
+      "not-in-inventory": 18,
+      "not-enough-wood": 6,
+      "no-threat": 3,
+      "nothing-to-say": 6,
+      "no-water": 6
+    },
+    "executedByKind": {
+      "Speak": 21,
+      "Follow": 8,
+      "Idle": 123,
+      "MoveTo": 8,
+      "Attack": 7,
+      "Sleep": 8,
+      "Withdraw": 7,
+      "Dig": 6,
+      "Craft": 9,
+      "Eat": 6,
+      "Build": 7,
+      "Flee": 9,
+      "Give": 6,
+      "Gather": 6,
+      "Drink": 6,
+      "Deposit": 6
+    }
+  }
+}
