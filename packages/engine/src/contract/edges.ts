@@ -61,12 +61,13 @@ import type { PlaceRef, SpaceOps } from './space.js';
  * to open or build one. None of them is the mind, and each is HANDED this by
  * the wiring that built the world.
  *
- * EVERY ENTRY POINT THAT TAKES A PLACE IS INSIDE THE OWNERSHIP GATE
- * (`defineSpace`), so a place from another world reaches `ForeignPlaceError`
- * and not a raw `TypeError: Cannot read private member #x…` (round 3 FAIL 2).
- * `decode`, `placeOf`, `isPlace` and `owns` are not gated because they do not
- * take a place: they take untrusted JSON, a world's own carrier, or anything at
- * all, and answering "no" is their job.
+ * EVERY ENTRY POINT THAT TAKES A PLACE REFUSES A FOREIGN ONE with
+ * `ForeignPlaceError` and not a raw `TypeError: Cannot read private member #x…`
+ * (round 3 FAIL 2). The refusal is written INSIDE the world's own place class
+ * now rather than wrapped around it (round 5 — see `defineSpace`, which checks
+ * that it is there). `decode`, `placeOf`, `isPlace` and `owns` are not gated
+ * because they do not take a place: they take untrusted JSON, a world's own
+ * carrier, or anything at all, and answering "no" is their job.
  */
 export interface SpaceCodec {
   /**
@@ -149,7 +150,7 @@ export interface SpaceDefinition {
   readonly codec: SpaceCodec;
 }
 
-/** What `defineSpace` hands back: both halves, each with the gate around it. */
+/** What `defineSpace` hands back: the world's own two halves, checked. */
 export interface GuardedSpace {
   /** Published on the adapter. Refuses a place this world did not mint. */
   readonly space: SpaceOps;
@@ -158,70 +159,102 @@ export interface GuardedSpace {
 }
 
 /**
- * ONE WORLD'S SPACE, WITH THE DOOR SHUT. A world builds its ops and its codec
- * and hands both here; what comes back is the pair it publishes, each entry
- * point that takes a place wrapped so it refuses one this world did not mint.
+ * A SPACE WHOSE OPS DO NOT REFUSE A STRANGER — thrown at world construction,
+ * out of `defineSpace`, where the mistake is. Not a `ForeignPlaceError`: the
+ * argument is fine, the WORLD is wrong.
+ */
+export class UngatedSpaceError extends Error {
+  override readonly name = 'UngatedSpaceError';
+
+  constructor(
+    readonly op: string,
+    readonly argument: number,
+    detail: string,
+  ) {
+    super(
+      `defineSpace: this world's ${op} ${detail} for argument ${argument}. ` +
+        `Every entry point that takes a place must throw ForeignPlaceError for a place this world did not mint.`,
+    );
+  }
+}
+
+/**
+ * ONE WORLD'S SPACE, CHECKED RATHER THAN WRAPPED (round 5, the perf round).
  *
- * It wraps rather than being written into each world because the check is not a
- * fact about any world: a world says WHAT its places are (`codec.owns`), and
- * this says that nothing else may be passed off as one.
+ * Round 4 wrapped: it built a second `SpaceOps` whose every method asked
+ * `codec.owns(a)` and then forwarded to the world's. It was correct, and it
+ * cost −3.2% of tick rate at 256 beings and −7.2% at 1,000 against `c727af7`,
+ * against a 3% budget — an extra frame and an extra object shape on the hottest
+ * question the engine asks (`within`, once per live pending cause per memory
+ * observed). Bypassing it measured +0.12%. A CPU profile showed nothing,
+ * because there is nothing to see: the cost is shape, not work.
  *
- * UNTHROWABLE BY CONSTRUCTION. `owns` is a private-brand test, which reads no
- * property, invokes no getter and is not a Proxy trap — so a place whose `x` is
- * a throwing getter, a revoked Proxy and a `Proxy` that lies about its own keys
- * are all simply NOT OWNED, and come back as `ForeignPlaceError` rather than as
- * whatever the trap felt like throwing (round 2 FAIL 2, last paragraph).
+ * So the check moved to where it is free. A world mints its places as instances
+ * of its own class with `#private` state, and a static method of that class
+ * reading `a.#x` IS the ownership test: on an object the class did not
+ * construct, the read throws a `TypeError` natively, and only the `catch`
+ * — never taken on the fast path — turns it into `ForeignPlaceError{op,
+ * argument}`. See `worlds/plane.ts`.
  *
- * IT RETURNS THE CODEC RATHER THAN FILING IT. The round-3 version put it in a
- * `WeakMap` keyed by the guarded ops and exported the lookup; see the header for
- * what one cast then did with that.
+ * WHAT THIS FUNCTION DOES NOW is make that a rule rather than a convention: it
+ * calls every entry point that takes a place, once, with something no world
+ * minted, and requires `ForeignPlaceError` naming the right op and the right
+ * argument. A future world author who writes `distance` as `a.x - b.x` gets
+ * `UngatedSpaceError` the moment their world is built, instead of W1-C's town
+ * silently answering for the continent's places (round 2 FAIL 2, which is the
+ * whole reason any of this exists).
+ *
+ * THE PROBE IS ADVERSARIAL, not arbitrary: a frozen object carrying the field
+ * names both of today's worlds write a place with. That is exactly the value
+ * round 2's gate accepted.
+ *
+ * It costs ten thrown exceptions per world, once, at construction.
+ *
+ * IT STILL RETURNS THE CODEC RATHER THAN FILING IT. The round-3 version put it
+ * in a `WeakMap` keyed by the guarded ops and exported the lookup; see the
+ * header for what one cast then did with that.
  */
 export function defineSpace(definition: SpaceDefinition): GuardedSpace {
   const { ops, codec } = definition;
-  const owns = codec.owns;
-  const check = (op: string, argument: number, value: PlaceRef): void => {
-    if (!owns(value)) throw new ForeignPlaceError(op, argument);
-  };
-  const space: SpaceOps = {
-    directions: ops.directions,
-    unplaced: ops.unplaced,
-    distance(a, b) {
-      check('distance', 1, a);
-      check('distance', 2, b);
-      return ops.distance(a, b);
-    },
-    direction(from, to) {
-      check('direction', 1, from);
-      check('direction', 2, to);
-      return ops.direction(from, to);
-    },
-    within(a, b, radius) {
-      check('within', 1, a);
-      check('within', 2, b);
-      return ops.within(a, b, radius);
-    },
-    equal(a, b) {
-      check('equal', 1, a);
-      check('equal', 2, b);
-      return ops.equal(a, b);
-    },
-    label(place) {
-      check('label', 1, place);
-      return ops.label(place);
-    },
-  };
-  const guardedCodec: SpaceCodec = {
-    fields: codec.fields,
-    encode(place) {
-      check('encode', 1, place);
-      return codec.encode(place);
-    },
-    decode: codec.decode,
-    isPlace: codec.isPlace,
-    placeOf: codec.placeOf,
-    owns,
-  };
-  Object.freeze(space);
-  Object.freeze(guardedCodec);
-  return { space, codec: guardedCodec };
+
+  // Something with the shape of a place and the ownership of nothing. The cast
+  // is the point: this is what a caller who ignores the contract passes in.
+  const stranger = Object.freeze({ x: 0, y: 0, spot: 'nowhere' }) as unknown as PlaceRef;
+  const own = ops.unplaced;
+  if (!codec.owns(own)) {
+    throw new UngatedSpaceError('unplaced', 0, 'is not a place this world owns, so nothing below could be checked');
+  }
+
+  const entries: [string, number, () => unknown][] = [
+    ['distance', 1, () => ops.distance(stranger, own)],
+    ['distance', 2, () => ops.distance(own, stranger)],
+    ['direction', 1, () => ops.direction(stranger, own)],
+    ['direction', 2, () => ops.direction(own, stranger)],
+    ['within', 1, () => ops.within(stranger, own, 1)],
+    ['within', 2, () => ops.within(own, stranger, 1)],
+    ['equal', 1, () => ops.equal(stranger, own)],
+    ['equal', 2, () => ops.equal(own, stranger)],
+    ['label', 1, () => ops.label(stranger)],
+    ['encode', 1, () => codec.encode(stranger)],
+  ];
+
+  for (const [op, argument, call] of entries) {
+    let thrown: unknown;
+    try {
+      call();
+    } catch (error) {
+      thrown = error;
+    }
+    if (thrown === undefined) throw new UngatedSpaceError(op, argument, 'answered for a place it did not mint');
+    if (!(thrown instanceof ForeignPlaceError)) {
+      throw new UngatedSpaceError(op, argument, `threw ${String((thrown as Error)?.name ?? thrown)}`);
+    }
+    if (thrown.op !== op || thrown.argument !== argument) {
+      throw new UngatedSpaceError(op, argument, `refused as \`${thrown.op}\` argument ${thrown.argument}`);
+    }
+  }
+
+  Object.freeze(ops);
+  Object.freeze(codec);
+  return { space: ops, codec };
 }

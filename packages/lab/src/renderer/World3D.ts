@@ -72,6 +72,7 @@ import {
   LABEL_HEIGHT_PX,
   figurePxAt,
   maxOrbitDistance,
+  notchesToReach,
   maxLeaderFor,
   movingFor,
   nameClaimFor,
@@ -114,6 +115,8 @@ import {
   READABLE_MARK_PX,
   SHELTER,
   SHELTER_FOOTPRINT,
+  clampToRoom,
+  pennantSize,
   SHELTER_PARTS,
   shelterMeasure,
   specimenPlan,
@@ -325,6 +328,51 @@ const RENDER_BODY = 6;
 const RENDER_STRUCTURE = 7;
 /** The lit pane, over its own wall. */
 const RENDER_WINDOW = 8;
+
+/**
+ * How much of the orbit one wheel notch crosses.
+ *
+ * Three's default of 1 moves the radius 5% a notch, which puts the FAR band
+ * fifty-five notches from a settlement — reachable in the sense that a
+ * marathon is walkable. At 2.2 it is a quarter of that, and the near end is
+ * unaffected because `minDistance` is what stops the camera there, not the
+ * step size.
+ */
+const ZOOM_SPEED = 2.2;
+
+/** How far off a hut's inside wall a body must be drawn, in metres. */
+const ROOM_MARGIN_M = 0.32;
+
+/**
+ * The widest a death cairn or a speech ripple may ever be drawn, in metres.
+ *
+ * Belt as well as braces: the size is measured at the mark now, but a mark on
+ * the far side of a continent at FAR still scales with distance, and a ring
+ * that can grow without limit is a ring that will eventually be the whole
+ * frame. An utterance is at most a few metres of ground.
+ */
+const TRANSIENT_MAX_M = 3.2;
+
+/**
+ * How brightly the OTHER people in an open room are drawn.
+ *
+ * Well under one, on purpose. They are context for the being the reader is
+ * following, and a value that lifts them toward bone is a value that adds
+ * coincident figures together until the room is a white mass — which is
+ * exactly what three rounds of reviewers photographed.
+ */
+const INSIDE_BODY_VALUE = 0.55;
+
+/** How far a window's light reaches across the ground, in metres. */
+const POOL_R_M = 2.4;
+/**
+ * And how small it is ever allowed to get on screen.
+ *
+ * A settlement at night has to be visibly inhabited from the band that looks
+ * at settlements. Below this the pool stops being a light and starts being a
+ * rounding error.
+ */
+const POOL_MIN_PX = 3.2;
 const RENDER_TRAIL = 10;
 /** Under the ring, so a match's halo frames the mark rather than covering it. */
 const RENDER_HALO = 11;
@@ -1226,6 +1274,58 @@ function flagMaterial(): THREE.ShaderMaterial {
 }
 
 /**
+ * Firelight — the pane in a wall, and the pool it throws on the ground.
+ *
+ * One shader for both, because they are one light. `uPool` picks which: the
+ * pane is a hot core inside a warm frame, the pool is a soft disc that fades
+ * to nothing at its rim. Both are ADDITIVE and untone-mapped, which is the
+ * whole difference between light and a sticker — round six's pane averaged
+ * with the wall at 62% alpha and sampled (155,145,130) against a wall of
+ * (37,24,15): a grey rectangle. Adding (255,185,90) to that wall cannot come
+ * out grey whatever it is drawn over.
+ *
+ * `uNight` is the only animation: full after dark, nothing by day, and it does
+ * not consult the ghost rule — the lamp belongs to the house, so a hut that
+ * steps aside for the being you are following keeps its window lit.
+ */
+export function emberMaterial(night: { value: number }, pool: boolean): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    side: pool ? THREE.DoubleSide : THREE.FrontSide,
+    uniforms: { uNight: night, uPool: { value: pool ? 1 : 0 } },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform float uNight;
+      uniform float uPool;
+      varying vec2 vUv;
+      void main() {
+        vec2 p = (vUv - 0.5) * 2.0;
+        float d = length(p);
+        // The pane: a hot core out to a third of the way, then a shoulder to
+        // the frame. The pool: a soft disc, brightest under the sill.
+        float pane = smoothstep(1.15, 0.30, max(abs(p.x), abs(p.y))) * 0.75
+                   + smoothstep(0.75, 0.0, d) * 0.55;
+        float glow = smoothstep(1.0, 0.0, d);
+        float a = mix(pane, glow * glow * 0.42, uPool) * uNight;
+        if (a <= 0.004) discard;
+        // 255/185/90 — hearth, not lamp cream. The core runs toward white
+        // because a flame's middle is hotter than its edge.
+        vec3 warm = mix(vec3(1.0, 0.725, 0.353), vec3(1.0, 0.94, 0.80), (1.0 - uPool) * smoothstep(0.6, 0.0, d));
+        gl_FragColor = vec4(warm * a, a);
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+
+/**
  * A view of the same continent the sim runs on, with the beings drawn as the
  * subject rather than as scatter.
  *
@@ -1306,6 +1406,15 @@ export class World3D {
    * people in a hut into one scribble of tangled hoops.
    */
   private beingInside = new Uint8Array(0);
+  /**
+   * Whose room is OPEN — the hut holding the being the reader is following.
+   *
+   * Per occupant, but decided per HUT: a door opens for a room, not for a
+   * person. See `planInside`.
+   */
+  private insideOpen = new Uint8Array(0);
+  /** Where an occupant may be drawn: inside its own floor plan. */
+  private insideAt = new Float32Array(0);
   /** The forward pitch `writeMarkers` actually drew this being at, in radians. */
   private beingLean = new Float32Array(0);
   /**
@@ -1317,7 +1426,6 @@ export class World3D {
    * How deep into its shelter this being stands, 0 at the near wall and 1 at
    * the far one — the depth cue that separates a packed room into people.
    */
-  private insideShade = new Float32Array(0);
   /** How many beings in frame drew a mark of their own — the countable term. */
   private pinsDrawn = 0;
   private instanceCount = 0;
@@ -1350,6 +1458,13 @@ export class World3D {
 
   private readonly structureMeshes = new Map<string, THREE.InstancedMesh>();
   private windows: THREE.InstancedMesh;
+  /** The light each lit window throws on the ground outside it. */
+  private windowPool: THREE.InstancedMesh;
+  /** Where each pool stands, so its screen-pixel floor can be held per frame. */
+  private poolAt = new Float32Array(0);
+  private poolCount = 0;
+  /** 1 after dark, 0 by day — the only thing the firelight shader animates. */
+  private readonly emberFade = { value: 0 };
   private readonly structures: StructureUpdate[] = [];
   private readonly seenStructures = new Set<number>();
 
@@ -1708,6 +1823,14 @@ export class World3D {
     // Far enough out that the whole two kilometres is in one frame, and no
     // further: past this the map is drawing pins over ground nobody is on.
     this.controls.maxDistance = WORLD * 1.35;
+    // A notch that crosses a useful amount of a two-kilometre continent.
+    //
+    // At the default speed a hardware notch moves the radius by 5%, so getting
+    // from a settlement at DEFAULT out to FAR is fifty-five of them — a band
+    // that exists, that the report calls reachable, and that nobody will ever
+    // scroll to. `cameraReport().notchesToFar` is the number this is tuned
+    // against, and the acceptance harness drives a real wheel and counts them.
+    this.controls.zoomSpeed = ZOOM_SPEED;
     this.controls.target.set(0, 40, -WORLD * 0.05);
 
     this.hemi = new THREE.HemisphereLight(DAY_HEMI_SKY.getHex(), DAY_HEMI_GROUND.getHex(), 0.85);
@@ -1737,15 +1860,43 @@ export class World3D {
     this.buildTrees();
     this.buildRocks();
 
-    // Lit windows follow their hut out of the way, or they hang in the air over
-    // a shelter that has stepped aside.
-    // Pale lamp cream, not amber: a reviewer at midnight read warm window light
-    // as starving beings, and #ffc46b is very nearly the starving colour.
-    const windowMat = new THREE.MeshBasicMaterial({ color: 0xf2dcae, transparent: true, opacity: 0, depthWrite: false });
-    applyGhostFade(windowMat, this.foliageFades, this.subjects, 3.5, 11, 0.25, 0.05, 3.1, 2.3, 0.8);
-    this.windows = this.instanced('lit windows', new THREE.PlaneGeometry(0.8, 0.7), windowMat, 64);
+    // Firelight, and it has to LOOK like fire.
+    //
+    // Round six shipped this as a flat cream `MeshBasicMaterial` pane at 0.62
+    // alpha, which over a wall of (37,24,15) composites to (155,145,130): a
+    // grey rectangle taped to a brown box. Three things were wrong and all
+    // three are fixed here. The colour is warm (255,185,90) rather than pale
+    // lamp cream. The blending is ADDITIVE and `toneMapped` is off, so the pane
+    // adds light to the wall instead of averaging with it — a lit window is
+    // brighter than what is around it or it is a sticker. And the shader gives
+    // it a hot core with a soft falloff to the frame, so it reads as a source
+    // rather than as a filled rectangle.
+    //
+    // It no longer takes `applyGhostFade`. A hut that steps aside for the being
+    // you are following switched its own light off precisely when the room
+    // became the subject; the lamp belongs to the house, not to the wall's
+    // opacity.
+    this.windows = this.instanced('lit windows', new THREE.PlaneGeometry(1.15, 0.95), emberMaterial(this.emberFade, false), 64);
     this.windows.renderOrder = RENDER_WINDOW;
     this.scene.add(this.windows);
+
+    // And the light it throws on the ground outside.
+    //
+    // This is what makes a settlement at night read as inhabited from DEFAULT,
+    // where a 1.15 m pane is a third of a pixel: the pool holds a floor in
+    // SCREEN pixels, the way the pins do, so a village after dark is a
+    // scattering of warm points on dark ground rather than a field of black
+    // boxes. Flat on the ground and additive, so it washes the grass at the
+    // wall foot at NEAR and is a point of light at DEFAULT — one object doing
+    // both jobs, because they are the same light.
+    this.windowPool = this.instanced(
+      'window light pools',
+      new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2),
+      emberMaterial(this.emberFade, true),
+      64,
+    );
+    this.windowPool.renderOrder = RENDER_WINDOW - 1;
+    this.scene.add(this.windowPool);
 
     // A low cairn of stones, not a bright marker. Seen from above a pale cone
     // is a sheet of white paper, and at two hundred deaths a day the map filled
@@ -1788,7 +1939,17 @@ export class World3D {
         new THREE.RingGeometry(1.1, 1.42, 44),
         new THREE.RingGeometry(2.5, 2.72, 52),
       ], false)?.rotateX(-Math.PI / 2) ?? new THREE.RingGeometry(1.1, 1.42, 44).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: SELECT_COLOR, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+      // A ground DECAL, and it obeys the depth buffer.
+      //
+      // Round six's version was `depthTest: false` at 0.95 opacity with tone
+      // mapping off, which drew a pure-white band THROUGH the hut it was
+      // standing beside and across the bodies inside it — a reviewer's crop of
+      // a NEAR frame is a blown-out crescent sweeping over a wall. A mark that
+      // paints over the thing it is marking is not a mark. The spike above the
+      // head keeps its see-through-anything property, because "which one is
+      // selected, from across the map" is a real requirement and the spike is
+      // where it belongs; the ring lies on the ground like the ring it is.
+      new THREE.MeshBasicMaterial({ color: SELECT_COLOR, transparent: true, opacity: 0.68, depthTest: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: true }),
     );
     this.selRing.renderOrder = 20;
     this.selRing.visible = false;
@@ -1809,9 +1970,11 @@ export class World3D {
     // the filter's halo and the lit chips — "found" is one channel everywhere.
     this.hoverRing = new THREE.Mesh(
       new THREE.RingGeometry(1.52, 1.86, 40).rotateX(-Math.PI / 2),
+      // Same ruling as the selection ring: on the ground, under the walls,
+      // and not bright enough to be the brightest thing in a night frame.
       new THREE.MeshBasicMaterial({
-        color: 0xf2f7fa, transparent: true, opacity: 0.92, depthTest: false, depthWrite: false,
-        side: THREE.DoubleSide, toneMapped: false,
+        color: 0xf2f7fa, transparent: true, opacity: 0.7, depthTest: true, depthWrite: false,
+        side: THREE.DoubleSide, toneMapped: true,
       }),
     );
     this.hoverRing.renderOrder = 19;
@@ -2677,9 +2840,10 @@ export class World3D {
     this.beingMarkClear = new Uint8Array(cap);
     this.beingPictoClear = new Uint8Array(cap);
     this.beingInside = new Uint8Array(cap);
+    this.insideOpen = new Uint8Array(cap);
+    this.insideAt = new Float32Array(cap * 3);
     this.beingLean = new Float32Array(cap);
     this.beingPose = new Float32Array(cap);
-    this.insideShade = new Float32Array(cap);
     this.stageIds = [new Int32Array(cap), new Int32Array(cap), new Int32Array(cap)];
     for (let bucket = 0; bucket < RING_BUCKETS; bucket++) {
       const mesh = this.ringMeshes[bucket];
@@ -3227,8 +3391,6 @@ export class World3D {
     const dotDim = this.dotDim;
     const flags = this.flags!;
     const filtering = this.highlight !== null;
-    // How much the shelters' own light adds after dark — see the `lift` below.
-    const hearth = 1 + (1 - this.daylight) * 0.62;
     this.figureCount = [0, 0, 0];
     this.ringCount.fill(0);
     let pictoAt = 0;
@@ -3312,13 +3474,22 @@ export class World3D {
       // the arrow is dropped from the geometry rather than drawn where a reader
       // would have to guess whose it is.
       const clear = this.beingMarkClear[i] === 1;
-      // Inside a hut, the ring is the hut's chip's business. Six to eleven
-      // people in one shelter drew six to eleven cream hoops through each
-      // other's, through the ghosted walls, and the result was a white scribble
-      // a reviewer could neither count nor separate. The BODIES stay — nothing
-      // is ever hidden — and the chip over the roof carries how many and in
-      // what state. See `planInside`.
+      // Indoors.
+      //
+      // The building draws them now: an occupied shelter is SOLID, its
+      // occupants are behind its walls, and the chip on its roof carries the
+      // count, the condition mix, the unwell notch and every one of their
+      // names. Four rounds of shading, x-ray and interior light could not make
+      // thirty-four coincident bodies separable, because they are coincident.
+      // See the ruling on `planInside`.
+      //
+      // The room the reader's own subject is standing in is the exception, and
+      // it OPENS: the walls ghost for the selected being (which is a subject,
+      // so `updateSubjects` already clears them), that being is drawn normally,
+      // and everybody else in the room is a dim flat silhouette — present, so
+      // the room reads as occupied, and never bright enough to blow out.
       const inside = this.beingInside[i] === 1;
+      if (inside && this.insideOpen[i] !== 1) continue;
       if (!inside) {
         const bucket = ringBucket(ringStyleFor(cond, act), stageCore(stage, this.band), clear);
         const ringMesh = this.ringMeshes[bucket]!;
@@ -3357,7 +3528,11 @@ export class World3D {
       // whose answer changes between a reader looking and a reader pressing.
       this.beingLean[i] = pose.lean;
       this.beingPose[i] = poseLean(act, form.stoop);
-      this.dummy.position.set(sx, surface + pose.bob, sz);
+      // Inside an OPEN room, the body is drawn where the floor plan allows and
+      // not where the sim happens to have put it — see `clampIntoRoom`.
+      const bx = inside ? this.insideAt[i * 3]! : sx;
+      const bz = inside ? this.insideAt[i * 3 + 2]! : sz;
+      this.dummy.position.set(bx, surface + pose.bob, bz);
       this.dummy.rotation.set(pose.lean, heading, pose.roll);
       this.dummy.scale.setScalar(height);
       this.dummy.updateMatrix();
@@ -3368,25 +3543,30 @@ export class World3D {
       // lit body next to an unlit ring reads as a grey pin inside a white hoop
       // unless it is lifted to meet it.
       //
-      // Except inside a shelter, where there IS no ring beside it — the chip on
-      // the roof carries them all — so the lift has nothing to meet and only
-      // blows the figures out.
-      //
-      // Inside, the body carries a DEPTH cue instead: the people at the near
-      // wall keep their value and the ones at the far wall are pulled down by
-      // half, which is what a room lit from one side looks like and what turns
-      // a stack of overlapping bone figures into a front row and a back row.
-      // And at night the shelter lights its own people — the pane outside is
-      // the same lamp — so the room does not go to a dark smudge the moment it
-      // becomes the only place anybody is.
-      const lift = inside ? (1.32 - 0.52 * this.insideShade[i]!) * hearth : 1.45;
+      // Except in an open room, where the only body that is the subject is the
+      // SELECTED one — and it is not `inside`, so it takes the ordinary lift.
+      // The others are the room's furniture: drawn flat and dark so the space
+      // reads as occupied without competing with the person you came to watch,
+      // and low enough that they cannot blow out to white however many of them
+      // share a pixel. That last property is the whole point; a lift of 1.32
+      // over thirty-four overlapping figures is how the white cloud was made.
+      const lift = inside ? INSIDE_BODY_VALUE : 1.45;
       mesh.setColorAt(at, this.color.setHex(bodyTint(hue)).multiplyScalar(match ? lift : lift * DIM_BODY));
 
       // The unwell flag. Drawn wherever this being is drawn at all — inside a
       // shelter included, because "who in here is ill" is the question a chip's
       // number cannot answer — and for nobody who is well. See `flagMaterial`.
       if (flagAt < flags.instanceMatrix.count && conditionWord(cond, act) !== 'well') {
-        const size = Math.max(FLAG_MIN_PX * this.worldPerPx * this.distanceTo(i), height * 0.52);
+        // Scaled to the PERSON carrying it, with a floor in screen pixels.
+        //
+        // `flagGeometry` reaches 1.085 above its anchor and the anchor sits a
+        // fifth of the size above the head, so the mark's whole height is
+        // 1.305 × `size`. Round six set `size` from `height × 0.52`, which is
+        // 0.68 of a figure, and a reviewer measured a 115 px flag over a 100 px
+        // adult on the specimen grid. `PENNANT_OF_FIGURE` is the cap this
+        // obeys now, and the 13 px floor still wins out where a being is two
+        // pixels tall — which is the case the pennant exists for.
+        const size = pennantSize(height, this.worldPerPx * this.distanceTo(i));
         this.dummy.position.set(sx, this.beingTop[i]! + size * 0.22, sz);
         this.dummy.rotation.set(0, 0, 0);
         this.dummy.scale.setScalar(size);
@@ -3523,6 +3703,11 @@ export class World3D {
         // ten-pixel beings scattered across a valley would otherwise ghost
         // every tree in it, and the picture goes to fog for nobody's benefit.
         if (this.bodyPixelsOf(i) < DETAIL_MIN_PX) continue;
+        // Somebody indoors is not a subject anything has to step aside for —
+        // they are indoors, which is a place the picture is now allowed to put
+        // people. It is this one line that makes an occupied hut SOLID: its
+        // own occupants were what asked it to dissolve. See `planInside`.
+        if (this.beingInside[i] === 1) continue;
         // The middle of the figure, not its feet: a wall that hides a being
         // from the knees up is hiding the being.
         const mid = this.beingPos[i * 3 + 1]! + (this.beingTop[i]! - this.beingPos[i * 3 + 1]!) * 0.55;
@@ -3685,12 +3870,27 @@ export class World3D {
       const mat = this.windows.material as THREE.Material;
       this.scene.remove(this.windows);
       this.windows.geometry.dispose();
-      const grown = this.instanced('lit windows', new THREE.PlaneGeometry(0.8, 0.7), mat, capacityFor(shelters));
+      const grown = this.instanced('lit windows', new THREE.PlaneGeometry(1.15, 0.95), mat, capacityFor(shelters));
       grown.renderOrder = RENDER_WINDOW;
       grown.instanceMatrix.setUsage(THREE.StaticDrawUsage);
       this.scene.add(grown);
       this.windows = grown;
     }
+    if (this.windowPool.instanceMatrix.count < shelters) {
+      const mat = this.windowPool.material as THREE.Material;
+      this.scene.remove(this.windowPool);
+      this.windowPool.geometry.dispose();
+      const grown = this.instanced(
+        'window light pools',
+        new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2),
+        mat,
+        capacityFor(shelters),
+      );
+      grown.renderOrder = RENDER_WINDOW - 1;
+      this.scene.add(grown);
+      this.windowPool = grown;
+    }
+    if (this.poolAt.length < capacityFor(shelters) * 3) this.poolAt = new Float32Array(capacityFor(shelters) * 3);
 
     if (this.structureAt.length < this.structures.length * 3) {
       this.structureAt = new Float32Array(capacityFor(this.structures.length) * 3);
@@ -3720,13 +3920,17 @@ export class World3D {
         // On a SIDE wall: the front one is where the doorway is now, and a
         // lit pane hanging in the middle of a doorway is a bug with a glow.
         this.dummy.rotation.set(0, yaw + Math.PI / 2, 0);
-        this.dummy.position.set(
-          st.x - HALF + Math.cos(yaw) * (SHELTER.room / 2 + 0.02),
-          base + 1.4,
-          st.y - HALF - Math.sin(yaw) * (SHELTER.room / 2 + 0.02),
-        );
+        const wx = st.x - HALF + Math.cos(yaw) * (SHELTER.room / 2 + 0.06);
+        const wz = st.y - HALF - Math.sin(yaw) * (SHELTER.room / 2 + 0.06);
+        this.dummy.position.set(wx, base + 1.35, wz);
         this.dummy.updateMatrix();
-        this.windows.setMatrixAt(windowAt++, this.dummy.matrix);
+        this.windows.setMatrixAt(windowAt, this.dummy.matrix);
+        // The pool stands a little further out than the pane, on the ground —
+        // light falls away from a window, not straight down through the wall.
+        this.poolAt[windowAt * 3] = wx + Math.cos(yaw) * 0.5;
+        this.poolAt[windowAt * 3 + 1] = base + 0.07;
+        this.poolAt[windowAt * 3 + 2] = wz - Math.sin(yaw) * 0.5;
+        windowAt++;
       }
     }
     for (const [kind, mesh] of this.structureMeshes) {
@@ -3735,7 +3939,47 @@ export class World3D {
     }
     this.windows.count = windowAt;
     this.windows.instanceMatrix.needsUpdate = true;
+    this.poolCount = windowAt;
     this.dummy.rotation.set(0, 0, 0);
+  }
+
+  /**
+   * Hold each light pool at a readable size on screen.
+   *
+   * 2.4 m of lit grass is the truth of it at NEAR and a third of a pixel at
+   * DEFAULT, and a settlement after dark that draws nothing at DEFAULT is a
+   * settlement a reader cannot tell from empty ground. So the pool takes the
+   * same treatment the pins take: a floor in SCREEN pixels. It is the only
+   * thing in this view that grows in metres to stay the same size, and it is
+   * allowed to because it is a MAP mark for "somebody is home", exactly like
+   * the ring a being gets when it is too small to be a picture.
+   */
+  private updatePools(night: number): void {
+    const mesh = this.windowPool;
+    if (night < 0.02 || this.poolCount === 0) {
+      mesh.count = 0;
+      mesh.visible = false;
+      return;
+    }
+    const cam = this.camera.position;
+    let at = 0;
+    for (let s = 0; s < this.poolCount; s++) {
+      const x = this.poolAt[s * 3]!;
+      const y = this.poolAt[s * 3 + 1]!;
+      const z = this.poolAt[s * 3 + 2]!;
+      const d = Math.hypot(x - cam.x, y - cam.y, z - cam.z);
+      const r = Math.max(POOL_R_M, POOL_MIN_PX * this.worldPerPx * d);
+      this.dummy.position.set(x, y, z);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.scale.setScalar(r);
+      this.dummy.updateMatrix();
+      mesh.setMatrixAt(at, this.dummy.matrix);
+      at++;
+    }
+    this.dummy.scale.setScalar(1);
+    mesh.count = at;
+    mesh.visible = at > 0;
+    mesh.instanceMatrix.needsUpdate = true;
   }
 
   // ── Transients ─────────────────────────────────────────────────────────────
@@ -3768,14 +4012,25 @@ export class World3D {
   private updateTransients(t: number): void {
     // Deaths and utterances are map marks too, so they take the map's unit —
     // a cairn the size of the ring a being stood in, not the size of a being.
-    const scale = this.annotationAt(0, 0, 0) / RING_R * 0.42;
+    //
+    // Measured at the MARK, not at the world origin. `annotationAt(0, 0, 0)`
+    // is the annotation radius for something standing at the middle of the
+    // continent, and from a settlement on the coast that is most of a
+    // kilometre away: the unit came out at nine metres instead of three
+    // quarters of one, and an utterance drew a thirty-metre white ring through
+    // the hut beside it. That is the "giant white cluster ring blowing out to
+    // pure white" in a reviewer's NEAR crop, and the soap-bubble discs in his
+    // MID one. It is one wrong argument, and it has been in every round.
+    const markScale = (x: number, y: number, z: number): number =>
+      Math.min(this.annotationAt(x, y, z) / RING_R * 0.42, TRANSIENT_MAX_M);
     for (let i = 0; i < DEATH_SLOTS; i++) {
       const born = this.deathBorn[i]!;
       const age = born === 0 ? 2 : (t - born) / DEATH_FADE_S;
       if (age >= 1 || age < 0) {
         this.dummy.scale.setScalar(0);
       } else {
-        this.dummy.scale.setScalar(scale * 0.8 * (1 - age * age));
+        const s = markScale(this.deathAt[i * 3]!, this.deathAt[i * 3 + 1]!, this.deathAt[i * 3 + 2]!);
+        this.dummy.scale.setScalar(s * 0.8 * (1 - age * age));
       }
       this.dummy.position.set(this.deathAt[i * 3]!, this.deathAt[i * 3 + 1]!, this.deathAt[i * 3 + 2]!);
       this.dummy.rotation.set(0, 0, 0);
@@ -3791,17 +4046,21 @@ export class World3D {
       const age = born === 0 ? 2 : (t - born) / SPEECH_FADE_S;
       const live = age >= 0 && age < 1;
       const fade = live ? 1 - age : 0;
+      const rs = markScale(this.rippleAt[i * 3]!, this.rippleAt[i * 3 + 1]!, this.rippleAt[i * 3 + 2]!);
       this.dummy.position.set(this.rippleAt[i * 3]!, this.rippleAt[i * 3 + 1]!, this.rippleAt[i * 3 + 2]!);
       this.dummy.rotation.set(0, 0, 0);
-      this.dummy.scale.setScalar(live ? scale * (0.5 + age * 2.6) : 0);
+      this.dummy.scale.setScalar(live ? rs * (0.5 + age * 2.6) : 0);
       this.dummy.updateMatrix();
       this.ripples.setMatrixAt(i, this.dummy.matrix);
-      this.ripples.setColorAt(i, this.color.setRGB(0.5 * fade, 0.85 * fade, 0.62 * fade));
+      // Faded well down as well as sized properly: additive white at 0.9 over
+      // a night frame is the brightest thing on the screen, and an utterance
+      // is not the subject of any frame.
+      this.ripples.setColorAt(i, this.color.setRGB(0.28 * fade, 0.48 * fade, 0.35 * fade));
       if (live && this.threadHas[i] === 1) {
         this.writeArc(
           pos, col, i, ARC_SEGMENTS,
-          this.rippleAt[i * 3]!, this.rippleAt[i * 3 + 1]! + scale, this.rippleAt[i * 3 + 2]!,
-          this.threadTo[i * 3]!, this.threadTo[i * 3 + 1]! + scale, this.threadTo[i * 3 + 2]!,
+          this.rippleAt[i * 3]!, this.rippleAt[i * 3 + 1]! + rs, this.rippleAt[i * 3 + 2]!,
+          this.threadTo[i * 3]!, this.threadTo[i * 3 + 1]! + rs, this.threadTo[i * 3 + 2]!,
           0.34 * fade, 0.82 * fade, 0.58 * fade,
         );
       } else {
@@ -3844,7 +4103,10 @@ export class World3D {
     const camDist = this.camera.position.distanceTo(this.controls.target);
     const scale = (200 / Math.max(200, camDist)) ** 0.85;
     haze.density = Math.max(HAZE_FLOOR, HAZE_NEAR * scale);
-    (this.windows.material as THREE.MeshBasicMaterial).opacity = night * 0.62;
+    // Firelight, in one number, for the pane and the pool alike. Not routed
+    // through the ghost rule: a hut that steps aside keeps its lamp lit.
+    this.emberFade.value = night;
+    this.updatePools(night);
     // Bodies keep their own colour as the light goes. The land does not.
     for (const lift of this.bodyNight) lift.value = night * 0.62;
   }
@@ -4349,13 +4611,19 @@ export class World3D {
    */
   private reprojectInside(): void {
     if (!this.insideAny) return;
+    const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
     for (let k = 0; k < this.screenPoints.length; k++) {
       const i = this.screenIndex[k]!;
       if (this.beingInside[i] !== 1) continue;
+      // The CLAMPED body, because that is the one that gets drawn — see
+      // `clampIntoRoom`. Reporting the sim's position for a body the picture
+      // has moved inside a wall is the oldest defect in this file wearing a
+      // different hat.
       const mid = (this.beingPos[i * 3 + 1]! + this.beingTop[i]!) * 0.5;
-      this.probe.set(this.beingPos[i * 3]!, mid, this.beingPos[i * 3 + 2]!).project(this.camera);
+      this.probe.set(this.insideAt[i * 3]!, mid, this.insideAt[i * 3 + 2]!).project(this.camera);
       if (this.probe.z > 1) continue;
+      this.screenPoints[k]!.x = ((this.probe.x + 1) / 2) * w;
       this.screenPoints[k]!.y = ((1 - this.probe.y) / 2) * h;
     }
   }
@@ -4551,11 +4819,20 @@ export class World3D {
         px = Math.min(Math.max(px, 4), w - 4);
         py = Math.min(Math.max(py, 4), h - 4);
       }
-      if (housed) {
+      // The outline is drawn only where it IS the group.
+      //
+      // In a band that collapses the pins into a number there is nothing
+      // inside the shape to look at, so the shape has to carry everybody it
+      // stands in for. In a band that draws all of them as themselves it
+      // carries nothing — and a reviewer measured exactly that: perfect
+      // screen-space circles 140 px across for knots of two and three,
+      // overlapping four deep over a ground plane seen at a grazing angle,
+      // "the most conspicuous thing in a MID frame and the least informative".
+      if (housed || !collapses) {
         if (hull.style.display !== 'none') hull.style.display = 'none';
       } else {
         hull.style.display = 'block';
-        const cls = collapses ? 'whull full' : 'whull';
+        const cls = 'whull full';
         if (hull.className !== cls) hull.className = cls;
         hull.style.width = `${Math.round(rx * 2)}px`;
         hull.style.height = `${Math.round(ry * 2)}px`;
@@ -4610,11 +4887,38 @@ export class World3D {
    * neighbour whose mark overlaps theirs. Three people standing apart in a big
    * hut are three readable beings and keep their marks. The selected being
    * always keeps its own — it is the one promise every band makes.
+   *
+   * ## The ruling, after four rounds of losing to the same picture
+   *
+   * Rounds four, five and six each tried to make a crowd inside a hut
+   * READABLE through a ghosted wall — x-ray, depth shading, a keyline, an
+   * interior light — and each time a reviewer looked at the result and said
+   * the same thing: a white cloud, a bone-pile, "a picket of bollards bursting
+   * through the walls". That was never going to work, and the reason is
+   * arithmetic rather than shading. Thirty-four people occupy a few square
+   * metres of floor; at any camera that can see the hut, their bodies are the
+   * same pixels. No amount of light separates coincident objects.
+   *
+   * So the picture stops trying. **An occupied shelter is SOLID.** Its
+   * occupants are hidden by the building, exactly as in life, and the chip on
+   * its roof is the instrument reading: the exact count, the condition mix,
+   * the unwell notch, every occupant's name on hover, each name a button that
+   * frames and selects that being. Nothing is lost — everything the bodies
+   * could not say, the chip says exactly — and what a reader sees instead of a
+   * white mass is a village of closed huts with numbers on them, which is what
+   * a village of closed huts looks like.
+   *
+   * The one exception is the being you are FOLLOWING. Lose sight of your own
+   * subject when it walks through a door and the instrument has taken
+   * something away, so the hut holding the selected being OPENS: its walls
+   * ghost, that being is drawn normally, and the others in the room are drawn
+   * as dim flat silhouettes that cannot blow out to white. `insideOpen` is
+   * that flag, and it is per HUT rather than per being, because a door is.
    */
   private planInside(): Cluster[] {
     this.insideCount = 0;
     this.beingInside.fill(0, 0, this.instanceCount);
-    this.insideShade.fill(0, 0, this.instanceCount);
+    this.insideOpen.fill(0, 0, this.instanceCount);
     this.insideAny = false;
     // The close bands only. Out where a being is a pin, the crowd chips already
     // own this problem and a hut is a few pixels of roof.
@@ -4631,15 +4935,19 @@ export class World3D {
       const hy = this.structureAt[s * 3 + 1]!;
       const hz = this.structureAt[s * 3 + 2]!;
       const members: number[] = [];
+      // Is the reader's own subject in this room? Asked before the selected
+      // being is skipped below, because the answer is about the HUT.
+      let open = false;
       for (let k = 0; k < this.screenPoints.length; k++) {
         const i = this.screenIndex[k]!;
         const id = this.ids[i]!;
-        if (id === this.selectedId || isSpecimenId(id)) continue;
+        if (isSpecimenId(id)) continue;
         const by = this.beingPos[i * 3 + 1]!;
         if (by < hy - 1.5 || by > hy + SHELTER.ridge) continue;
         const dx = this.beingPos[i * 3]! - hx;
         const dz = this.beingPos[i * 3 + 2]! - hz;
         if (dx * dx + dz * dz > reach * reach) continue;
+        if (id === this.selectedId) { open = true; continue; }
         members.push(k);
       }
       if (members.length < INSIDE_MIN) continue;
@@ -4659,18 +4967,7 @@ export class World3D {
       let y0 = Infinity;
       let x1 = -Infinity;
       let y1 = -Infinity;
-      // How deep each occupant stands, normalised across THIS shelter — the
-      // depth cue the bodies are shaded by. Measured from the eye and scaled to
-      // the room rather than to the world, so a hut read from two metres and
-      // one read from twenty separate their people the same way.
-      let nearest = Infinity;
-      let farthest = -Infinity;
-      for (const m of members) {
-        const depth = this.distanceTo(this.screenIndex[m]!);
-        if (depth < nearest) nearest = depth;
-        if (depth > farthest) farthest = depth;
-      }
-      const span = Math.max(0.4, farthest - nearest);
+      const yawNow = hash2(this.structures[s]!.id, this.structures[s]!.builtBy) * Math.PI * 2;
       for (const m of members) {
         const p = this.screenPoints[m]!;
         const i = this.screenIndex[m]!;
@@ -4680,7 +4977,13 @@ export class World3D {
         x1 = Math.max(x1, p.x + r);
         y1 = Math.max(y1, p.y + r);
         this.beingInside[i] = 1;
-        this.insideShade[i] = Math.min(1, (this.distanceTo(i) - nearest) / span);
+        if (open) this.insideOpen[i] = 1;
+        // Where this body may be DRAWN, if the room is open: inside the floor
+        // plan and nowhere else. The sim is entitled to put a being on the
+        // wall line — `reach` deliberately takes half a metre past the
+        // footprint — but a body standing through a wall reads as a broken
+        // renderer, which is precisely what a reviewer called it.
+        this.clampIntoRoom(i, hx, hz, yawNow);
       }
       // The ROOF APEX, exactly — not nine tenths of the way up it. Round eight
       // hung the number off the top of an ellipse drawn round the people's own
@@ -4688,7 +4991,7 @@ export class World3D {
       // crossing the roof and its leader running into the tree behind: a
       // reviewer's first blind reading was "a crowd of 18 somewhere behind that
       // tree". The number belongs to the BUILDING, so it hangs on the building.
-      const yaw = hash2(this.structures[s]!.id, this.structures[s]!.builtBy) * Math.PI * 2;
+      const yaw = yawNow;
       const at = out.length;
       this.insideAnchors[at * 3] = hx;
       this.insideAnchors[at * 3 + 1] = hy + measure.ridge;
@@ -4711,6 +5014,29 @@ export class World3D {
     this.insideCount = out.length;
     this.insideAny = out.length > 0;
     return out;
+  }
+
+  /**
+   * Pull an occupant's DISPLAY position inside its own hut's floor plan.
+   *
+   * The sim is allowed to stand somebody on the wall line — `reach` counts
+   * anyone within half a metre of the footprint as indoors, which is right,
+   * because they are. What the picture may not do is DRAW them there: a
+   * reviewer's NEAR crop of a sixty-three-person shelter is a picket of bodies
+   * pushing straight through both side walls, and no reading of that image
+   * ends anywhere but "the renderer is broken".
+   *
+   * So the drawn position is clamped into the room, in the hut's own rotated
+   * frame, with a body's half-width of margin off each wall. `worldPositionOf`
+   * still answers where the sim put them; everything about the PICTURE — the
+   * body, the screen point, the picker's box — uses this.
+   */
+  private clampIntoRoom(i: number, hx: number, hz: number, yaw: number): void {
+    const half = Math.max(0.1, SHELTER.room / 2 - SHELTER.wallThickness - ROOM_MARGIN_M);
+    const at = clampToRoom(this.beingPos[i * 3]! - hx, this.beingPos[i * 3 + 2]! - hz, yaw, half);
+    this.insideAt[i * 3] = hx + at.x;
+    this.insideAt[i * 3 + 1] = this.beingPos[i * 3 + 1]!;
+    this.insideAt[i * 3 + 2] = hz + at.z;
   }
 
   /**
@@ -5552,7 +5878,11 @@ export class World3D {
     const carried = !bandShowsDetail(this.band) || bodyPx >= XRAY_MIN_BODY_PX;
     const drawnReason = !inFrame ? 'out of frame'
       : collapsed ? 'counted by a crowd chip'
-        : chip !== null ? 'offered through its shelter’s chip'
+        // Indoors, and hidden by the building it is indoors in. Reachable —
+        // the roof chip's card names every occupant and a click on a name
+        // selects that one — but not pointable in the picture, because there
+        // is nothing of it in the picture to point at. See `planInside`.
+        : chip !== null ? 'indoors, counted on its shelter’s roof'
           : markPx < READABLE_MARK_PX ? 'drawn too small to read'
             : tooSmallForDetail ? 'smaller than the band draws detail at'
               : behindLand && !carried ? 'behind the land, too small to x-ray'
@@ -6380,12 +6710,25 @@ export class World3D {
     worldPerPx: number; figurePx: number; stopFigurePx: number; enterFarPx: number;
     band: ZoomBand; canvasW: number; canvasH: number; projectionH: number;
     atStop: boolean; farReachable: boolean;
+    zoomSpeed: number; notchesToFar: number;
   } {
     const distance = this.camera.position.distanceTo(this.controls.target);
     const stop = this.controls.maxDistance;
     const stopPx = figurePxAt(stop, this.worldPerPx);
     const enterFarPx = BAND_EDGE_PX[0]! * (1 - BAND_HYSTERESIS);
     return {
+      // What the WHEEL would have to do, in the controls' own arithmetic.
+      //
+      // `farReachable` has always answered a question about the orbit's STOP,
+      // and a reviewer who drove eighty notches and stayed in DEFAULT read it
+      // as a claim about the mouse. Both are now printed: the stop is in FAR,
+      // AND this is how many notches of a real wheel it takes to get there
+      // from here — computed from `zoomSpeed` and three's own zoom scale, so
+      // it is the same number the camera moves by rather than a second model
+      // of it. A bar that says "reachable" over a figure of 90 is a bar a
+      // reader can argue with; one that says 26 is one they can check.
+      zoomSpeed: this.controls.zoomSpeed,
+      notchesToFar: notchesToReach(distance, enterFarPx, this.worldPerPx, this.controls.zoomSpeed),
       distance,
       minDistance: this.controls.minDistance,
       maxDistance: stop,

@@ -1005,8 +1005,8 @@ describe('the offered set holds still', () => {
 describe('the strip counts the unwell it is withholding', () => {
   it('says how many of the people on their huts are not well', () => {
     const claim = nameClaimFor('near', 12.34, 5, 55, 7);
-    expect(claim).toContain('55 more counted on their huts');
-    expect(claim).toContain('7 unwell counted on their huts');
+    expect(claim).toContain('55 indoors, counted on their roofs');
+    expect(claim).toContain('7 of them unwell');
   });
 
   it('says nothing when there is nothing to say', () => {
@@ -1015,11 +1015,11 @@ describe('the strip counts the unwell it is withholding', () => {
   });
 
   it('prints it at MID too, where most of a settlement is on a chip', () => {
-    expect(nameClaimFor('mid', 200, 10, 55, 4)).toContain('4 unwell counted on their huts');
+    expect(nameClaimFor('mid', 200, 10, 55, 4)).toContain('4 of them unwell');
   });
 
   it('keeps the clause even when nobody is named at all', () => {
     expect(nameClaimFor('near', 0, 0, 12, 2))
-      .toBe('0 named · nearest first · 12 more counted on their huts · 2 unwell counted on their huts');
+      .toBe('0 named · nearest first · 12 indoors, counted on their roofs · 2 of them unwell');
   });
 });

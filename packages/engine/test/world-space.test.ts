@@ -10,6 +10,10 @@ import {
   at,
   pointOf,
 } from '../src/index.js';
+// Straight from the edge module rather than the barrel: `defineSpace` is a
+// world-construction tool and `UngatedSpaceError` is what it throws at a world
+// author. Neither belongs on the public surface a host reads.
+import { UngatedSpaceError, defineSpace } from '../src/contract/edges.js';
 import type { AgentSnapshot, PlaceRef, SimEvent, SpaceOps, WorldView } from '../src/index.js';
 import { memoryFromEvent } from '../src/memory/memoryFromEvent.js';
 import { SuccessionMiner } from '../src/learning/SuccessionMiner.js';
@@ -738,6 +742,105 @@ describe('a codec refuses another world’s place, by name (W1-B4 round 4)', () 
     expect(foragerEdges.codec.encode(foragerPlace)).toEqual({ x: 748.25, y: -311.5 });
     expect(town.codec.encode(town.at(3, 9))).toEqual({ x: 3, y: 9 });
     expect(toyCodec.encode(spot('ridge'))).toEqual({ spot: 'ridge' });
+  });
+});
+
+/**
+ * ─── THERE IS NO LAYER BETWEEN A CALL AND THE READ (round 5, the perf round) ─
+ *
+ * Round 4 published a world's ops through a wrapper built in `defineSpace`:
+ * every call asked `codec.owns(a)`, then `codec.owns(b)`, then forwarded. It
+ * was correct and it was the whole of the step's regression — −3.2% of tick
+ * rate at 256 beings and −7.2% at 1,000, against a 3% budget, on a CPU profile
+ * that showed parity because an extra frame and an extra object shape are not
+ * work a sampler can see. Bypassing it measured +0.12%.
+ *
+ * The check now lives inside the world's own place class, where `a.#x` IS the
+ * ownership test. The two tests below are the ones that keep it there, and
+ * NEITHER OF THEM IS A TIMING TEST — a timing test on a shared machine fails on
+ * Tuesdays. The first is identity: what a world publishes must be the very
+ * functions it wrote. The second is the reason that is safe to demand:
+ * `defineSpace` refuses, loudly, to publish a space whose ops do not refuse a
+ * stranger themselves. Delete the refusals from `plane.ts` to make it faster
+ * and the world stops being constructible.
+ */
+describe('a world publishes its own functions, and must have written the refusal into them', () => {
+  it('hands back exactly what it was given — no wrapper object, no forwarding closure', () => {
+    const plane = createPlaneSpace();
+    const twin = createPlaneSpace();
+    // Each world's ops are ITS OWN class's statics, so two worlds never share
+    // one: that is what makes the ownership check exact per instance rather
+    // than structural, and it is why the check can live inside the function.
+    expect(typeof plane.space.distance).toBe('function');
+    expect(plane.space.distance).not.toBe(twin.space.distance);
+    // The published `SpaceOps` is the object the world built, frozen in place.
+    expect(Object.isFrozen(plane.space)).toBe(true);
+    expect(Object.isFrozen(plane.codec)).toBe(true);
+    expect(Object.isFrozen(foragerAdapter.space)).toBe(true);
+
+    // The load-bearing claim, stated where it cannot be fudged: `defineSpace`
+    // returns its arguments, so a world's own function IS what a mind calls.
+    const ops: SpaceOps = plane.space;
+    const echoed = defineSpace({ ops, codec: plane.codec });
+    expect(echoed.space).toBe(ops);
+    expect(echoed.codec).toBe(plane.codec);
+    for (const op of ['distance', 'direction', 'within', 'equal', 'label'] as const) {
+      expect(echoed.space[op], op).toBe(ops[op]);
+    }
+    expect(echoed.codec.encode).toBe(plane.codec.encode);
+  });
+
+  /**
+   * THE REPLACEMENT FOR THE WRAPPER. A world author who writes the obvious
+   * thing — read `x` off whatever came in — used to be caught by the gate that
+   * was wrapped around them. Now they are caught here, at construction, with
+   * the op and the argument named.
+   */
+  it('refuses to publish a space that answers for a place it did not mint', () => {
+    const real = createPlaneSpace();
+    const pair = (p: PlaceRef): { x: number; y: number } => p as unknown as { x: number; y: number };
+    const naive: SpaceOps = {
+      ...real.space,
+      // Round 2's gate, and W1-C's town, in one line: structural, not owned.
+      distance: (a, b) => Math.hypot(pair(b).x - pair(a).x, pair(b).y - pair(a).y),
+    };
+    let thrown: unknown;
+    try {
+      defineSpace({ ops: naive, codec: real.codec });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(UngatedSpaceError);
+    const error = thrown as UngatedSpaceError;
+    expect(error.name).toBe('UngatedSpaceError');
+    expect(error.op).toBe('distance');
+    expect(error.argument).toBe(1);
+    expect(error.message).toMatch(/must throw ForeignPlaceError/);
+  });
+
+  it('refuses one that throws the wrong thing, or refuses the wrong argument', () => {
+    const real = createPlaneSpace();
+    const raw: SpaceOps = {
+      ...real.space,
+      // The raw `TypeError` round 3 shipped at the serialisation seam.
+      label: (place) => (place as unknown as { x: number }).x.toFixed(0),
+    };
+    expect(() => defineSpace({ ops: raw, codec: real.codec })).toThrow(UngatedSpaceError);
+
+    const misnamed: SpaceOps = {
+      ...real.space,
+      within: (a, b, r) => {
+        if (!real.codec.owns(b)) throw new ForeignPlaceError('within', 1);
+        return real.space.within(a, b, r);
+      },
+    };
+    expect(() => defineSpace({ ops: misnamed, codec: real.codec })).toThrow(/refused as `within` argument 1/);
+  });
+
+  /** …and the two real worlds got through it, or the check above proves nothing. */
+  it('is not vacuous — both of this repo’s worlds are built through it', () => {
+    expect(foragerAdapter.space.distance(at(0, 0), at(3, 4))).toBe(5);
+    expect(toyWorld.space.distance(spot('hollow'), spot('well'))).toBe(2);
   });
 });
 

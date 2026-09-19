@@ -241,6 +241,18 @@ export interface WorldProbe {
     /** The canvas on screen, and the canvas the projection was derived from. */
     canvasW: number; canvasH: number; projectionH: number;
     atStop: boolean; farReachable: boolean;
+    /**
+     * And what the WHEEL would have to do, in the controls' own arithmetic.
+     *
+     * `farReachable` answers a question about the orbit's STOP. A reviewer who
+     * drove eighty notches and stayed in DEFAULT read it as a question about
+     * the mouse, and both readings are fair, so both are printed:
+     * `notchesToFar` is how many notches of a real wheel it takes from HERE,
+     * computed from `zoomSpeed` and three's own zoom scale rather than from a
+     * second model of it. Round six's report said reachable over a figure of
+     * eighty-nine.
+     */
+    zoomSpeed: number; notchesToFar: number;
   };
   /** How tall a grown being stands on screen right now, in CSS pixels. */
   bandPixels(): number;

@@ -89,6 +89,58 @@ export const OUTLINE_MIN_BODY_PX = 6;
  */
 export const FLAG_MIN_PX = 13;
 
+/**
+ * How tall the pennant stands above its anchor, per unit of instance scale.
+ *
+ * `flagGeometry`'s mast runs 0 → 1 with an 0.085 keyline grow, and the anchor
+ * is lifted a fifth of the scale above the head. A magic 1.305 spread across
+ * two files is how a mark ends up taller than the person carrying it.
+ */
+export const FLAG_TOTAL_H = 1.085 + 0.22;
+
+/** And the most of a being's own height a mark ABOUT it may ever occupy. */
+export const PENNANT_OF_FIGURE = 0.55;
+
+/**
+ * How big to draw one being's pennant, in world units of instance scale.
+ *
+ * Two rules, and the larger wins because they are about different failures.
+ * The floor is in SCREEN pixels and exists so a starving being two pixels tall
+ * is still findable — a reviewer found one from the flag alone, which is the
+ * whole reason the mark exists. The cap is in the BEING's own height and exists
+ * because the same reviewer measured a 115 px flag over a 100 px adult on the
+ * specimen grid and called it "detached and oversized where it matters most".
+ *
+ * `metresPerPx` is `worldPerPx × distance` — how much world one screen pixel
+ * covers at this being.
+ */
+export function pennantSize(figureHeightM: number, metresPerPx: number): number {
+  return Math.max(FLAG_MIN_PX * metresPerPx, (figureHeightM * PENNANT_OF_FIGURE) / FLAG_TOTAL_H);
+}
+
+/** How tall that pennant then stands, in world units — what the cap is about. */
+export function pennantHeight(figureHeightM: number, metresPerPx: number): number {
+  return pennantSize(figureHeightM, metresPerPx) * FLAG_TOTAL_H;
+}
+
+/**
+ * Pull a point into a hut's floor plan, in the hut's own rotated frame.
+ *
+ * `dx`/`dz` are the offset from the hut's centre in world axes, `yaw` is how
+ * far the building is turned, and `half` is the half-width of the space a body
+ * may stand in. The picture is not allowed to draw somebody through a wall
+ * however the sim placed them: a reviewer's NEAR crop of a sixty-three-person
+ * shelter is a picket of bodies pushing out through both side walls, and
+ * nobody reads that as a crowded room.
+ */
+export function clampToRoom(dx: number, dz: number, yaw: number, half: number): { x: number; z: number } {
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  const lx = Math.min(Math.max(dx * cos - dz * sin, -half), half);
+  const lz = Math.min(Math.max(dx * sin + dz * cos, -half), half);
+  return { x: lx * cos + lz * sin, z: -lx * sin + lz * cos };
+}
+
 // ── The subjects the scenery has to step aside for ───────────────────────────
 
 /**

@@ -1,5 +1,6 @@
 import { defineSpace } from '../../src/contract/edges.js';
 import type { SpaceCodec } from '../../src/contract/edges.js';
+import { ForeignPlaceError } from '../../src/contract/space.js';
 import type { DirectionId, PlaceRef, SpaceOps } from '../../src/contract/space.js';
 
 /**
@@ -21,6 +22,13 @@ import type { DirectionId, PlaceRef, SpaceOps } from '../../src/contract/space.j
  * world is the place a shortcut would be most tempting and least noticed, so it
  * takes the same medicine — which is also what makes "the continent refuses a
  * toy place" a test of ownership rather than of two different field names.
+ *
+ * And the same medicine for ownership too (round 5): the ops live IN the class
+ * and read `#spot` directly, so a place this world did not mint throws
+ * natively and only the `catch` names it. A toy world written the old way —
+ * ops beside the class, a wrapper around them — would still pass every test
+ * here and would quietly be the shape the perf round deleted; `defineSpace`
+ * now refuses to publish one that does not refuse a stranger itself.
  */
 
 const WAYS: Readonly<Record<string, readonly string[]>> = {
@@ -47,6 +55,62 @@ class Somewhere {
 
   static read(place: PlaceRef): string {
     return (place as unknown as Somewhere).#spot;
+  }
+
+  /** The slow path only: which argument was not ours, or the original error. */
+  static #refuse(op: string, error: unknown, args: readonly unknown[]): unknown {
+    for (let i = 0; i < args.length; i++) {
+      if (!Somewhere.owns(args[i])) return new ForeignPlaceError(op, i + 1);
+    }
+    return error;
+  }
+
+  static distance(a: PlaceRef, b: PlaceRef): number {
+    try {
+      return hops((a as unknown as Somewhere).#spot, (b as unknown as Somewhere).#spot);
+    } catch (error) {
+      throw Somewhere.#refuse('distance', error, [a, b]);
+    }
+  }
+
+  static direction(from: PlaceRef, to: PlaceRef): DirectionId {
+    try {
+      return stepToward((from as unknown as Somewhere).#spot, (to as unknown as Somewhere).#spot);
+    } catch (error) {
+      throw Somewhere.#refuse('direction', error, [from, to]);
+    }
+  }
+
+  static within(a: PlaceRef, b: PlaceRef, radius: number): boolean {
+    try {
+      return hops((a as unknown as Somewhere).#spot, (b as unknown as Somewhere).#spot) <= radius;
+    } catch (error) {
+      throw Somewhere.#refuse('within', error, [a, b]);
+    }
+  }
+
+  static equal(a: PlaceRef, b: PlaceRef): boolean {
+    try {
+      return (a as unknown as Somewhere).#spot === (b as unknown as Somewhere).#spot;
+    } catch (error) {
+      throw Somewhere.#refuse('equal', error, [a, b]);
+    }
+  }
+
+  static label(place: PlaceRef): string {
+    try {
+      return (place as unknown as Somewhere).#spot;
+    } catch (error) {
+      throw Somewhere.#refuse('label', error, [place]);
+    }
+  }
+
+  static encode(place: PlaceRef): Record<string, unknown> {
+    try {
+      return { spot: (place as unknown as Somewhere).#spot };
+    } catch (error) {
+      throw Somewhere.#refuse('encode', error, [place]);
+    }
   }
 }
 
@@ -103,11 +167,11 @@ const wayfaring: SpaceOps = {
   directions: [...TOY_SPOTS, 'here'],
   unplaced: spot('hollow'),
 
-  distance: (a, b) => hops(nameOf(a), nameOf(b)),
-  direction: (from, to) => stepToward(nameOf(from), nameOf(to)),
-  within: (a, b, radius) => hops(nameOf(a), nameOf(b)) <= radius,
-  equal: (a, b) => nameOf(a) === nameOf(b),
-  label: (place) => nameOf(place),
+  distance: Somewhere.distance,
+  direction: Somewhere.direction,
+  within: Somewhere.within,
+  equal: Somewhere.equal,
+  label: Somewhere.label,
 };
 
 const wayfaringCodec: SpaceCodec = {
@@ -120,7 +184,7 @@ const wayfaringCodec: SpaceCodec = {
     return typeof named === 'string' && named in WAYS ? spot(named) : undefined;
   },
 
-  encode: (place) => ({ spot: nameOf(place) }),
+  encode: Somewhere.encode,
   decode(fields) {
     const named = fields['spot'];
     return typeof named === 'string' && named in WAYS ? spot(named) : undefined;
@@ -134,7 +198,7 @@ const wayfaringCodec: SpaceCodec = {
 };
 
 /**
- * Guarded exactly as the forager plane is, and for the same reason: hand this
+ * Checked exactly as the forager plane is, and for the same reason: hand this
  * world a place from the continent and it must say so rather than answer
  * `Infinity` hops to `undefined`.
  */

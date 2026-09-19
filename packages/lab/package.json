@@ -16,7 +16,8 @@
     "release": "electron-vite build && electron-builder --win --publish always",
     "start": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "accept": "node e2e/accept.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",

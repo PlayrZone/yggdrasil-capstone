@@ -181,6 +181,34 @@ export function maxOrbitDistance(worldPerPx: number, floor: number): number {
 }
 
 /**
+ * One notch of a real wheel, as a multiple of the orbit's radius.
+ *
+ * Three's `OrbitControls` computes `0.95 ** (zoomSpeed × |deltaY| / 100)` and
+ * divides the radius by it to pull back, and a hardware notch in Chromium is
+ * `deltaY = 100`. Stated here rather than guessed at, because "can a mouse
+ * reach FAR" has been answered wrongly in three separate rounds — twice by a
+ * clamp and once by a driver that had the sign upside down — and every one of
+ * those answers was an opinion about this number.
+ */
+export const WHEEL_NOTCH_DELTA = 100;
+
+export function zoomPerNotch(zoomSpeed: number): number {
+  return 1 / 0.95 ** ((zoomSpeed * WHEEL_NOTCH_DELTA) / 100);
+}
+
+/**
+ * How many notches of that wheel it takes to get a being down to `wantPx`.
+ *
+ * Negative would mean "you are already past it", and the caller wants 0 there:
+ * the question is always "how far is it from here", never "how far back".
+ */
+export function notchesToReach(distance: number, wantPx: number, worldPerPx: number, zoomSpeed: number): number {
+  const need = distanceForFigurePx(wantPx, worldPerPx);
+  if (need <= distance) return 0;
+  return Math.ceil(Math.log(need / distance) / Math.log(zoomPerNotch(zoomSpeed)));
+}
+
+/**
  * How big the ground ANNOTATION is, in metres, at this distance — the ring, the
  * pointer, the streak and the pictogram chip are all sized from it.
  *
@@ -1561,8 +1589,13 @@ export function nameClaimFor(band: ZoomBand, withinM: number, shown: number, car
   // that held seven unwell beings as "everybody is well" — some of those seven
   // were inside shelters, which the view is entitled to withhold, but a frame
   // that withholds them without saying so has told a reader something false.
-  const housed = (carried > 0 ? ` · ${carried} more counted on their huts` : '')
-    + (unwell > 0 ? ` · ${unwell} unwell counted on their huts` : '');
+  // "Indoors" rather than "counted on their huts", because that is now what it
+  // means: an occupied shelter is solid and the people in it are behind its
+  // walls, with the number on the roof standing for all of them. A reader who
+  // is told the hut holds them looks at the hut; a reader who is told they are
+  // "counted on" it looks for them.
+  const housed = (carried > 0 ? ` · ${carried} indoors, counted on their roofs` : '')
+    + (unwell > 0 ? ` · ${unwell} of them unwell` : '');
   if (band === 'near') {
     return shown === 0
       ? `0 named · nearest first${housed}`
@@ -1962,8 +1995,10 @@ export const SCALE_NOTE = 'everything with a body is life-size — one unit is o
  * than the people in it. Stated where a reader can check it, because round four
  * printed the promise and did not keep it.
  */
-export const GHOST_NOTE = 'anything standing between you and a being turns to a ghost, footprint left on the ground · '
-  + 'and nobody hides: a being behind a tree, a wall or a hill keeps a pale outline';
+export const GHOST_NOTE = 'anything standing between you and a being outdoors turns to a ghost, footprint left on the ground · '
+  + 'and nobody outdoors hides: a being behind a tree, a wall or a hill keeps a pale outline · '
+  + 'people INDOORS are counted on the roof instead of drawn through the wall — hover the number for who is in there, '
+  + 'and the hut you follow somebody into opens for you';
 
 /**
  * The counting rule, stated as arithmetic rather than as an invitation to

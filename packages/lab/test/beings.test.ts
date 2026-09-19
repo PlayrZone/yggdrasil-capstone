@@ -1990,10 +1990,10 @@ describe('the naming claim is one sentence, and it is the one the chip prints', 
    * none of them has a name.
    */
   it('counts the people a hut is speaking for, out loud, in the strip', () => {
-    expect(nameClaimFor('near', 21.54, 5, 71)).toBe('5 named · nearest first · out to 21.54 m · 71 more counted on their huts');
-    expect(nameClaimFor('near', 0, 0, 12)).toBe('0 named · nearest first · 12 more counted on their huts');
+    expect(nameClaimFor('near', 21.54, 5, 71)).toBe('5 named · nearest first · out to 21.54 m · 71 indoors, counted on their roofs');
+    expect(nameClaimFor('near', 0, 0, 12)).toBe('0 named · nearest first · 12 indoors, counted on their roofs');
     expect(nameClaimFor('near', 9, 3, 0)).not.toContain('huts');
-    expect(nameClaimFor('mid', 0, 4, 22)).toContain('22 more counted on their huts');
+    expect(nameClaimFor('mid', 0, 4, 22)).toContain('22 indoors, counted on their roofs');
   });
 
   it('does not owe a name to somebody their hut is already speaking for', () => {

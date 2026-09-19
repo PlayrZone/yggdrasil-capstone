@@ -251,7 +251,10 @@ body {
 .ideahint { color: var(--muted); font-size: 11px; margin: 8px 0 0; line-height: 1.4; }
 button:disabled, input:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.panel { width: 340px; border-left: 1px solid var(--line); background: var(--panel); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+/* The controls rail is an absolute 340 px, which means every pixel a narrow
+   window loses comes out of the picture and none of it out of the rail. It
+   gives ground now — never below the width the speed buttons need. */
+.panel { width: clamp(268px, 26vw, 340px); flex: 0 0 auto; border-left: 1px solid var(--line); background: var(--panel); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
 .panel section { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
 .panel label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
 .panel input[type=text], .panel input:not([type]) { width: 100%; }
@@ -396,16 +399,30 @@ button.danger { background: #3a2326; border-color: #5b3030; }
    other way round: a stage that could not shrink pushed the roster off the
    bottom of a 900 px window. */
 .worldcol > .stage { min-height: 0; }
-.worldcol > .stage .legend { flex: 0 0 auto; }
+/* The legend is a caption, not a column. `flex: 0 0 auto` let it wrap to five
+   lines on a narrow pane and keep every one of them, off the top of the
+   picture — a reviewer forced 900 x 620 and watched the canvas collapse to
+   534 x 293 while the legend held ~330 px. It may have three lines and then
+   it scrolls, at every window size. */
+.worldcol > .stage .legend {
+  flex: 0 1 auto; max-height: 3.9em; overflow-y: auto; overscroll-behavior: contain;
+}
 
-.world3d { min-height: 220px; }
+/* The PICTURE is the instrument. Everything else in this column is chrome
+   about it, so the canvas holds a floor that is a real share of the window
+   rather than a token 220 px. */
+.world3d { min-height: min(46vh, 320px); }
 
 /* The table supports the picture; it does not compete with it. A third of a
    short window is the most it may take, and on a tall one it stops at the
-   nine rows a reader actually scans. */
+   nine rows a reader actually scans.
+
+   `flex: 0 0` meant it could not give anything back: on a short window it took
+   its basis first and the canvas lived on the remainder, which is the picture
+   paying for the table. `0 1` lets it shrink, `min-height` keeps it usable. */
 .roster {
-  flex: 0 0 min(228px, 32vh); display: flex; flex-direction: column; min-height: 0;
-  border-top: 1px solid var(--line); background: var(--panel);
+  flex: 0 1 min(228px, 32vh); display: flex; flex-direction: column;
+  min-height: 92px; border-top: 1px solid var(--line); background: var(--panel);
 }
 .roster.closed { flex: 0 0 auto; }
 .rtoggle {
@@ -579,21 +596,25 @@ button.danger { background: #3a2326; border-color: #5b3030; }
    filter chips ~200. The coordinate frame survived that, which is what was
    being tested; the layout did not. A world view is the last thing a small
    window sacrifices, not the first. */
+/* The filter bar scrolls sideways at EVERY size rather than wrapping into four
+   rows and eating the table's allowance from the inside. It used to do this
+   only under 680 px, which is why a 620 px window that Electron clamped to 680
+   still lost the picture. */
+.roster .rbar-top { flex-wrap: nowrap; overflow-x: auto; }
+.roster .fgroup.wrap { flex-wrap: nowrap; }
+
 @media (max-height: 780px) {
   .worldcol > .stage { padding: 10px; gap: 6px; }
   /* The legend's prose is the explanation, not the key: it goes first. */
   .legend .lprose { max-height: 56px; }
-  .roster { flex: 0 0 min(168px, 26vh); }
+  .roster { flex: 0 1 min(168px, 26vh); }
 }
 @media (max-height: 680px) {
   .worldcol > .stage { padding: 6px; gap: 4px; }
   .legend .lprose { display: none; }
   /* Two rows of the key, scrollable, rather than eight rows of a wrapped one. */
-  .legend { max-height: 34px; overflow-y: auto; }
-  .roster { flex: 0 0 min(124px, 21vh); }
-  /* The filter bar scrolls sideways rather than wrapping into four rows and
-     pushing the table, and the picture, off the bottom. */
-  .roster .rbar-top { flex-wrap: nowrap; overflow-x: auto; padding: 4px 8px; }
-  .roster .fgroup.wrap { flex-wrap: nowrap; }
+  .worldcol > .stage .legend { max-height: 2.4em; }
+  .roster { flex: 0 1 min(124px, 21vh); min-height: 78px; }
+  .roster .rbar-top { padding: 4px 8px; }
   .roster .rbody { min-height: 0; }
 }

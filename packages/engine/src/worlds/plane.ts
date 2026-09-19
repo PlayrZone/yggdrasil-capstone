@@ -31,6 +31,25 @@ import type { ParamSchema } from '../contract/actions.js';
  * wiring hands that to the edges. There is no lookup to import (see
  * `contract/edges.ts` for what one cast did to the lookup this replaced).
  *
+ * THE OWNERSHIP CHECK IS THE FIELD READ ITSELF (round 5, the perf round). Round
+ * 4 published these ops through a wrapper in `defineSpace` that asked
+ * `codec.owns(a)` before forwarding, and that wrapper WAS the step's tick-rate
+ * regression: −3.2% at 256 beings and −7.2% at 1,000, with a CPU profile that
+ * showed parity, because the cost is an extra frame and a second shape per call
+ * rather than work a sampler can see. Bypassing it measured +0.12%.
+ *
+ * So the ops moved in here, where `a.#x` is BOTH the read and the check: on an
+ * object this class did not construct the read throws a `TypeError` natively,
+ * at no cost whatsoever on the path where it does not. Each op is one
+ * `try`/`catch`, and the catch — reached only when something foreign arrived —
+ * asks `#x in` of each argument in turn to say WHICH one, and re-throws the
+ * original error untouched when every argument was in fact ours (a place may
+ * hold a `Symbol`, and `Math.round` of one throws a `TypeError` that has
+ * nothing to do with ownership). `defineSpace` no longer wraps: it VERIFIES, at
+ * world construction, that each entry point refuses a foreign place — so a
+ * world author who writes an op that reads a coordinate off any old object
+ * fails loudly where the mistake is, not silently in W1-C.
+ *
  * Every expression below is transcribed, not designed: `Math.hypot(…)` from
  * `prompt.ts`, `dx * dx + dy * dy > radius * radius` from `SuccessionMiner`, the
  * four-unit compass from `prompt.ts`, operation for operation and in the same
@@ -101,6 +120,11 @@ export interface PlaneSpace {
    * policy with places this world minted a few lines earlier, and they sit in
    * the innermost loop of every tick. `pointOf` — the same read, cold — IS
    * guarded, and so is every door an edge or another world can reach.
+   *
+   * "Unguarded" now means only that a foreign place reaches them as the raw
+   * `TypeError` the field read throws rather than as a `ForeignPlaceError`.
+   * They are still class statics reading `#x` directly, so nothing gets a
+   * coordinate out of them that did not already have one.
    */
   xOf(place: PlaceRef): number;
   yOf(place: PlaceRef): number;
@@ -154,12 +178,131 @@ export function createPlaneSpace(): PlaneSpace {
       return typeof value === 'object' && value !== null && #x in value;
     }
 
+    /**
+     * THE SLOW PATH, AND ONLY THE SLOW PATH. Something below threw; say which
+     * argument was not ours, or hand back the original error untouched.
+     *
+     * The second half matters as much as the first. A place of this world may
+     * hold anything the world put in it — `"5"`, `null`, a `Symbol` a host cast
+     * its way — and `Math.round` of a `Symbol` throws a `TypeError` that is not
+     * about ownership at all. Base threw exactly that error; so does this.
+     */
+    static #refuse(op: string, error: unknown, args: readonly unknown[]): unknown {
+      for (let i = 0; i < args.length; i++) {
+        if (!Place.owns(args[i])) return new ForeignPlaceError(op, i + 1);
+      }
+      return error;
+    }
+
+    /**
+     * ── THE FIVE A MIND MAY ASK ──────────────────────────────────────────────
+     *
+     * Every expression is the one `prompt.ts` and `SuccessionMiner` wrote,
+     * operation for operation and in the same order, down to which operand is
+     * read first: a rounding boundary that moves moves a think cadence and the
+     * whole run diverges.
+     *
+     * Which read THREW is not which argument is refused. `distance` reads `b`
+     * first, so a foreign `a` surfaces second; `#refuse` asks ownership in
+     * ARGUMENT order and names argument 1 anyway.
+     */
+    static distance(a: PlaceRef, b: PlaceRef): number {
+      const from = a as unknown as Place;
+      const to = b as unknown as Place;
+      try {
+        return Math.hypot((to.#x as number) - (from.#x as number), (to.#y as number) - (from.#y as number));
+      } catch (error) {
+        throw Place.#refuse('distance', error, [a, b]);
+      }
+    }
+
+    static direction(a: PlaceRef, b: PlaceRef): DirectionId {
+      const from = a as unknown as Place;
+      const to = b as unknown as Place;
+      try {
+        return compass((to.#x as number) - (from.#x as number), (to.#y as number) - (from.#y as number));
+      } catch (error) {
+        throw Place.#refuse('direction', error, [a, b]);
+      }
+    }
+
+    /**
+     * Squares, never a root — `SuccessionMiner`'s own comparison, so the boolean
+     * is the same boolean for every pair of places it has ever been asked about.
+     * This is the hottest guarded op in the engine: it runs once per live
+     * pending cause per memory observed.
+     */
+    static within(a: PlaceRef, b: PlaceRef, radius: number): boolean {
+      const here = a as unknown as Place;
+      const there = b as unknown as Place;
+      try {
+        const dx = (here.#x as number) - (there.#x as number);
+        const dy = (here.#y as number) - (there.#y as number);
+        return !(dx * dx + dy * dy > radius * radius);
+      } catch (error) {
+        throw Place.#refuse('within', error, [a, b]);
+      }
+    }
+
+    static equal(a: PlaceRef, b: PlaceRef): boolean {
+      const one = a as unknown as Place;
+      const two = b as unknown as Place;
+      try {
+        return one.#x === two.#x && one.#y === two.#y;
+      } catch (error) {
+        throw Place.#refuse('equal', error, [a, b]);
+      }
+    }
+
+    /** What `prompt.ts` has always written in the parentheses. */
+    static label(place: PlaceRef): string {
+      const p = place as unknown as Place;
+      try {
+        return `${Math.round(p.#x as number)},${Math.round(p.#y as number)}`;
+      } catch (error) {
+        throw Place.#refuse('label', error, [place]);
+      }
+    }
+
+    /** ── THE TWO AN EDGE MAY ASK, guarded the same way ────────────────────── */
+    static encode(place: PlaceRef): Record<string, unknown> {
+      const p = place as unknown as Place;
+      try {
+        const x = p.#x;
+        const y = p.#y;
+        const out: Record<string, unknown> = {};
+        if (x !== undefined) out['x'] = x;
+        if (y !== undefined) out['y'] = y;
+        return out;
+      } catch (error) {
+        throw Place.#refuse('encode', error, [place]);
+      }
+    }
+
+    static point(place: PlaceRef): Point {
+      const p = place as unknown as Place;
+      try {
+        return { x: p.#x as number, y: p.#y as number };
+      } catch (error) {
+        throw Place.#refuse('pointOf', error, [place]);
+      }
+    }
+
+    /** ── THIS WORLD'S OWN READERS. Unguarded; see `PlaneSpace.xOf`. ───────── */
     static readX(place: PlaceRef): unknown {
       return (place as unknown as Place).#x;
     }
 
     static readY(place: PlaceRef): unknown {
       return (place as unknown as Place).#y;
+    }
+
+    static xOf(place: PlaceRef): number {
+      return (place as unknown as Place).#x as number;
+    }
+
+    static yOf(place: PlaceRef): number {
+      return (place as unknown as Place).#y as number;
     }
   }
 
@@ -180,37 +323,26 @@ export function createPlaneSpace(): PlaneSpace {
   const readX = Place.readX;
   const readY = Place.readY;
 
+  /**
+   * THE OPS ARE THE CLASS'S OWN FUNCTIONS, put on an object — not wrapped in
+   * one. `space.within(a, b, r)` is one call into one frame that reads two
+   * private fields; there is no `owns` call, no forwarding closure and no
+   * second object shape between the mind and the arithmetic.
+   *
+   * None of them reads `this`, so detaching them here is sound —
+   * `test/world-space.test.ts` pins the identity, which is what keeps a wrapper
+   * from growing back.
+   */
   const ops: SpaceOps = {
     directions: DIRECTIONS,
     /** The origin — what `AgentMind` wrote for a story retold with no site. */
     unplaced: at(0, 0),
 
-    distance(a, b) {
-      return Math.hypot((readX(b) as number) - (readX(a) as number), (readY(b) as number) - (readY(a) as number));
-    },
-
-    direction(from, to) {
-      return compass((readX(to) as number) - (readX(from) as number), (readY(to) as number) - (readY(from) as number));
-    },
-
-    /**
-     * Squares, never a root — `SuccessionMiner`'s own comparison, so the boolean
-     * is the same boolean for every pair of places it has ever been asked about.
-     */
-    within(a, b, radius) {
-      const dx = (readX(a) as number) - (readX(b) as number);
-      const dy = (readY(a) as number) - (readY(b) as number);
-      return !(dx * dx + dy * dy > radius * radius);
-    },
-
-    equal(a, b) {
-      return readX(a) === readX(b) && readY(a) === readY(b);
-    },
-
-    /** What `prompt.ts` has always written in the parentheses. */
-    label(place) {
-      return `${Math.round(readX(place) as number)},${Math.round(readY(place) as number)}`;
-    },
+    distance: Place.distance,
+    direction: Place.direction,
+    within: Place.within,
+    equal: Place.equal,
+    label: Place.label,
   };
 
   const codec: SpaceCodec = {
@@ -218,14 +350,7 @@ export function createPlaneSpace(): PlaneSpace {
      *  `number`, so `x: 1e999` is still `bad-number` about `x`. */
     fields: PLANE_FIELDS,
 
-    encode(place) {
-      const x = readX(place);
-      const y = readY(place);
-      const out: Record<string, unknown> = {};
-      if (x !== undefined) out['x'] = x;
-      if (y !== undefined) out['y'] = y;
-      return out;
-    },
+    encode: Place.encode,
 
     decode(fields) {
       const x = fields['x'];
@@ -290,17 +415,15 @@ export function createPlaneSpace(): PlaneSpace {
     owns,
   };
 
-  const guarded = defineSpace({ ops, codec });
-  const readPoint = (place: PlaceRef): Point => {
-    if (!owns(place)) throw new ForeignPlaceError('pointOf', 1);
-    return { x: readX(place) as number, y: readY(place) as number };
-  };
+  // Not a wrapper any more: `defineSpace` CHECKS that each entry point above
+  // refuses a place this plane did not mint, and hands back what it was given.
+  const verified = defineSpace({ ops, codec });
   return {
-    space: guarded.space,
-    codec: guarded.codec,
+    space: verified.space,
+    codec: verified.codec,
     at,
-    pointOf: readPoint,
-    xOf: (place) => readX(place) as number,
-    yOf: (place) => readY(place) as number,
+    pointOf: Place.point,
+    xOf: Place.xOf,
+    yOf: Place.yOf,
   };
 }
