@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Experiment } from '../src/runner/Experiment.js';
 import type { Entity } from '../src/core/Entity.js';
 import type { Transform2D } from '../src/core/Transform2D.js';
+import type { Animal } from '../src/body/animals.js';
 import type { ResourceNode } from '../src/body/ResourceNodeSystem.js';
 import { regrowthCount } from '../src/body/ResourceNodeSystem.js';
 import { growthFactor } from '../src/body/Climate.js';
@@ -20,13 +21,18 @@ import { fingerprintOf } from './fingerprint.js';
  * scheme. A world sixteen times larger is only affordable because most of it
  * is not stepped; that is only honest if a being cannot tell.
  *
- * Two proofs here, one by construction and one by experiment:
+ * Three proofs here, one by construction and two by experiment:
  *  1. the closed-form regrowth equals the literal per-tick loop, across
  *     season boundaries, for every regrowing kind;
  *  2. the same continent run at two very different activation radii gives
- *     every being exactly the same thing to perceive, tick after tick.
+ *     every being exactly the same thing to perceive, tick after tick;
+ *  3. and — the stronger claim, and the one that failed — four schedules
+ *     including `everywhere()` hold the same STATE, animal by animal and
+ *     field by field, out to a week of sim time. A world nobody can tell the
+ *     schedule of from the inside is not enough; the schedule must not be in
+ *     the state at all.
  *
- * The third — that the classic world is untouched — is the golden file.
+ * The fourth — that the classic world is untouched — is the golden file.
  */
 
 /** The per-tick rule of `ResourceNodeSystem`, written out literally. */
@@ -148,13 +154,15 @@ describe('the activation radius is not observable', () => {
 
   it('matches a control that never sleeps at all', () => {
     // The strongest form: against a run whose tiles are ALL live, every tick,
-    // there is nothing left to be honest about.
+    // there is nothing left to be honest about. `Infinity` is `everywhere()`
+    // itself (`runner/Scenario.ts`) — not a radius so large it happens to
+    // cover the map, which is a different code path.
     const tiled = new Experiment({ seed: 'never-dormant', agentCount: 40, scenario: 'forager-continent' });
     const awake = new Experiment({
       seed: 'never-dormant',
       agentCount: 40,
       scenario: 'forager-continent',
-      activityRadius: 60_000, // wider than the world: nothing is ever dormant
+      activityRadius: Infinity,
     });
     tiled.advance(2400);
     awake.advance(2400);
@@ -177,6 +185,83 @@ describe('the activation radius is not observable', () => {
     tiles.update(skipping.world, skipping.tick);
     expect(tiles.activeTiles.length, 'the classic world never slept').toBeLessThan(tiles.count / 2);
   }, 300_000);
+});
+
+/**
+ * EVERY ANIMAL COMPONENT, NOT JUST WHAT A BEING COULD PERCEIVE — and not just
+ * early, where the world has not had time to diverge.
+ *
+ * The case above compares two radii at 2,400 ticks. That was too shallow and
+ * too narrow to see the one thing the scheme did get wrong: `reanchor` phased a
+ * predator's new home range on the tick the chase was SEEN to end, and a
+ * predator was only stepped while its ground was live, so a quarry that died
+ * far from anyone left the animal frozen until its tile happened to wake. At
+ * 12 days two runs held animals 14 m and 34 m apart, one of them still
+ * carrying a dead being's id; the golden's digest split three ways at tick
+ * 16,800 and agreed only at its own 1,200/3,000 checkpoints. Nothing alive
+ * could perceive any of it — the nearest being was 752–1,392 m off — but a
+ * world whose state depends on its own scheduler is not the world it claims to
+ * be, and `runner/settled.ts` cannot settle it, because the divergence is
+ * baked into `home`, which is state rather than a closed form.
+ *
+ * `body/ContinentWildlife.ts` now steps a predator that HOLDS A TARGET whether
+ * or not its ground is live, so a chase ends on the tick the world says it
+ * ends. This is the arm that would have caught it: four schedules, including
+ * `everywhere()`, compared on the FULL animal component set and on the whole
+ * run's fingerprint, at four depths out to a week.
+ */
+function animalState(exp: Experiment): string {
+  const rows: string[] = [];
+  exp.world.spatial.each('Animal', (e: Entity) => {
+    const a = e.components['Animal'] as Animal;
+    const at = exp.settled.positionOf(e)!;
+    const h = a.home;
+    rows.push(
+      `${e.id} ${a.kind} t${a.targetId} h${a.health} a${a.lastAttack} d${a.heading}/${a.changeAt} ` +
+        `@${at.x},${at.y} home ${h ? `${h.x},${h.y},${h.rx},${h.ry},${h.wx},${h.wy},${h.px},${h.py}` : '~'}`,
+    );
+  });
+  return rows.join('\n');
+}
+
+describe('the activation schedule is not in the state either', () => {
+  it('holds every animal identical at 300 m, 768 m, 1536 m and never dormant', () => {
+    const schedules: [string, number][] = [
+      ['300', 300],
+      ['768', 768],
+      ['1536', 1536],
+      ['never-dormant', Infinity],
+    ];
+    const runs = schedules.map(([, radius]) => ({
+      exp: new Experiment({
+        seed: 'schedule',
+        agentCount: 40,
+        scenario: 'forager-continent',
+        activityRadius: radius,
+      }),
+    }));
+    // Out to a week, past the point where the old defect first showed.
+    const checkpoints = [1200, 3000, 9600, 16_800];
+    let at = 0;
+    for (const cp of checkpoints) {
+      for (const run of runs) run.exp.advance(cp - at);
+      at = cp;
+      const control = runs[runs.length - 1]!.exp;
+      for (let i = 0; i < runs.length - 1; i++) {
+        const label = `radius ${schedules[i]![0]} vs never-dormant at tick ${cp}`;
+        expect(animalState(runs[i]!.exp), label).toBe(animalState(control));
+        expect(fingerprintOf(runs[i]!.exp), label).toBe(fingerprintOf(control));
+      }
+    }
+    // Not vacuous: the stored components really do differ, so ground really was
+    // left unstepped for as long as a week…
+    expect(storedState(runs[0]!.exp)).not.toBe(storedState(runs[3]!.exp));
+    // …and somebody really was alive the whole way to keep it worth comparing.
+    expect(runs[0]!.exp.aliveCount()).toBeGreaterThan(0);
+    // The static index stayed honest through all of it — a host that moves a
+    // static entity behind its back is counted, never swallowed.
+    for (const run of runs) expect(run.exp.world.spatial.staticDrift).toBe(0);
+  }, 900_000);
 });
 
 describe('the tiling itself', () => {

@@ -5,6 +5,7 @@ import type { Transform2D } from '../src/core/Transform2D.js';
 import type { ResourceNode } from '../src/body/ResourceNodeSystem.js';
 import type { ResourceNodeKind } from '../src/worlds/forager/types.js';
 import { DEFAULT_REGROW } from '../src/body/ResourceNodeSystem.js';
+import { SEED_SPROUT_TICKS } from '../src/body/WorldRegularities.js';
 import { ContinentScenario, MAX_DENSITY } from '../src/worlds/forager/continentScenario.js';
 import { CONTINENT_ACTIVITY_RADIUS } from '../src/runner/Scenario.js';
 import { CLASSIC_SCALE } from '../src/world/geography.js';
@@ -222,6 +223,67 @@ describe('habitat rules', () => {
     // …and it gets there by regrowing slower, not by holding fewer bushes.
     expect(report.slowdown).toBeGreaterThan(1);
     expect(report.berryRegrowEvery).toBeGreaterThan(DEFAULT_REGROW['berryBush']);
+  }, 120_000);
+
+  /**
+   * …AND A PLANT SOMEBODY PLANTED OBEYS IT TOO.
+   *
+   * `createResourceNode`'s default table is the classic world's, and the sprout
+   * in `body/WorldRegularities.ts` took it: a seed pushed into continent ground
+   * grew a food plant that came back every 220 ticks while every scattered bush
+   * beside it took ~1,300. Six times the yield, for whoever discovered
+   * planting, outside the capacity arithmetic above entirely — in the one world
+   * built on the premise that food is finite. A sprout is a plant of this
+   * world; it regrows at this world's pace.
+   */
+  it('makes a plant grown from a seed regrow at the world’s pace, not the table’s', () => {
+    const berry = DEFAULT_REGROW['berryBush'];
+    for (const scenario of ['forager-classic', 'forager-continent'] as const) {
+      const exp = new Experiment({ seed: 'sprout', agentCount: 8, scenario });
+      exp.advance(1);
+      // What this world does to a bush is what it must do to a food plant: read
+      // the pace off the ground rather than trusting the report.
+      let bush = 0;
+      exp.world.forEach((e: Entity) => {
+        const node = e.components['ResourceNode'] as ResourceNode | undefined;
+        if (node?.kind === 'berryBush' && bush === 0) bush = node.regrowEvery;
+      });
+      const at = exp.agentEntity(exp.agentIds[0]!)!.components['Transform2D'] as Transform2D;
+      exp.world.createEntity(
+        { Transform2D: { x: at.x, y: at.y }, SeedInGround: { plantedTick: exp.tick } },
+        { static: true },
+      );
+      exp.advance(SEED_SPROUT_TICKS + 2);
+      const sprouted: ResourceNode[] = [];
+      exp.world.forEach((e: Entity) => {
+        const node = e.components['ResourceNode'] as ResourceNode | undefined;
+        if (node?.kind === 'foodPlant') sprouted.push(node);
+      });
+      expect(sprouted.length, `${scenario}: the seed never sprouted`).toBe(1);
+      expect(sprouted[0]!.regrowEvery, `${scenario} sprout vs its own bushes`).toBe(bush);
+    }
+  }, 120_000);
+
+  it('holds the continent’s sprout to the slowdown the capacity was solved for', () => {
+    const report = new ContinentScenario('x', 'sprout', 8, CONTINENT_ACTIVITY_RADIUS).ecologyReport();
+    const exp = new Experiment({ seed: 'sprout', agentCount: 8, scenario: 'forager-continent' });
+    exp.advance(1);
+    const at = exp.agentEntity(exp.agentIds[0]!)!.components['Transform2D'] as Transform2D;
+    exp.world.createEntity(
+      { Transform2D: { x: at.x, y: at.y }, SeedInGround: { plantedTick: exp.tick } },
+      { static: true },
+    );
+    exp.advance(SEED_SPROUT_TICKS + 2);
+    let every = 0;
+    exp.world.forEach((e: Entity) => {
+      const node = e.components['ResourceNode'] as ResourceNode | undefined;
+      if (node?.kind === 'foodPlant') every = node.regrowEvery;
+    });
+    // A food plant and a bush share a default interval, so the world's answer
+    // for one is its answer for the other — and both are the slowdown the
+    // valley's carrying capacity was solved for, not the classic 220.
+    expect(every).toBe(report.berryRegrowEvery);
+    expect(every).toBeGreaterThan(DEFAULT_REGROW['foodPlant'] * 4);
   }, 120_000);
 
   it('never asks a tile for more than the candidate budget allows', () => {

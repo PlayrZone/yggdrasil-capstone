@@ -2,7 +2,8 @@ import type { World } from '../core/World.js';
 import type { Transform2D } from '../core/Transform2D.js';
 import type { ObjectKind } from './contract.js';
 import type { SimEventBus } from './SimEventBus.js';
-import { createResourceNode } from './ResourceNodeSystem.js';
+import type { ResourceNode } from './ResourceNodeSystem.js';
+import { createResourceNode, DEFAULT_REGROW } from './ResourceNodeSystem.js';
 import { TICKS_PER_DAY } from './clock.js';
 
 /**
@@ -55,6 +56,9 @@ export interface SeedInGround {
  * nothing announces it — is the entire "agriculture system".
  */
 export class WorldRegularitiesSystem {
+  /** This world's interval for a food plant, read once — see `plantRegrowth`. */
+  private sproutRegrowEvery?: number;
+
   step(world: World, tick: number, bus: SimEventBus): void {
     const sprouted: number[] = [];
     world.spatial.each('SeedInGround', (entity) => {
@@ -71,7 +75,7 @@ export class WorldRegularitiesSystem {
       const plant = world.createEntity(
         {
           Transform2D: { x, y } satisfies Transform2D,
-          ResourceNode: createResourceNode('foodPlant', SPROUTED_PLANT_STOCK),
+          ResourceNode: createResourceNode('foodPlant', SPROUTED_PLANT_STOCK, this.plantRegrowth(world)),
         },
         { static: true },
       );
@@ -85,5 +89,40 @@ export class WorldRegularitiesSystem {
         payload: {},
       });
     }
+  }
+
+  /**
+   * HOW FAST A SPROUT COMES BACK IS THE WORLD'S NUMBER, NOT THE KIND'S.
+   *
+   * `createResourceNode`'s table is the CLASSIC world's. The continent divides
+   * its founding valley's carrying capacity out into a regrowth interval about
+   * six times longer and hands it to every node it scatters
+   * (`worlds/forager/continentScenario.ts`) — but a plant that sprouted from a
+   * planted seed took the default and came back every 220 ticks against its
+   * neighbours' ~1,300. That is a larder the capacity arithmetic never
+   * accounted for, handed to whoever discovered planting, in a world whose
+   * whole point is that food is finite.
+   *
+   * Nothing hands this system the scenario, so it reads the answer off the
+   * ground it is sprouting into: a bush and a food plant regrow at the same
+   * default pace, so whatever this world did to one it did to the other. Read
+   * once, from the first such node the world holds; a world holding none falls
+   * back to the kind's own default, which is what the classic world's is.
+   */
+  private plantRegrowth(world: World): number {
+    const known = this.sproutRegrowEvery;
+    if (known !== undefined) return known;
+    const base = DEFAULT_REGROW['foodPlant'];
+    let every = base;
+    let found = false;
+    world.spatial.each('ResourceNode', (entity) => {
+      if (found) return;
+      const node = entity.components['ResourceNode'] as ResourceNode;
+      if (node.regrowEvery <= 0 || DEFAULT_REGROW[node.kind] !== base) return;
+      every = node.regrowEvery;
+      found = true;
+    });
+    this.sproutRegrowEvery = every;
+    return every;
   }
 }

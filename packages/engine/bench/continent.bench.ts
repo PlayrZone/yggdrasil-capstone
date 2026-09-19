@@ -92,6 +92,11 @@ it('cost of a world sixteen times the size', () => {
     );
     expect(buildS, `${scenario} build`).toBeLessThan(BUILD_BUDGET_S);
     expect(tickMs, `${scenario} steady tick`).toBeLessThan(TICK_BUDGET_MS);
+    // The price of taking a bush out of the per-tick reconcile is that a host
+    // which moves a "static" entity by hand is wrong until the 256-tick audit
+    // finds it. The audit counts those, and the counter was read by nothing —
+    // so it is read here, beside the number it bought.
+    expect(exp.world.spatial.staticDrift, `${scenario}: a static entity moved without markMoved`).toBe(0);
   }
   console.log('\n' + rows.join('\n') + '\n');
   // The whole point of activity regions: sixteen times the world, not sixteen

@@ -26,17 +26,24 @@ import type { GahallianBody } from '../body/GahallianBody.js';
  *     ground is always further off than anyone can see — which is why an
  *     animal snapping onto its loop as its tile wakes has no witness.
  *
- * ONE THING DOES REACH INTO A DORMANT TILE, on purpose: the wildlife respawn
- * ledger (`body/ContinentWildlife.ts`) creates a replacement animal on the
- * tick it is due, whether or not that tile is awake. That is not a leak, it is
- * the opposite of one — entity ids would otherwise depend on when a tile woke,
- * and an instrument reading the world would be able to tell.
+ * TWO THINGS DO REACH INTO A DORMANT TILE, on purpose, and both for the same
+ * reason — a state that remembers WHEN its ground woke is a state the schedule
+ * has leaked into, which no closed form can undo afterwards:
+ *
+ *  · the wildlife respawn ledger (`body/ContinentWildlife.ts`) creates a
+ *    replacement animal on the tick it is due, awake or not, so which entity
+ *    exists, and with which id, is not a function of the tiling;
+ *  · a predator that HOLDS A QUARRY is stepped wherever it stands, so the tick
+ *    a chase ends — and therefore the home range the animal re-anchors to, and
+ *    every position it takes for the rest of its life — belongs to the world
+ *    and not to the scheduler.
  *
  * Together those mean the result depends on the beings' trajectories and the
  * seed, never on when a tile happened to wake —
- * `test/continent-activity.test.ts` runs the same world at two radii, and
- * against a control that never sleeps, and compares the whole state through
- * `runner/settled.ts`.
+ * `test/continent-activity.test.ts` runs the same world at 300 m, 768 m,
+ * 1536 m and `everywhere()` out to a week of sim time and compares every
+ * animal component and the whole state through `runner/settled.ts`. It was
+ * that arm, and only at its deepest checkpoint, that caught the re-anchor.
  *
  * The classic world uses `everywhere()`, whose tiles are all active always, so
  * it steps exactly what it always stepped; the goldens are the proof.

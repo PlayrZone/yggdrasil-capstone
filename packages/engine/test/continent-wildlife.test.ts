@@ -6,7 +6,7 @@ import type { Animal } from '../src/body/animals.js';
 import { CONTINENT_SCALE } from '../src/worlds/forager/scale.js';
 
 /**
- * NOTHING A BEING CAN SEE MAY JUMP.
+ * NOTHING A BEING CAN SEE MAY JUMP — OR BEGIN.
  *
  * The continent's animals hold closed-form home ranges, which is what makes a
  * 67 km² world affordable — and which the first draft used as a licence to
@@ -16,15 +16,35 @@ import { CONTINENT_SCALE } from '../src/worlds/forager/scale.js';
  * m/tick. A 400× jump is unmissable in a viewer and is not something a world
  * is allowed to do to an observer.
  *
- * The rule this file holds the world to: an animal within perception of any
- * living being — on the tick before or the tick after — moves by at most its
- * own speed. Animals nobody is near may still jump, and must, because that is
- * the fast-forward doing its job; the second assertion below requires it, so
- * the first cannot pass by the world having quietly stopped skipping tiles.
+ * MOVEMENT WAS ONLY HALF OF IT. This test used to exempt a newly created
+ * animal verbatim — `if (!was) continue; // born this tick` — on the grounds
+ * that a thing with no previous position cannot have moved. Under that
+ * exemption the respawn ledger drew a replacement uniformly from the dead
+ * animal's 256 m tile and 18 of 23 replacements appeared inside a being's 92 m
+ * sight, the nearest 15.9 m away. To a being whose world is real, an animal
+ * that was not there and then is is exactly as impossible as one that jumped
+ * 156 m, so the exemption is gone: a replacement must first exist where nobody
+ * can see it and then WALK in.
+ *
+ * The rule this file holds the world to, in two parts:
+ *  · an animal within perception of any living being — on the tick before or
+ *    the tick after — moves by at most its own speed;
+ *  · an animal's FIRST position is outside every living being's perception
+ *    radius, so the first position anyone perceives is one it walked to.
+ * Animals nobody is near may still jump, and must, because that is the
+ * fast-forward doing its job; the vacuity guards below require it, so the
+ * guarantees cannot pass by the world having quietly stopped skipping tiles.
+ *
+ * Reflex minds do not hunt, so nothing would ever be replaced in a run left to
+ * itself: the test does the killing, inside the founders' own eyesight, which
+ * is the worst case the ledger can be handed.
  */
 
 const SIGHT = CONTINENT_SCALE.perceptionDay;
 const EPS = 1e-6;
+/** Ticks between culls, and the radius one sweeps. See the run below. */
+const CULL_EVERY = 400;
+const CULL_RADIUS = 400;
 
 interface Seen {
   x: number;
@@ -34,9 +54,8 @@ interface Seen {
 
 function snapshot(exp: Experiment): Map<number, Seen> {
   const out = new Map<number, Seen>();
-  exp.world.forEach((e: Entity) => {
-    const animal = e.components['Animal'] as Animal | undefined;
-    if (!animal) return;
+  exp.world.spatial.each('Animal', (e: Entity) => {
+    const animal = e.components['Animal'] as Animal;
     const t = e.components['Transform2D'] as Transform2D;
     out.set(e.id, { x: t.x, y: t.y, kind: animal.kind });
   });
@@ -53,27 +72,69 @@ function living(exp: Experiment): [number, number][] {
   return out;
 }
 
+function nearestPerson(people: [number, number][], x: number, y: number): number {
+  let best = Infinity;
+  for (const [px, py] of people) best = Math.min(best, Math.hypot(px - x, py - y));
+  return best;
+}
+
 function nearAnyone(people: [number, number][], x: number, y: number): boolean {
   for (const [px, py] of people) if ((px - x) ** 2 + (py - y) ** 2 <= SIGHT * SIGHT) return true;
   return false;
 }
 
-describe('an animal never teleports inside a being’s sight', () => {
-  it('moves by at most its own speed wherever anyone could be watching', () => {
+describe('an animal never teleports, and never begins, inside a being’s sight', () => {
+  it('walks everywhere it goes, into existence included', () => {
     const exp = new Experiment({ seed: 'continuity', agentCount: 80, scenario: 'forager-continent' });
+    // The ledger's own creations, caught at the instant they are made rather
+    // than inferred from a diff, so nothing born and removed inside one tick
+    // can slip past.
+    const bornThisTick: number[] = [];
+    exp.world.events.on('entityCreated', ({ id }) => {
+      if (exp.world.getEntity(id)?.components['Animal']) bornThisTick.push(id);
+    });
     exp.advance(1);
+    bornThisTick.length = 0; // the opening stock is the world beginning, not an arrival
     let before = snapshot(exp);
     let peopleBefore = living(exp);
     let watched = 0;
     let unwatchedJumps = 0;
     let worstWatched = 0;
-    for (let tick = 0; tick < 8000; tick++) {
+    let births = 0;
+    let walkedIn = 0;
+    let closestBirth = Infinity;
+    /** Animals born during the run that no being has perceived yet. */
+    const unseen = new Set<number>();
+
+    for (let tick = 0; tick < 14_400; tick++) {
+      // Hunting pressure the reflex minds cannot supply: everything around one
+      // living being, wiped out, so replacements are booked into the very tiles
+      // the band is standing in — the only place this invariant can be tested.
+      if (tick % CULL_EVERY === 0 && peopleBefore.length > 0) {
+        const [hx, hy] = peopleBefore[tick % peopleBefore.length]!;
+        cull(exp, hx, hy, CULL_RADIUS);
+      }
       exp.advance(1);
       const after = snapshot(exp);
       const peopleAfter = living(exp);
+
+      // NOTHING MAY APPEAR IN SIGHT. Checked against where the beings are at
+      // the END of the tick, because that is where they were standing when
+      // perception ran.
+      for (const id of bornThisTick) {
+        const now = after.get(id);
+        if (!now) continue; // created and gone inside one tick: nobody's world changed
+        births++;
+        const d = Math.min(nearestPerson(peopleAfter, now.x, now.y), nearestPerson(peopleBefore, now.x, now.y));
+        if (d < closestBirth) closestBirth = d;
+        expect(d, `${now.kind} ${id} materialised ${d.toFixed(1)} m from a living being`).toBeGreaterThan(SIGHT);
+        unseen.add(id);
+      }
+      bornThisTick.length = 0;
+
       for (const [id, now] of after) {
         const was = before.get(id);
-        if (!was) continue; // born this tick — a replacement has no previous place
+        if (!was) continue; // its first tick — the arrival rule above covers it
         const moved = Math.hypot(now.x - was.x, now.y - was.y);
         const speed = CONTINENT_SCALE.animalSpeed[now.kind]!;
         const inSight =
@@ -86,6 +147,11 @@ describe('an animal never teleports inside a being’s sight', () => {
           if (moved > worstWatched) worstWatched = moved;
           expect(moved, `${now.kind} ${id} moved ${moved.toFixed(1)} m in one tick at ${now.x},${now.y}`)
             .toBeLessThanOrEqual(speed + EPS);
+          // …and if this is the first time anyone could see this replacement,
+          // it got here on its own feet: the assertion above just held for the
+          // step that carried it in, from a position that was itself in the
+          // world on the previous tick.
+          if (unseen.delete(id)) walkedIn++;
         } else if (moved > speed + EPS) {
           unwatchedJumps++;
         }
@@ -93,13 +159,29 @@ describe('an animal never teleports inside a being’s sight', () => {
       before = after;
       peopleBefore = peopleAfter;
     }
+    console.log(
+      `\ncontinuity: ${watched} watched animal-ticks, worst watched step ${worstWatched.toFixed(4)} m | ` +
+        `${births} births observed, closest ${closestBirth.toFixed(1)} m from a living being (sight ${SIGHT}) | ` +
+        `${walkedIn} of them later walked into somebody's sight | ${unwatchedJumps} unwatched fast-forwards\n`,
+    );
     // Not vacuous: beings really were beside animals, for a long time…
-    expect(watched, 'no animal was ever near a being').toBeGreaterThan(100_000);
+    // (measured on this seed: 105,113 watched animal-ticks, worst watched step
+    // 1.2320 m — a wolf's own speed to four places; 62 births, the nearest
+    // 95.4 m out; 881 fast-forwards. The guards are floors, not the figures.)
+    expect(watched, 'no animal was ever near a being').toBeGreaterThan(50_000);
     expect(worstWatched).toBeGreaterThan(0); // …and those animals really moved
+    // …the ledger really did have replacements to make, in ground the band was
+    // standing in…
+    expect(births, 'nothing was ever replaced').toBeGreaterThan(25);
+    expect(walkedIn, 'no replacement was ever seen at all').toBeGreaterThan(0);
     // …and the world really is skipping ground, which is what makes the
-    // guarantee above worth anything.
+    // guarantees above worth anything.
     expect(unwatchedJumps, 'nothing was ever fast-forwarded').toBeGreaterThan(0);
-  }, 600_000);
+    // A host that moves a static entity behind the index's back is a silent
+    // wrong answer for up to 256 ticks; the audit counts it, and nothing in a
+    // run this long may ever trip it.
+    expect(exp.world.spatial.staticDrift, 'a static entity moved without markMoved').toBe(0);
+  }, 900_000);
 });
 
 /** Every animal alive, by kind. */

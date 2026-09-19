@@ -51,15 +51,27 @@ describe('continent golden state (behaviour lock)', () => {
   }
 
   /**
-   * THE GOLDEN IS OF THE WORLD, NOT OF THE ACTIVATION SCHEDULE. Recorded at
-   * the default radius and again at twice it, the digests are the same — so
-   * `CONTINENT_ACTIVITY_RADIUS` can be retuned for performance without any of
-   * the values above moving, and a change that DOES move them is a change to
-   * the simulation rather than to how much of it was stepped.
+   * THE GOLDEN IS OF THE WORLD, NOT OF THE ACTIVATION SCHEDULE.
+   *
+   * Recorded at the default radius, at half it, at twice it and against a world
+   * that never sleeps, the digests are the same — so `CONTINENT_ACTIVITY_RADIUS`
+   * can be retuned for performance without any of the values above moving, and a
+   * change that DOES move them is a change to the simulation rather than to how
+   * much of it was stepped.
+   *
+   * THIS CLAIM ONCE HELD ONLY HERE. Checkpointed at 1,200 and 3,000 ticks, it
+   * was true of those two ticks and false by day seven: at tick 16,800 the same
+   * run digested three different ways at radii 400 / 768 / 1536, because a
+   * predator's re-anchored home range was phased on the tick its ground woke
+   * (`body/ContinentWildlife.ts`). A golden cannot prove a property it is not
+   * deep enough to see, so the real proof of this one is
+   * `continent-activity.test.ts` — four schedules, every animal component, out
+   * to tick 16,800 — and what is left here is the cheap sentry for it.
    */
-  it('gives the same digest at half and at twice the activation radius', () => {
+  it('gives the same digest at half, at twice, and at no activation radius', () => {
     const run = CONTINENT_RUNS[0]!;
     expect(fingerprintsAtRadius(run, CONTINENT_ACTIVITY_RADIUS * 2)).toEqual(GOLDENS[run.name]);
     expect(fingerprintsAtRadius(run, 400)).toEqual(GOLDENS[run.name]);
+    expect(fingerprintsAtRadius(run, Infinity)).toEqual(GOLDENS[run.name]);
   }, 300_000);
 });
