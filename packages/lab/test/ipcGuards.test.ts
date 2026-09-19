@@ -26,8 +26,7 @@ function thinkInput(over: Record<string, unknown> = {}): Record<string, unknown>
       needs: { hunger: 0.4, rest: 0.6, safety: 0.9, socialConnection: 0.5 },
       health: 88,
       sick: false,
-      x: 120,
-      y: 240,
+      place: { x: 120, y: 240 },
       inventory: { berry: 2 },
       context: {},
     },
@@ -217,7 +216,9 @@ describe('validateThinkInput', () => {
     ['a missing snapshot', thinkInput({ snapshot: undefined })],
     ['a snapshot that is an array', thinkInput({ snapshot: [] })],
     ['a non-numeric id', thinkInput({ snapshot: { ...(thinkInput()['snapshot'] as object), id: 'x' } })],
-    ['a NaN coordinate', thinkInput({ snapshot: { ...(thinkInput()['snapshot'] as object), x: Number.NaN } })],
+    // A place is world data, so what this edge refuses is a place that is not
+    // data at all — not a coordinate, which only a plane has (engine W1-B4).
+    ['a place that is not an object', thinkInput({ snapshot: { ...(thinkInput()['snapshot'] as object), place: 7 } })],
     ['a missing worldView', thinkInput({ worldView: undefined })],
     ['a non-array knowledge', thinkInput({ knowledge: { length: 3 } })],
     ['an unknown trigger', thinkInput({ trigger: 'whenever' })],

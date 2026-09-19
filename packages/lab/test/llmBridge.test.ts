@@ -35,8 +35,7 @@ function thinkInput(over: Record<string, unknown> = {}): Record<string, unknown>
       needs: { hunger: 41, rest: 60, safety: 9, socialConnection: 50 },
       health: 88,
       sick: false,
-      x: 120,
-      y: 240,
+      place: { x: 120, y: 240 },
       inventory: { berry: 2 },
       context: {},
     },
@@ -237,9 +236,13 @@ describe('llmComplete binds the billed prompt to the input', () => {
   });
 
   it('refuses an input the builder cannot render, without leaking why', async () => {
-    // Structurally valid enough for validateThinkInput (needs is an object) but
-    // the builder formats numbers out of it and throws.
-    const broken = thinkInput({ snapshot: { ...(thinkInput()['snapshot'] as object), needs: {} } });
+    // Structurally valid enough for validateThinkInput (the array is an array,
+    // and within its cap) but the builder reads a field off each belief and
+    // throws. It used to be an empty `needs`, which no longer does it: the
+    // needs paragraph is rendered from the world's own drives now and a
+    // pressure a body reports nothing for reads `?` rather than throwing
+    // (engine W1-B3 verifier, round 2, backlog 2).
+    const broken = thinkInput({ knowledge: [null] });
     expect(() => promptFor(broken)).toThrow(); // the path under test is the builder throwing
     await refuses(promptFor(thinkInput()), broken);
   });

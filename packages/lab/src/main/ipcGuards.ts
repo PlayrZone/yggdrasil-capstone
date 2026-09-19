@@ -248,9 +248,13 @@ export function validateThinkInput(input: unknown): Check {
   if (!isPlainObject(snapshot['traits'])) return fail('snapshot.traits must be an object');
   if (!isPlainObject(snapshot['needs'])) return fail('snapshot.needs must be an object');
   if (!isPlainObject(snapshot['inventory'])) return fail('snapshot.inventory must be an object');
-  for (const k of ['health', 'x', 'y'] as const) {
-    if (!finite(snapshot[k])) return fail(`snapshot.${k} must be a finite number`);
-  }
+  if (!finite(snapshot['health'])) return fail('snapshot.health must be a finite number');
+  // WHERE A BEING IS IS AN OPAQUE PLACE (engine W1-B4). It used to be the two
+  // numbers `x`,`y`, and this guard checked them — but what a place is MADE OF
+  // is the world's (a plane writes two numbers, a graph writes one name), so
+  // all this edge can honestly demand is that it is plain JSON data. It still
+  // counts against `estimateBytes`, which is what the check was actually for.
+  if (!isPlainObject(snapshot['place'])) return fail('snapshot.place must be an object');
 
   const worldView = input['worldView'];
   if (!isPlainObject(worldView)) return fail('worldView must be an object');
@@ -291,9 +295,9 @@ export function validateThinkInput(input: unknown): Check {
   }
   if (input['mostTold'] !== undefined && !bounded(input['mostTold'], THINK_LIMITS.string)) return fail('mostTold must be a bounded string');
   if (input['offerMaking'] !== undefined && typeof input['offerMaking'] !== 'boolean') return fail('offerMaking must be a boolean');
-  if (input['sacredPlace'] !== undefined) {
-    const p = input['sacredPlace'];
-    if (!isPlainObject(p) || typeof p['x'] !== 'number' || typeof p['y'] !== 'number') return fail('sacredPlace must be {x,y}');
+  // Likewise: a place, not a pair. What is inside one is the world's business.
+  if (input['sacredPlace'] !== undefined && !isPlainObject(input['sacredPlace'])) {
+    return fail('sacredPlace must be an object');
   }
 
   const size = estimateBytes(input, THINK_LIMITS.bytes, THINK_LIMITS.depth);
