@@ -2,10 +2,15 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   COGNITION_SCHEMA_VERSION,
+  CognitionRecorder,
+  DEFAULT_RECORDED_PROVENANCE,
   ENGINE_VERSION,
   Experiment,
   FORAGER_CONTINENT,
   MockMindBackend,
+  OutcomeTracker,
+  ScaffoldLedger,
+  attemptPrompt,
   buildThinkPrompt,
   cognitionToExample,
   deserializeThinkInput,
@@ -15,15 +20,22 @@ import {
 import type {
   CognitionOutcome,
   CognitionRecordV2,
+  EvidenceSnapshot,
   ICognitionSink,
   IMind,
   IMindBackend,
+  Intent,
+  KnowledgeRecord,
   KnowledgeRule,
   MindOutput,
+  ProvenanceLevel,
   Needs,
+  ObjectKind,
+  RecorderWorld,
   RunManifest,
   RunSummary,
   ThinkInput,
+  Traits,
 } from '../src/index.js';
 import { fingerprintOf } from './fingerprint.js';
 import { CTX, mem, resetIds } from './helpers.js';
@@ -703,15 +715,51 @@ describe('retried acts', () => {
     const row = sink.records.find((r) => r.parse.retried)!;
     expect(row.attempts).toHaveLength(2);
     const base = buildThinkPrompt(deserializeThinkInput(row.thinkInput));
-    expect(row.attempts[0]!.prompt).toEqual(base);
-    // The second attempt carried the rejection feedback — and says so.
-    expect(row.attempts[1]!.prompt).toEqual(retryPrompt(base, row.attempts[0]!.error));
-    expect(row.attempts[1]!.prompt.user).not.toBe(base.user);
-    expect(row.attempts[1]!.prompt.user).toContain('Your previous reply was rejected');
+    // The first attempt was sent the base prompt, so it stores no delta at all.
+    expect(row.attempts[0]!.promptDelta).toBeUndefined();
+    expect(attemptPrompt(row, row.attempts[0]!)).toEqual(base);
+    // The second attempt carried the rejection feedback — and says so, as the
+    // suffix it actually is rather than a second full copy of the prompt.
+    const retriedPrompt = attemptPrompt(row, row.attempts[1]!);
+    expect(retriedPrompt).toEqual(retryPrompt(base, row.attempts[0]!.error));
+    expect(retriedPrompt.user).not.toBe(base.user);
+    expect(retriedPrompt.user).toContain('Your previous reply was rejected');
+    expect(row.attempts[1]!.promptDelta).toEqual({
+      userSuffix: retriedPrompt.user.slice(base.user.length),
+    });
     // The training pair uses the prompt that actually produced the completion.
     const messages = cognitionToExample(row)!.messages;
-    expect(messages[1]!.content).toBe(row.attempts[1]!.prompt.user);
+    expect(messages[1]!.content).toBe(retriedPrompt.user);
     expect(messages[2]!.content).toBe(row.attempts[1]!.raw);
+  });
+
+  /**
+   * Backlog item 5: attempts of one call shared a ~4 KB prompt and each stored
+   * a full copy, so a retried row carried the base twice. Replay must still be
+   * byte-identical, which is what the assertions above pin; this one pins that
+   * the bytes actually went away.
+   */
+  it('stores a retry as a suffix, not a second copy of the prompt', async () => {
+    const sink = new MemorySink();
+    const exp = new Experiment({
+      seed: 'retry-bytes',
+      agentCount: 8,
+      mindBackend: new MockMindBackend({ failTimes: 1 }),
+      recording: { sink, runId: 'run-retry-bytes', nowMs: () => 0 },
+    });
+    exp.makeConscious(exp.agentIds[0]!);
+    await stepUntil(exp, () => sink.records.some((r) => r.parse.retried));
+    exp.endRecording();
+
+    const row = sink.records.find((r) => r.parse.retried)!;
+    const stored = JSON.stringify(row).length;
+    const inflated = JSON.stringify({
+      ...row,
+      attempts: row.attempts.map((a) => ({ prompt: attemptPrompt(row, a), raw: a.raw, ...(a.error !== undefined ? { error: a.error } : {}) })),
+    }).length;
+    expect(stored).toBeLessThan(inflated);
+    // Two full prompts' worth of the saving, at minimum.
+    expect(inflated - stored).toBeGreaterThan(row.prompt.system.length + row.prompt.user.length);
   });
 });
 
@@ -743,4 +791,496 @@ describe('zero perturbation', () => {
     expect(recording.outcomes.length).toBeGreaterThan(0);
     expect(withSink).toBe(withoutSink);
   }, 60_000);
+});
+
+// ─── 5. The W0-B reviewer's Round-2 backlog ──────────────────────────────────
+
+/**
+ * Backlog item 1: `closeRun` was caught outside `guard`, so a throwing manifest
+ * write fired no `onFailure` and left `failureReason` null — the rows were all
+ * durable and reconcilable, and the host was simply never told. It was the last
+ * fully silent failure in the recorder.
+ */
+describe('a throwing closeRun is not silent', () => {
+  it('reports through onFailure and recordingFailure', async () => {
+    const failures: string[] = [];
+    const records: CognitionRecordV2[] = [];
+    const halfBrokenSink: ICognitionSink = {
+      openRun: () => {},
+      cognition: (r) => void records.push(r),
+      outcome: () => {},
+      closeRun: () => {
+        throw new Error('EROFS: read-only file system');
+      },
+    };
+    const exp = new Experiment({
+      seed: 'close-throws',
+      agentCount: 8,
+      mindBackend: new MockMindBackend(),
+      recording: { sink: halfBrokenSink, runId: 'run-close-throws', nowMs: () => 0, onFailure: (e) => failures.push(e) },
+    });
+    exp.makeConscious(exp.agentIds[0]!);
+    await stepUntil(exp, () => records.length >= 1);
+    await exp.settleCognition();
+    exp.endRecording();
+
+    expect(records.length).toBeGreaterThan(0); // the rows themselves are fine
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('EROFS');
+    expect(exp.recordingFailure).toContain('EROFS');
+    exp.endRecording(); // and a second close stays a no-op
+    expect(failures).toHaveLength(1);
+  });
+});
+
+/**
+ * Backlog item 7, reopened by the T1 reviewer (D1): the old policy coerced a
+ * non-finite number to `0` — and it did so AFTER `buildThinkPrompt` had already
+ * rendered it. A prompt SENT as "hunger NaN, rest 20" replayed as "hunger 0,
+ * rest 20": the row did not reproduce the call it was paid for, and the paths
+ * in `nonFinite` were a note nobody could act on. The placeholder is still `0`
+ * (the row must stay valid JSON), but it is now a placeholder: the token it
+ * stands for rides beside it and is put back before the prompt is rebuilt.
+ */
+describe('a non-finite number replays to the bytes that were sent', () => {
+  const nonFiniteInput = (
+    over: {
+      needs?: Partial<Needs>;
+      health?: number;
+      x?: number;
+      y?: number;
+      inventory?: Partial<Record<ObjectKind, number>>;
+      traits?: Partial<Traits>;
+      confidence?: number;
+      evidenceCount?: number;
+      sacredPlace?: { x: number; y: number };
+      provenance?: readonly EvidenceSnapshot[];
+    } = {},
+  ): ThinkInput => ({
+    snapshot: {
+      id: 3,
+      name: 'Oru',
+      ageTicks: 10,
+      traits: { curiosity: 50, aggression: 0, compassion: 50, ambition: 50, loyalty: 50, riskTolerance: 50, ...over.traits },
+      needs: { hunger: 10, rest: 20, safety: 30, socialConnection: 40, ...over.needs },
+      health: over.health ?? 88,
+      sick: false,
+      x: over.x ?? 5,
+      y: over.y ?? 7,
+      inventory: over.inventory ?? { berry: 2 },
+      context: CTX,
+    },
+    recalledMemories: [],
+    knowledge: [
+      {
+        id: 1,
+        ruleKey: 'ctx:GatherSucceeded:berry:nearWater:positive',
+        rule: BERRY_NEAR_WATER,
+        statement: 'berries are found near water',
+        confidence: over.confidence ?? 0.91,
+        evidenceCount: over.evidenceCount ?? 40,
+        contradictionCount: 0,
+        sourceMemoryIds: [1, 2],
+        status: 'held',
+        origin: 'experience',
+        firstFormed: 10,
+        lastReinforced: 99,
+        ...(over.provenance ? { provenance: over.provenance } : {}),
+      },
+    ],
+    relationships: new Map(),
+    worldView: { tick: 1, night: false, season: 'spring', agents: [], resources: [], structures: [] },
+    goals: [],
+    trigger: 'periodic',
+    ...(over.sacredPlace ? { sacredPlace: over.sacredPlace } : {}),
+  });
+
+  /** Every rendered number the prompt builder formats, all non-finite at once. */
+  const everyNonFinite = (): ThinkInput =>
+    nonFiniteInput({
+      needs: { hunger: NaN, rest: Infinity, safety: -Infinity },
+      health: NaN,
+      inventory: { berry: Infinity, wood: NaN },
+      traits: { curiosity: -Infinity },
+      confidence: NaN,
+      evidenceCount: Infinity,
+      sacredPlace: { x: NaN, y: 3 },
+    });
+
+  it('rebuilds the prompt byte-for-byte with NaN, ±Infinity in every field that renders one', () => {
+    const input = everyNonFinite();
+    const sent = buildThinkPrompt(input);
+    // The test is not vacuous: these bytes really did reach the model.
+    expect(sent.user).toContain('hunger NaN, rest Infinity, safety -Infinity');
+    expect(sent.user).toContain('HEALTH NaN');
+    expect(sent.user).toContain('berry×Infinity');
+    expect(sent.user).toContain('(NaN%, seen Infinity×)');
+    expect(sent.user).toContain('about NaN away (toward NaN,3)');
+    expect(sent.system).toContain('curiosity -Infinity');
+
+    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input))));
+    expect(replayed.user).toBe(sent.user);
+    expect(replayed.system).toBe(sent.system);
+  });
+
+  it('stores the placeholder 0 on disk and the token beside it', () => {
+    const stored = wire(serializeThinkInput(everyNonFinite()));
+    expect(stored.snapshot.needs.hunger).toBe(0);
+    expect(stored.snapshot.needs.rest).toBe(0);
+    expect(stored.snapshot.health).toBe(0);
+    expect(stored.knowledge[0]!.confidence).toBe(0);
+    expect(stored.nonFinite).toEqual(
+      expect.arrayContaining([
+        { path: '$.snapshot.needs.hunger', value: 'NaN' },
+        { path: '$.snapshot.needs.rest', value: 'Infinity' },
+        { path: '$.snapshot.needs.safety', value: '-Infinity' },
+        { path: '$.snapshot.health', value: 'NaN' },
+        { path: '$.snapshot.inventory.berry', value: 'Infinity' },
+        { path: '$.snapshot.traits.curiosity', value: '-Infinity' },
+        { path: '$.knowledge[0].confidence', value: 'NaN' },
+        { path: '$.sacredPlace.x', value: 'NaN' },
+      ]),
+    );
+  });
+
+  it('restores -0 exactly and leaves a clean input unflagged', () => {
+    const stored = wire(serializeThinkInput(nonFiniteInput({ x: -0, y: -0 })));
+    expect(Object.is(stored.snapshot.x, 0)).toBe(true); // JSON has no -0…
+    expect(stored.nonFinite).toEqual([
+      { path: '$.snapshot.x', value: '-0' },
+      { path: '$.snapshot.y', value: '-0' },
+    ]);
+    const replayed = deserializeThinkInput(stored); // …so the row carries it
+    expect(Object.is(replayed.snapshot.x, -0)).toBe(true);
+    expect(Object.is(replayed.snapshot.y, -0)).toBe(true);
+
+    expect(wire(serializeThinkInput(nonFiniteInput())).nonFinite).toBeUndefined();
+  });
+
+  it('leaves the stored row untouched, so the same row replays twice', () => {
+    const stored = wire(serializeThinkInput(everyNonFinite()));
+    const first = buildThinkPrompt(deserializeThinkInput(stored));
+    expect(stored.snapshot.needs.hunger).toBe(0); // still the placeholder
+    expect(buildThinkPrompt(deserializeThinkInput(stored)).user).toBe(first.user);
+  });
+
+  it('refuses a row whose number was LOST, naming the field, and accepts one that was restored', () => {
+    const clean = wire(serializeThinkInput(nonFiniteInput()));
+    // What a row looks like after JSON dropped a number outright.
+    const lost = { ...clean, snapshot: { ...clean.snapshot, health: null as unknown as number } };
+    expect(() => deserializeThinkInput(lost)).toThrow(/snapshot\.health is null/);
+    const gone = { ...clean, snapshot: { ...clean.snapshot, health: undefined as unknown as number } };
+    expect(() => deserializeThinkInput(gone)).toThrow(/snapshot\.health is undefined/);
+    const lostConfidence = {
+      ...clean,
+      knowledge: [{ ...clean.knowledge[0]!, confidence: null as unknown as number }],
+    };
+    expect(() => deserializeThinkInput(lostConfidence)).toThrow(/knowledge\[1\]\.confidence/);
+    const lostCount = {
+      ...clean,
+      snapshot: { ...clean.snapshot, inventory: { berry: null as unknown as number } },
+    };
+    expect(() => deserializeThinkInput(lostCount)).toThrow(/snapshot\.inventory\.berry/);
+
+    // …while a faithfully restored NaN is the value the prompt was built from.
+    expect(() => deserializeThinkInput(wire(serializeThinkInput(everyNonFinite())))).not.toThrow();
+  });
+
+  it('refuses a side-channel that disagrees with the row rather than writing elsewhere', () => {
+    const stored = wire(serializeThinkInput(nonFiniteInput({ health: NaN })));
+    const misnamed = { ...stored, nonFinite: [{ path: '$.snapshot.needs.nope', value: 'NaN' as const }] };
+    expect(() => deserializeThinkInput(misnamed)).toThrow(/does not name a substituted number/);
+    const notAPlaceholder = { ...stored, snapshot: { ...stored.snapshot, health: 42 } };
+    expect(() => deserializeThinkInput(notAPlaceholder)).toThrow(/does not name a substituted number/);
+  });
+});
+
+/**
+ * T1 reviewer, D3. `provenance` is up to six evidence snapshots per belief and
+ * NOT ONE of its bytes reaches a model: `buildThinkPrompt` renders a belief's
+ * id, confidence, evidenceCount, statement, origin and status and nothing else.
+ * A corpus row is what the mind SAW plus what happened next, so carrying it
+ * inflated every row for nobody.
+ */
+describe('a row does not carry bookkeeping the prompt never read', () => {
+  const snapshot = (memoryId: number): EvidenceSnapshot => ({
+    memoryId,
+    tick: memoryId * 10,
+    type: 'GatherSucceeded',
+    objectKind: 'berry',
+    outcome: 'success',
+    origin: 'experience',
+    toldBy: undefined,
+    causedBy: undefined,
+    subjects: [4, 9],
+    x: 12.5,
+    y: -8.25,
+    importance: 0.42,
+  });
+
+  const believer = (count: number): KnowledgeRecord[] =>
+    Array.from({ length: count }, (_, i) => ({
+      id: i + 1,
+      ruleKey: `ctx:GatherSucceeded:berry:nearWater:positive:${i}`,
+      rule: BERRY_NEAR_WATER,
+      statement: `berries are found near water (${i})`,
+      confidence: 0.6 + i / 100,
+      evidenceCount: 10 + i,
+      contradictionCount: 0,
+      sourceMemoryIds: [1, 2, 3],
+      provenance: Array.from({ length: 6 }, (_, j) => snapshot(i * 6 + j + 1)),
+      status: 'held' as const,
+      origin: 'experience' as const,
+      firstFormed: 10,
+      lastReinforced: 99,
+    }));
+
+  const inputWith = (knowledge: KnowledgeRecord[]): ThinkInput => ({
+    snapshot: {
+      id: 3,
+      name: 'Oru',
+      ageTicks: 10,
+      traits: { curiosity: 50, aggression: 0, compassion: 50, ambition: 50, loyalty: 50, riskTolerance: 50 },
+      needs: { hunger: 10, rest: 20, safety: 30, socialConnection: 40 },
+      health: 88,
+      sick: false,
+      x: 5,
+      y: 7,
+      inventory: { berry: 2 },
+      context: CTX,
+    },
+    recalledMemories: [],
+    knowledge,
+    relationships: new Map(),
+    worldView: { tick: 1, night: false, season: 'spring', agents: [], resources: [], structures: [] },
+    goals: [],
+    trigger: 'periodic',
+  });
+
+  it('strips provenance from every knowledge record, everywhere in the row', () => {
+    const stored = wire(serializeThinkInput(inputWith(believer(12))));
+    for (const k of stored.knowledge) expect('provenance' in k).toBe(false);
+    expect(JSON.stringify(stored)).not.toContain('provenance');
+    // What a prompt DOES read is untouched.
+    expect(stored.knowledge[0]!.sourceMemoryIds).toEqual([1, 2, 3]);
+    expect(stored.knowledge[0]!.evidenceCount).toBe(10);
+  });
+
+  it('replays byte-for-byte from the stripped row', () => {
+    const input = inputWith(believer(12));
+    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input))));
+    const sent = buildThinkPrompt(input);
+    expect(replayed.user).toBe(sent.user);
+    expect(replayed.system).toBe(sent.system);
+  });
+
+  it('is most of a populated row', () => {
+    const input = inputWith(believer(12));
+    const stored = serializeThinkInput(input);
+    const after = Buffer.byteLength(JSON.stringify(stored));
+    // Exactly what the old path stored: the live records, spread verbatim.
+    const before = Buffer.byteLength(JSON.stringify({ ...stored, knowledge: input.knowledge }));
+    expect(after).toBeLessThan(before * 0.4);
+  });
+});
+
+/**
+ * T1 reviewer, D2. `end()` was idempotent but nothing else was: a prompt frozen
+ * after close bumped `promptsSent`, was never written, and the manifest already
+ * on disk went on reconciling on paper while the act it counted did not exist.
+ * A late write is now refused — and said so, because refusing it silently is
+ * how a host loses acts and never learns it did.
+ */
+describe('a closed recorder counts nothing more', () => {
+  const NEEDS = { hunger: 0, rest: 0, safety: 0, socialConnection: 0 };
+  const world = (): RecorderWorld => ({
+    body: () => ({ alive: true, name: 'Oru', birthTick: 0, needs: NEEDS, health: 100, plan: [], planStep: 0, planDone: false }),
+    knowledge: () => [],
+    carriesNarrative: () => false,
+    name: () => 'Oru',
+    generation: () => 1,
+    witnesses: () => [],
+    day: () => 1,
+  });
+
+  const input = (): ThinkInput => ({
+    snapshot: {
+      id: 3,
+      name: 'Oru',
+      ageTicks: 10,
+      traits: { curiosity: 50, aggression: 0, compassion: 50, ambition: 50, loyalty: 50, riskTolerance: 50 },
+      needs: { hunger: 10, rest: 20, safety: 30, socialConnection: 40 },
+      health: 88,
+      sick: false,
+      x: 5,
+      y: 7,
+      inventory: {},
+      context: CTX,
+    },
+    recalledMemories: [],
+    knowledge: [],
+    relationships: new Map(),
+    worldView: { tick: 1, night: false, season: 'spring', agents: [], resources: [], structures: [] },
+    goals: [],
+    trigger: 'periodic',
+  });
+
+  const answer = {
+    agentId: 3,
+    tick: 1,
+    trigger: 'periodic',
+    systemPrompt: 'sys',
+    userPrompt: 'usr',
+    rawOutput: '{}',
+    attempts: [{ prompt: { system: 'sys', user: 'usr' }, raw: '{}' }],
+    modelId: 'mock/x',
+    valid: true,
+    retried: false,
+    fellBackToReflex: false,
+    latencyMs: 1,
+  };
+
+  /**
+   * A corpus row must say which instrument produced it. `provenance` changes how
+   * much evidence a belief keeps, so two runs at different levels are not the
+   * same experiment — and a host that predates the option still records a level
+   * rather than a hole.
+   */
+  it('records the provenance level the run was made at, defaulting rather than leaving a hole', () => {
+    const run = (level?: ProvenanceLevel): { manifest: RunManifest; record: CognitionRecordV2 } => {
+      const sink = new MemorySink();
+      const recorder = new CognitionRecorder({
+        sink,
+        runId: `run-prov-${level ?? 'default'}`,
+        scenarioId: 'w0b-prov',
+        worldId: 'forager-continent-v1',
+        seed: 'prov',
+        modelId: 'mock/x',
+        backendLabel: 'mock/x',
+        options: {
+          agentCount: 1,
+          mythBehavior: false,
+          leadership: false,
+          offerMaking: false,
+          craftLearning: false,
+          outcomeWindowTicks: 100,
+          ...(level ? { provenance: level } : {}),
+        },
+        scaffold: new ScaffoldLedger(),
+        world: world(),
+        nowMs: () => 0,
+      });
+      recorder.freezeInput(input(), { system: 'sys', user: 'usr' });
+      recorder.end();
+      return { manifest: sink.manifest!, record: sink.records[0]! };
+    };
+
+    const byDefault = run();
+    expect(byDefault.manifest.options.provenance).toBe(DEFAULT_RECORDED_PROVENANCE);
+    expect(byDefault.record.options.provenance).toBe('compact');
+
+    const full = run('full');
+    expect(full.manifest.options.provenance).toBe('full');
+    expect(full.record.options.provenance).toBe('full');
+    // The manifest and the rows under it can never disagree about one run.
+    expect(full.record.options).toEqual(full.manifest.options);
+  });
+
+  it('ignores a freeze, an attempt, a completion and an outcome after end() — visibly', () => {
+    const sink = new MemorySink();
+    const recorder = new CognitionRecorder({
+      sink,
+      runId: 'run-closed',
+      scenarioId: 'w0b-closed',
+      worldId: 'forager-continent-v1',
+      seed: 'closed',
+      modelId: 'mock/x',
+      backendLabel: 'mock/x',
+      options: { agentCount: 1, mythBehavior: false, leadership: false, offerMaking: false, craftLearning: false, outcomeWindowTicks: 100 },
+      scaffold: new ScaffoldLedger(),
+      world: world(),
+      nowMs: () => 0,
+    });
+
+    recorder.freezeInput(input(), { system: 'sys', user: 'usr' });
+    recorder.end();
+
+    const summary = sink.summary!;
+    const counts = summary.counts;
+    expect(counts.promptsSent).toBe(1);
+    expect(counts.recordsWritten).toBe(1); // filed unanswered, as it must be
+    expect(counts.promptsSent).toBe(counts.recordsWritten + counts.recordsDropped);
+    expect(recorder.ignoredAfterClose).toBe(0);
+
+    // Now the host keeps going against a closed recorder.
+    recorder.freezeInput(input(), { system: 'sys', user: 'usr-late' });
+    recorder.attempt(answer);
+    recorder.complete({ beingId: 3, parsed: { goals: [], plan: [], utterances: [] }, appliedPlan: [{ kind: 'Idle', durationTicks: 5 }], resolved: { goals: [], plan: [], utterances: [] }, tick: 2 });
+    recorder.tick(500);
+    recorder.end();
+
+    // Nothing was written, nothing was counted, and the manifest still stands.
+    expect(sink.records).toHaveLength(1);
+    expect(sink.outcomes).toHaveLength(0);
+    expect(sink.summary).toBe(summary);
+    expect(sink.summary!.counts).toEqual(counts);
+    // …and the ignore is observable rather than silent. Two, not four: with the
+    // freeze and the attempt refused there is no slot left for `complete` to
+    // find, and `flush` emptied the tracker — the record and outcome guards are
+    // the backstop that makes "nothing is written after the manifest" hold by
+    // construction, not a second path a host can reach.
+    expect(recorder.ignoredAfterClose).toBe(2);
+  });
+});
+
+/**
+ * Backlog item 7, last clause: an interrupted window stops watching the bus, so
+ * `spoken: false` on what is left means UNKNOWN. The flag says which.
+ */
+describe('speech tracking says when it stopped', () => {
+  const body = { alive: true, name: 'Kara', birthTick: 0, needs: { hunger: 0, rest: 0, safety: 0, socialConnection: 0 }, health: 100, plan: [] as unknown[], planStep: 0, planDone: false };
+  const world = {
+    body: () => body,
+    knowledge: () => [],
+    carriesNarrative: () => false,
+    name: () => 'Kara',
+    generation: () => 1,
+    witnesses: () => [],
+    day: () => 1,
+  };
+  const speakPlan = (): Intent[] => [
+    { kind: 'Speak', utterance: { speechAct: 'inform', text: 'hello' } },
+    { kind: 'Idle', durationTicks: 5 },
+  ];
+
+  it('flags a window the body interrupted before the utterance resolved', () => {
+    const emitted: CognitionOutcome[] = [];
+    const tracker = new OutcomeTracker(world, 'run-speech-flag', 100, (o) => emitted.push(o));
+    const plan = speakPlan();
+    body.plan = plan;
+    tracker.beginAct('run-speech-flag:1:1', 1, 1, plan, [], []);
+    plan.push({ kind: 'Eat', objectKind: 'berry' }); // the body splices its own act in
+    tracker.tick(2);
+    tracker.flush(3);
+
+    const outcome = emitted[0]!;
+    expect(outcome.interrupted).toBe(true);
+    expect(outcome.utterances[0]!.spoken).toBe(false);
+    expect(outcome.speechTrackingStopped).toBe(true);
+  });
+
+  it('does not flag a window that simply never got there', () => {
+    const emitted: CognitionOutcome[] = [];
+    const tracker = new OutcomeTracker(world, 'run-speech-plain', 100, (o) => emitted.push(o));
+    const plan = speakPlan();
+    body.plan = plan;
+    tracker.beginAct('run-speech-plain:1:1', 1, 1, plan, [], []);
+    tracker.tick(2);
+    tracker.flush(3);
+
+    const outcome = emitted[0]!;
+    expect(outcome.interrupted).toBe(false);
+    expect(outcome.utterances[0]!.spoken).toBe(false);
+    expect(outcome.speechTrackingStopped).toBe(false);
+  });
 });

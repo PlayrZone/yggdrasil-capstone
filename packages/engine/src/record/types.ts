@@ -17,6 +17,7 @@ import type {
   ThinkTrigger,
   Utterance,
 } from '../contract/types.js';
+import type { ProvenanceLevel } from '../learning/ILearner.js';
 
 /**
  * The lossless cognition record (W0-B). The old corpus stored the parsed
@@ -29,24 +30,77 @@ import type {
  * Bumped whenever a stored field changes meaning: a reader must refuse a
  * version it does not know rather than silently mis-read a corpus.
  */
-export const COGNITION_SCHEMA_VERSION = 2;
+export const COGNITION_SCHEMA_VERSION = 3;
 
 // ─── The think input, frozen ─────────────────────────────────────────────────
 
 /** A memory as it stores: the retrieval embedding is a typed array JSON drops. */
 export type SerializedMemoryRecord = Omit<MemoryRecord, 'embedding'> & { embedding?: number[] };
 
-export interface SerializedThinkInput extends Omit<ThinkInput, 'relationships' | 'recalledMemories'> {
+/**
+ * Knowledge as a row stores it. `provenance` is dropped: no prompt reads it
+ * (`buildThinkPrompt` renders id, confidence, evidenceCount, statement, origin
+ * and status), and six evidence snapshots per belief made a populated row
+ * nearly twice its size for bytes the model never saw. `sourceMemoryIds` stays
+ * — it is one line, and it is what a row's evidence is keyed by.
+ */
+export type SerializedKnowledgeRecord = Omit<KnowledgeRecord, 'provenance'>;
+
+/** The JSON-invalid number a stored `0` stands in for. */
+export type NonFiniteToken = 'NaN' | 'Infinity' | '-Infinity' | '-0';
+
+/**
+ * One number that reached `buildThinkPrompt` but has no JSON form, and where it
+ * sat. `path` is the frozen input's own syntax — `$.snapshot.needs.hunger`,
+ * `$.knowledge[0].confidence`. Every key in a ThinkInput comes from a closed
+ * engine enum or a fixed field name, so none can contain `.`, `[` or `]` and
+ * the path is unambiguous; `deserializeThinkInput` refuses a path that does not
+ * resolve onto a stored `0` rather than writing into the wrong field.
+ */
+export interface NonFiniteSubstitution {
+  path: string;
+  value: NonFiniteToken;
+}
+
+export interface SerializedThinkInput
+  extends Omit<ThinkInput, 'relationships' | 'recalledMemories' | 'knowledge'> {
   /** A Map does not survive JSON; its entries do, in the Map's own order. */
   relationships: [number, RelationshipRecord][];
   recalledMemories: SerializedMemoryRecord[];
+  knowledge: SerializedKnowledgeRecord[];
+  /**
+   * The numbers the prompt was rendered from that JSON cannot hold. Each stores
+   * as `0` — so the row stays valid JSON that any reader can parse — with the
+   * token it stands for here, and `deserializeThinkInput` puts it back before
+   * the prompt is rebuilt. Without this a prompt SENT as "hunger NaN, rest 20"
+   * replayed as "hunger 0, rest 20": a row that did not reproduce the call it
+   * was paid for.
+   *
+   * Entries also mark the row lossy in MEANING for anything reading the stored
+   * numbers straight off disk — a need-regime bucketer sees the placeholder `0`
+   * and calls an act taken at hunger NaN 'satisfied'. Replay does not: it reads
+   * this. Absent (the normal case) means every number was finite.
+   */
+  nonFinite?: NonFiniteSubstitution[];
 }
 
 // ─── One call to a backend ───────────────────────────────────────────────────
 
+/**
+ * How one attempt's messages differ from the record's base `prompt`. Attempts
+ * of a call share a ~4 KB prompt, and storing a full copy each made a retried
+ * row carry it twice; only the difference is stored now. `attemptPrompt`
+ * rebuilds the exact bytes — nothing reads this by hand.
+ */
+export type AttemptPromptDelta =
+  /** Same system turn; this text was appended to the base user turn (a retry). */
+  | { userSuffix: string }
+  /** No shared prefix — the whole thing, verbatim. */
+  | { full: { system: string; user: string } };
+
 export interface CognitionAttempt {
-  /** The exact messages THIS attempt was sent (a retry carries the rejection feedback). */
-  prompt: { system: string; user: string };
+  /** Absent when this attempt was sent exactly the record's base `prompt`. */
+  promptDelta?: AttemptPromptDelta;
   /** Raw model text, exactly as it came back (empty when the call itself threw). */
   raw: string;
   /** Why this attempt was rejected — a transport error or a parse failure. */
@@ -78,7 +132,24 @@ export interface RecordedRunOptions {
   offerMaking: boolean;
   craftLearning: boolean;
   outcomeWindowTicks: number;
+  /**
+   * How much evidence each belief kept while this run was recorded. It changes
+   * what a belief can be traced back to — and therefore what any later reading
+   * of this corpus can ask of it — so a row states the level rather than
+   * leaving a reader to guess which instrument produced it.
+   */
+  provenance: ProvenanceLevel;
 }
+
+/**
+ * What a HOST hands the recorder. `provenance` is optional here and required on
+ * the stored row: the recorder fills the default in one place, so a caller that
+ * predates the option still records a level rather than a hole.
+ */
+export type RecordedRunOptionsInput = Omit<RecordedRunOptions, 'provenance'> & { provenance?: ProvenanceLevel };
+
+/** What the recorder assumes when a host does not say. Matches `ProvenanceSample`'s own default. */
+export const DEFAULT_RECORDED_PROVENANCE: ProvenanceLevel = 'compact';
 
 /** The sanctioned interventions a driver can make. */
 export type ScaffoldKind =
@@ -252,6 +323,13 @@ export interface CognitionOutcome {
    * there, so it stops.
    */
   interrupted: boolean;
+  /**
+   * Speech observation stopped before every planned utterance resolved, so on
+   * the unresolved ones `spoken: false` means UNKNOWN, not "not spoken". An
+   * interrupted window stops watching the bus; without this flag the two cases
+   * were indistinguishable and a "never spoke" rate silently counted both.
+   */
+  speechTrackingStopped: boolean;
   intents: IntentOutcome[];
   utterances: UtteranceOutcome[];
   /** Need pressure change over [openedTick, closedTick] (positive = the need grew). */

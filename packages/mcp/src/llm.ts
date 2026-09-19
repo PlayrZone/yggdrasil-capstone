@@ -1,4 +1,4 @@
-import { FireworksMindBackend } from '@yggdrasil/engine';
+import { FireworksMindBackend, MockMindBackend } from '@yggdrasil/engine';
 import type { IMindBackend } from '@yggdrasil/engine';
 
 /**
@@ -25,4 +25,37 @@ export function makeLlmBackend(): IMindBackend | null {
   const apiKey = process.env['FIREWORKS_API_KEY'];
   if (!apiKey) return null;
   return new FireworksMindBackend({ apiKey, model: llmModelId() });
+}
+
+/**
+ * Which backend an EVAL may use, and whether it is allowed to cost anything.
+ *
+ * The eval gates are read-only in effect — they touch no world, no file and no
+ * DB row — but against a configured Fireworks model one run is dozens of
+ * completions of a paid endpoint. So a keyed lab refuses unless the caller has
+ * said `allowPaid`, and an unkeyed one scores the offline mock, which costs
+ * nothing and still proves the gate is wired.
+ */
+export interface EvalBackendChoice {
+  backend: IMindBackend | null;
+  paid: boolean;
+  /** Set when nothing may run; the text explains the cost that was declined. */
+  refusal?: string;
+}
+
+export function evalBackend(calls: number, allowPaid: boolean | undefined): EvalBackendChoice {
+  const paid = makeLlmBackend();
+  if (!paid) return { backend: new MockMindBackend(), paid: false };
+  if (!allowPaid) {
+    return {
+      backend: null,
+      paid: true,
+      refusal: [
+        `refused: this lab is configured with a paid model (${llmModelId()}).`,
+        `Running this would send ${calls} completions to it.`,
+        'Re-run with allowPaid: true to accept the cost, or unset FIREWORKS_API_KEY to score the offline mock instead.',
+      ].join('\n'),
+    };
+  }
+  return { backend: paid, paid: true };
 }

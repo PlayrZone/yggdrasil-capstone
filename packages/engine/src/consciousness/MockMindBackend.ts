@@ -1,6 +1,7 @@
 import type { ThinkInput } from '../contract/types.js';
 import type { IMind } from './IMind.js';
 import type { IMindBackend } from './IMindBackend.js';
+import type { ThinkPrompt } from './prompt.js';
 import { ReflexMind } from './ReflexMind.js';
 
 export interface MockMindBackendOptions {
@@ -30,7 +31,7 @@ export class MockMindBackend implements IMindBackend {
     this.failTimes = options.failTimes ?? 0;
   }
 
-  complete(input: ThinkInput, _retryError?: string): Promise<string> {
+  complete(_prompt: ThinkPrompt, input: ThinkInput): Promise<string> {
     if (this.failTimes > 0) {
       this.failTimes--;
       return Promise.resolve('not json — the model glitched');

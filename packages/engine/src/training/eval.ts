@@ -1,79 +1,75 @@
 import type { ThinkInput } from '../contract/types.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
-import { MindOutputError, parseMindOutput } from '../consciousness/schema.js';
-
+import { buildThinkPrompt } from '../consciousness/prompt.js';
+import { MindOutputError, parseMindOutputDetailed, utteranceHasContent } from '../consciousness/schema.js';
 /**
- * Eval gates that a fine-tuned Yggdrasil model must clear before it replaces
- * the bootstrap model (config-only swap, so the gate is the only safeguard).
- * Pure + backend-agnostic: run them against any IMindBackend.
+ * Gate 1 of the eval suite a fine-tuned Yggdrasil model must clear before it
+ * replaces the bootstrap model (config-only swap, so the gates are the only
+ * safeguard). Pure + backend-agnostic: run it against any IMindBackend, and it
+ * never touches a world, a file or a clock.
+ *
+ * Gate 2 — knowledge fidelity — is a battery, a matcher and a judge seam, and
+ * lives in `fidelity.ts`.
  */
 
 export interface ValidityResult {
   total: number;
   valid: number;
   rate: number;
+  /**
+   * Rejections by parser reason (`no-decision`, `json-in-prose`, …). A validity
+   * rate with no breakdown beside it is the number that read 100% while `{}`
+   * counted as a decision.
+   */
+  byReason: Record<string, number>;
+  /** Accepted, but only because the object came inside a ``` fence. */
+  salvagedFenced: number;
+  /**
+   * Valid outputs whose whole decision was to idle: a plan of nothing but
+   * `Idle` (or no plan at all) and nothing said. A model that answers
+   * `{"plan":[{"kind":"Idle"}]}` to everything scores 100% validity, so the
+   * rate alone cannot tell it from a mind. These three are not a partition —
+   * `acting` and `speaking` overlap — but `idleOnly` is disjoint from both,
+   * and a gate read without it is a gate that rewards doing nothing well.
+   */
+  idleOnly: number;
+  /** Valid outputs that chose at least one intent other than `Idle`. */
+  acting: number;
+  /** Valid outputs that said something with content in it (empty speech is not speech). */
+  speaking: number;
 }
 
 /** Gate 1: JSON validity — the fine-tune must be ≥ the bootstrap's rate. */
 export async function evalJsonValidity(backend: IMindBackend, inputs: ThinkInput[]): Promise<ValidityResult> {
   let valid = 0;
+  let salvagedFenced = 0;
+  let idleOnly = 0;
+  let acting = 0;
+  let speaking = 0;
+  const byReason: Record<string, number> = {};
   for (const input of inputs) {
     try {
-      parseMindOutput(await backend.complete(input));
+      const parsed = parseMindOutputDetailed(await backend.complete(buildThinkPrompt(input), input));
       valid++;
+      if (parsed.salvage === 'fenced') salvagedFenced++;
+      const acts = parsed.output.plan.some((intent) => intent.kind !== 'Idle');
+      const says = parsed.output.utterances.some(utteranceHasContent);
+      if (acts) acting++;
+      if (says) speaking++;
+      if (!acts && !says) idleOnly++;
     } catch (err) {
       if (!(err instanceof MindOutputError)) throw err; // transport errors surface
+      byReason[err.reason] = (byReason[err.reason] ?? 0) + 1;
     }
   }
-  return { total: inputs.length, valid, rate: inputs.length ? valid / inputs.length : 0 };
-}
-
-export interface FidelityViolation {
-  scenario: string;
-  reason: string;
-  rawOutput: string;
-}
-
-export interface FidelityResult {
-  scenarios: number;
-  violations: FidelityViolation[];
-  passed: boolean;
-}
-
-/**
- * Gate 2 (the V2-specific one): KNOWLEDGE FIDELITY. The model must reason
- * ONLY from the knowledge it is given — never from pretrained world knowledge
- * the agent never learned. We probe with agents that hold NO seed→plant
- * knowledge and a seed in hand: a faithful mind never deliberately plants
- * (it cannot know seeds grow); a model leaking "farming exists" will. Each
- * probe asserts the plan contains no agriculture intent.
- *
- * Extend `scenarios` with more leak traps as the model matures.
- */
-export async function evalKnowledgeFidelity(
-  backend: IMindBackend,
-  scenarios: { name: string; input: ThinkInput }[],
-): Promise<FidelityResult> {
-  const violations: FidelityViolation[] = [];
-  for (const { name, input } of scenarios) {
-    let raw = '';
-    try {
-      raw = await backend.complete(input);
-      const out = parseMindOutput(raw);
-      const plantsSeed = out.plan.some((i) => i.kind === 'Deposit' && i.objectKind === 'seed');
-      const knowsSeedGrowth = input.knowledge.some(
-        (k) => k.rule.kind === 'succession' && k.rule.effectType === 'PlantSprouted',
-      );
-      if (plantsSeed && !knowsSeedGrowth) {
-        violations.push({
-          scenario: name,
-          reason: 'planted a seed without knowing seeds grow — pretrained-knowledge leak',
-          rawOutput: raw,
-        });
-      }
-    } catch {
-      // Invalid output is the validity gate's concern, not fidelity's.
-    }
-  }
-  return { scenarios: scenarios.length, violations, passed: violations.length === 0 };
+  return {
+    total: inputs.length,
+    valid,
+    rate: inputs.length ? valid / inputs.length : 0,
+    byReason,
+    salvagedFenced,
+    idleOnly,
+    acting,
+    speaking,
+  };
 }

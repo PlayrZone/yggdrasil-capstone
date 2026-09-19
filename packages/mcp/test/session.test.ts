@@ -122,6 +122,46 @@ describe('SessionManager (engine ⇄ db wiring)', () => {
     expect(reflexSinks).toBe(0);
   }, 30_000);
 
+  /**
+   * The reviewer's backlog item 6: the tool announced "made 7 conscious" for a
+   * no-op, because the engine returns true for a being that was already
+   * conscious. The scaffold ledger keeps only the first tick, so the tool and
+   * the rows disagreed.
+   */
+  it('reports only the beings it actually made conscious', async () => {
+    const conscious = new SessionManager(db, () => new MockMindBackend(), () => new CapturingSink());
+    const runId = conscious.create('mcp-conscious', 20, 0);
+    const first = conscious.makeConscious(runId, { count: 3 });
+    expect(first).toHaveLength(3);
+    // The same three are the three most central, so a repeat call made nobody new.
+    expect(conscious.makeConscious(runId, { count: 3 })).toEqual([]);
+    expect(conscious.makeConscious(runId, { ids: first })).toEqual([]);
+    // …and the engine still holds exactly those three.
+    expect([...conscious.get(runId)!.exp.conscious].sort()).toEqual([...first].sort());
+    await conscious.finish(runId);
+  });
+
+  /** Backlog item 6, second half: a second finish is a no-op, not a rejection. */
+  it('finishes once, whether it is called twice or concurrently', async () => {
+    const sink = new CapturingSink();
+    const conscious = new SessionManager(db, () => new MockMindBackend(), () => sink);
+    const runId = conscious.create('mcp-finish-twice', 12, 0);
+    conscious.makeConscious(runId, { count: 2 });
+    await conscious.advance(runId, 200);
+
+    // Concurrent: both callers resolve, and the run is finalized once.
+    await Promise.all([conscious.finish(runId), conscious.finish(runId)]);
+    // Sequential, after the session is already gone.
+    await expect(conscious.finish(runId)).resolves.toBeUndefined();
+
+    expect(db.getRun(runId)!.status).toBe('finished');
+    const ids = sink.records.map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length); // no row written twice
+    const outcomeIds = sink.outcomes.map((o) => o.cognitionId);
+    expect(new Set(outcomeIds).size).toBe(outcomeIds.length);
+    expect(sink.summary!.counts.promptsSent).toBe(sink.summary!.counts.recordsWritten + sink.summary!.counts.recordsDropped);
+  }, 30_000);
+
   it('is reproducible for a given seed (same recorded metrics)', async () => {
     const a = new SessionManager(new ResearchDB(':memory:'));
     const b = new SessionManager(new ResearchDB(':memory:'));

@@ -100,11 +100,13 @@ export class LlmMind {
     for (let attempt = 0; attempt < 2; attempt++) {
       const retried = attempt > 0;
       const feedback = retried ? lastError : undefined;
-      // The same composition the backend uses, so the stored messages are the
-      // ones that were sent — byte for byte, retry feedback included.
+      // Composed once, here: these bytes are both what the backend is handed
+      // and what the attempt stores — retry feedback included.
       const sent = retryPrompt(prompt, feedback);
       try {
-        raw = await this.backend.complete(input, feedback);
+        // The composed messages ARE what the backend sends: nothing downstream
+        // may rebuild a prompt from a ThinkInput the miners have since rewritten.
+        raw = await this.backend.complete(sent, input);
       } catch (err) {
         lastError = String(err);
         attempts.push({ prompt: sent, raw: '', error: lastError });

@@ -303,6 +303,10 @@ export class OutcomeTracker {
       closedReason: closed.reason,
       interventionsDuringThink: w.interventions,
       interrupted: w.interrupted,
+      // An interrupted window stops watching the bus (`observeBefore`/
+      // `observeAfter` return early), so any utterance still unresolved is
+      // UNKNOWN rather than unspoken. Said out loud instead of left to infer.
+      speechTrackingStopped: w.interrupted && w.utterances.some((u) => !u.spoken),
       intents: w.steps,
       utterances: w.utterances,
       needDeltas: closed.needDeltas,

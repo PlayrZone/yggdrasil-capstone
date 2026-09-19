@@ -3,7 +3,17 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { DEFAULT_QUERY_TIMEOUT_MS, ResearchDB } from '@yggdrasil/db';
-import { COGNITION_SCHEMA_VERSION, MATERIAL_PROPERTIES, WORLD, summarizeCorpus } from '@yggdrasil/engine';
+import {
+  COGNITION_SCHEMA_VERSION,
+  LEAK_DOMAINS,
+  MATERIAL_PROPERTIES,
+  WORLD,
+  LlmLeakJudge,
+  evalKnowledgeFidelity,
+  leakTrapBattery,
+  summarizeCorpus,
+} from '@yggdrasil/engine';
+import type { LeakDomain } from '@yggdrasil/engine';
 import { SessionManager } from './SessionManager.js';
 import {
   appendActivity,
@@ -16,7 +26,7 @@ import {
   writeReport,
   yggHome,
 } from '@yggdrasil/home';
-import { hasLlmKey, llmModelId, makeLlmBackend } from './llm.js';
+import { evalBackend, hasLlmKey, llmModelId, makeLlmBackend } from './llm.js';
 
 /**
  * Yggdrasil Lab MCP server. Lets an MCP client (Claude) run, watch, query,
@@ -122,8 +132,11 @@ server.registerTool(
         'Only the human gives ideas (via give_idea). The engine seeds nothing.',
         '',
         'MCP safety: read-first; mutations are allowlisted (create_experiment,',
-        'advance, give_idea, finish_run, run_experiment) and every one is logged',
-        'to the research DB. No shell, no file writes, no eval.',
+        'advance, give_idea, finish_run, run_experiment, seed_recipe,',
+        'make_conscious) and every one is logged to the research DB. No shell,',
+        'no file writes, no eval. The eval tools (knowledge_fidelity) change',
+        'nothing, but cost money against a configured model — so they refuse a',
+        'paid one without an explicit allowPaid, and audit it when granted.',
       ].join('\n'),
     ),
 );
@@ -536,6 +549,75 @@ server.registerTool(
     } catch (e) {
       return text(`cannot read corpus run: ${e instanceof Error ? e.message : String(e)}`);
     }
+  },
+);
+
+// ── knowledge_fidelity (read — the leak battery, priced) ───────────────────────
+/**
+ * Read-only in effect: it runs the eval battery against a mind backend and
+ * touches no world, no file and no DB row. It is NOT free, though — against a
+ * configured Fireworks model it is 48 completions of a paid endpoint — so it
+ * refuses to reach one unless the caller says so, and audits the call when it
+ * does. With no key it runs the free mock backend, which proves the wiring.
+ */
+server.registerTool(
+  'knowledge_fidelity',
+  {
+    title: 'Run the knowledge-fidelity battery',
+    description:
+      'Score a mind on the leak battery: 24 generated traps across 8 domains (cultivation, fire, metallurgy, medicine, trade, governance, astronomy, toolmaking), each a situation where the being holds NO knowledge supporting some pretrained-obvious act, plus 24 matched controls where it DOES — indistinguishable by surface features. Three tiers: the PLAN (acting on a fact it does not hold), the WORDS (a calibrated lexical matcher, recall stated on the result), and — on the paid path only — a JUDGE that reads each probe the first two called clean. Returns a verdict (FAIL / NO LEAK DETECTED with the detector recall / PASS, which needs the judge), a leak-rate LOWER BOUND per domain, the control act-rate, the hedged-leak and echo rates, and every violation with the sentence or act that gave it away. Read-only. Against a configured paid model it costs up to two completions per probe and refuses to run without allowPaid.',
+    inputSchema: {
+      domains: z.array(z.string()).optional().describe(`Restrict to these domains. One or more of: ${LEAK_DOMAINS.join(', ')}.`),
+      limit: z.number().int().positive().max(200).optional().describe('Cap the number of probes (traps and controls together).'),
+      allowPaid: z
+        .boolean()
+        .optional()
+        .describe('Required to run against the configured paid model. Without it, a keyed lab runs nothing and reports the cost instead.'),
+    },
+  },
+  async ({ domains, limit, allowPaid }) => {
+    const unknown = (domains ?? []).filter((d) => !LEAK_DOMAINS.includes(d as LeakDomain));
+    if (unknown.length > 0) return text(`unknown domain(s): ${unknown.join(', ')}. Known: ${LEAK_DOMAINS.join(', ')}`);
+
+    const selected = domains as LeakDomain[] | undefined;
+    const probes = leakTrapBattery().filter((t) => !selected || selected.includes(t.domain));
+    const calls = Math.min(probes.length, limit ?? probes.length);
+    // A paid run also JUDGES: tier 3 asks the same model to read each probe
+    // tiers 1-2 called clean, so the cost the refusal quotes is both halves.
+    const choice = evalBackend(calls * 2, allowPaid);
+    if (!choice.backend) return text(choice.refusal ?? 'refused');
+    const backend = choice.backend;
+    // A paid run spends money on the human's account, so it goes in the same
+    // append-only audit trail as a mutation even though it changes no world.
+    if (choice.paid) {
+      db.recordAction('mcp', 'knowledge_fidelity', { model: backend.modelId, calls, domains: selected ?? 'all' }, undefined, Date.now());
+    }
+
+    // Tier 3 only exists on the paid path: a judge is a reader, and the mock
+    // backend cannot read. Without it the gate reports NO LEAK DETECTED and the
+    // detector's measured recall, never PASS.
+    const result = await evalKnowledgeFidelity(backend, {
+      ...(selected ? { domains: selected } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+      ...(choice.paid ? { judge: new LlmLeakJudge(backend) } : {}),
+    });
+    announce('report', `Knowledge fidelity on ${backend.modelId}: ${result.verdictDetail}`, {
+      data: {
+        model: backend.modelId,
+        verdict: result.verdict,
+        leakRateLowerBound: result.leakRateLowerBound,
+        detectorRecall: result.detector.recall,
+        controlActRate: result.controlActRate,
+        speculativeRate: result.speculativeRate,
+      },
+    });
+    return json({
+      model: backend.modelId,
+      paid: choice.paid,
+      ...result,
+      violations: result.violations.slice(0, 12),
+      violationsReported: Math.min(result.violations.length, 12),
+    });
   },
 );
 

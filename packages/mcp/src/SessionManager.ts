@@ -24,6 +24,8 @@ export function corpusRunId(runId: number): string {
 
 export class SessionManager {
   private readonly sessions = new Map<number, Session>();
+  /** Finishes in flight, so a second `finish` joins the first rather than racing it. */
+  private readonly finishing = new Map<number, Promise<void>>();
 
   constructor(
     private readonly db: ResearchDB,
@@ -102,7 +104,12 @@ export class SessionManager {
       positioned.sort((a, b) => (a.x - cx) ** 2 + (a.y - cy) ** 2 - ((b.x - cx) ** 2 + (b.y - cy) ** 2));
       candidates = positioned.slice(0, Math.max(1, opts.count ?? 1)).map((p) => p.id);
     }
-    return candidates.filter((id) => exp.makeConscious(id));
+    // Already-conscious beings are filtered out rather than re-reported: the
+    // engine happily returns true for a being that was made conscious an hour
+    // ago, so an overlapping call announced "made 7 conscious" for a no-op. The
+    // scaffold ledger keeps only the FIRST tick, so this is also the only
+    // reading that agrees with the rows.
+    return candidates.filter((id) => !exp.conscious.has(id) && exp.makeConscious(id));
   }
 
   /** Phase 3 measure: makers (beings who completed a craft) by generation, plus
@@ -166,7 +173,26 @@ export class SessionManager {
     return n;
   }
 
+  /**
+   * Finalize a run. Idempotent: a second call after the run is gone does
+   * nothing, and a concurrent one joins the first instead of being rejected —
+   * both used to throw, which is safe but noisy over MCP and makes a retry
+   * look like a failure.
+   */
   async finish(runId: number): Promise<void> {
+    const inFlight = this.finishing.get(runId);
+    if (inFlight) return inFlight;
+    if (!this.sessions.has(runId)) return;
+    const done = this.finishOnce(runId);
+    this.finishing.set(runId, done);
+    try {
+      await done;
+    } finally {
+      this.finishing.delete(runId);
+    }
+  }
+
+  private async finishOnce(runId: number): Promise<void> {
     const s = this.require(runId);
     // Drain first: a think still in flight would otherwise be applied to a world
     // whose recording has closed, i.e. a change with no row anywhere.

@@ -48,16 +48,40 @@ export interface StoredRun {
   skipped: number;
 }
 
+/**
+ * Run directories with a live sink in this process. Two sinks on one run append
+ * to the same files with two independent manifests, so the second `closeRun`
+ * overwrites the first's counts and the rows of both interleave under one
+ * header — a corpus that reconciles against nothing. The second sink is refused
+ * instead (the reviewer's carried Round-1 nit: it used to merge silently).
+ */
+const OPEN_SINKS = new Set<string>();
+
 export class JsonlCognitionSink implements ICognitionSink {
   private readonly dir: string;
   private manifest: RunManifest | null = null;
+  private released = false;
 
   constructor(
     readonly runId: string,
     root?: string,
   ) {
     this.dir = corpusRunDir(runId, root ?? corpusV2Root());
+    if (OPEN_SINKS.has(this.dir)) {
+      throw new Error(`corpus: run "${runId}" already has an open sink in this process — two sinks on one run interleave`);
+    }
+    OPEN_SINKS.add(this.dir);
     mkdirSync(this.dir, { recursive: true });
+  }
+
+  /**
+   * Give the run's slot back. `closeRun` does this; a host that abandons a run
+   * without closing it calls this itself, or the id stays taken until exit.
+   */
+  release(): void {
+    if (this.released) return;
+    this.released = true;
+    OPEN_SINKS.delete(this.dir);
   }
 
   openRun(manifest: RunManifest): void {
@@ -75,7 +99,13 @@ export class JsonlCognitionSink implements ICognitionSink {
   }
 
   closeRun(summary: RunSummary): void {
-    writeFileSync(join(this.dir, MANIFEST), JSON.stringify({ manifest: this.manifest, summary }, null, 2));
+    // Released even when the write throws: the run is over either way, and the
+    // recorder reports the failure through its own channel.
+    try {
+      writeFileSync(join(this.dir, MANIFEST), JSON.stringify({ manifest: this.manifest, summary }, null, 2));
+    } finally {
+      this.release();
+    }
   }
 
   private appendLine(file: string, value: unknown): void {

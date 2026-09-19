@@ -3,19 +3,21 @@ import type { CognitionRecord } from '../consciousness/LlmMind.js';
 import { ENGINE_VERSION } from '../version.js';
 import { OutcomeTracker } from './OutcomeTracker.js';
 import { ScaffoldLedger } from './ScaffoldLedger.js';
-import { serializeThinkInput, snapshotJson } from './serialize.js';
+import { attemptPromptDelta, serializeThinkInput, snapshotJson } from './serialize.js';
 import type {
+  CognitionAttempt,
   CognitionOutcome,
   CognitionRecordV2,
   ICognitionSink,
   RecordedRunOptions,
+  RecordedRunOptionsInput,
   RecorderWorld,
   ResolvedOutput,
   RunCounts,
   ScaffoldState,
   SerializedThinkInput,
 } from './types.js';
-import { COGNITION_SCHEMA_VERSION } from './types.js';
+import { COGNITION_SCHEMA_VERSION, DEFAULT_RECORDED_PROVENANCE } from './types.js';
 
 export interface CognitionRecorderOptions {
   sink: ICognitionSink;
@@ -25,7 +27,7 @@ export interface CognitionRecorderOptions {
   seed: string;
   modelId: string;
   backendLabel: string;
-  options: RecordedRunOptions;
+  options: RecordedRunOptionsInput;
   scaffold: ScaffoldLedger;
   world: RecorderWorld;
   /** Wall clock for the run manifest only; nothing in the sim reads it. */
@@ -83,9 +85,24 @@ export class CognitionRecorder {
   };
   private failure: string | null = null;
   private finalTick = 0;
+  /** Set on entry to `end()`, so a re-entrant close is a no-op. */
+  private closing = false;
+  /** Set once the manifest has been written; from here nothing may be counted. */
   private closed = false;
+  private ignored = 0;
+
+  /**
+   * The run's switches as they will be STORED: the host's, plus the default for
+   * anything a host that predates an option did not say. Resolved once, so a
+   * manifest and every row beneath it can never disagree about the same run.
+   */
+  private readonly runOptions: RecordedRunOptions;
 
   constructor(private readonly options: CognitionRecorderOptions) {
+    this.runOptions = {
+      ...options.options,
+      provenance: options.options.provenance ?? DEFAULT_RECORDED_PROVENANCE,
+    };
     this.tracker = new OutcomeTracker(options.world, options.runId, options.options.outcomeWindowTicks, (outcome) => {
       this.writeOutcome(outcome);
     });
@@ -99,7 +116,7 @@ export class CognitionRecorder {
         seed: options.seed,
         modelId: options.modelId,
         backendLabel: options.backendLabel,
-        options: options.options,
+        options: this.runOptions,
         openedAtMs: options.nowMs(),
       }),
     );
@@ -108,6 +125,17 @@ export class CognitionRecorder {
   /** Non-null once a sink write has thrown; the corpus is then incomplete. */
   get failureReason(): string | null {
     return this.failure;
+  }
+
+  /**
+   * Prompts, attempts, records and outcomes that arrived AFTER the manifest was
+   * written. The manifest is already on disk and its counts must go on
+   * reconciling against what is beside it, so a late write is refused rather
+   * than counted — but refusing it silently is how a host loses acts and never
+   * learns it did. Non-zero means the host kept working a closed recorder.
+   */
+  get ignoredAfterClose(): number {
+    return this.ignored;
   }
 
   /**
@@ -121,6 +149,7 @@ export class CognitionRecorder {
    * slot is never contended, and a stale one is superseded.
    */
   readonly freezeInput = (input: ThinkInput, prompt: { system: string; user: string }): void => {
+    if (this.closed) return void this.ignored++;
     const beingId = input.snapshot.id;
     const tick = input.worldView.tick;
     this.counts.promptsSent++;
@@ -131,10 +160,10 @@ export class CognitionRecorder {
         ...this.options.scaffold.beingState(beingId, tick, (narrativeId) =>
           this.options.world.carriesNarrative(beingId, narrativeId),
         ),
-        mythBehavior: this.options.options.mythBehavior,
-        leadership: this.options.options.leadership,
-        offerMaking: this.options.options.offerMaking,
-        craftLearning: this.options.options.craftLearning,
+        mythBehavior: this.runOptions.mythBehavior,
+        leadership: this.runOptions.leadership,
+        offerMaking: this.runOptions.offerMaking,
+        craftLearning: this.runOptions.craftLearning,
       },
       beingName: this.options.world.name(beingId),
       generation: this.options.world.generation(beingId),
@@ -143,6 +172,9 @@ export class CognitionRecorder {
 
   /** The backend half, straight off `LlmMind`. */
   readonly attempt = (record: CognitionRecord): void => {
+    // `end()` empties `pending`; a late attempt would refill it with a slot
+    // nothing will ever complete, for a prompt no row can be written for.
+    if (this.closed) return void this.ignored++;
     this.slot(record.agentId).attempt = record;
   };
 
@@ -167,7 +199,7 @@ export class CognitionRecorder {
 
     const record = this.buildRecord(frozen, act.beingId, {
       status: 'answered',
-      attempts: attempt.attempts.map((a) => ({ ...a, prompt: { ...a.prompt } })),
+      attempts: attempt.attempts.map((a) => storedAttempt(frozen.prompt, a)),
       modelId: attempt.modelId,
       parse: {
         valid: attempt.valid,
@@ -207,8 +239,8 @@ export class CognitionRecorder {
    * audited — and the manifest carries counts that must reconcile.
    */
   end(): void {
-    if (this.closed) return;
-    this.closed = true;
+    if (this.closing) return;
+    this.closing = true;
     for (const [beingId, slot] of this.pending) {
       if (!slot.frozen) continue;
       this.counts.unanswered++;
@@ -228,9 +260,19 @@ export class CognitionRecorder {
         ...(this.failure ? { firstError: this.failure } : {}),
         scaffold: this.options.scaffold.summary(),
       });
-    } catch {
-      /* the manifest is unwritable too; `failureReason` is the host's channel */
+    } catch (err) {
+      // A throwing `closeRun` used to be the one fully silent failure: the rows
+      // were durable, the manifest was not, and the host was never told — the
+      // run simply looked unfinished. It now takes the same path as any other
+      // sink error: reported once, and readable from `failureReason`.
+      if (!this.failure) {
+        this.failure = err instanceof Error ? err.message : String(err);
+        this.options.onFailure?.(this.failure);
+      }
     }
+    // Only now: everything above is part of the close and must still be counted,
+    // because the manifest written at the end of it reports those counts.
+    this.closed = true;
   }
 
   private buildRecord(
@@ -250,7 +292,7 @@ export class CognitionRecorder {
       scenarioId: this.options.scenarioId,
       worldId: this.options.worldId,
       seed: this.options.seed,
-      options: { ...this.options.options },
+      options: { ...this.runOptions },
       backendLabel: this.options.backendLabel,
       tick,
       simDay: this.options.world.day(tick),
@@ -267,6 +309,10 @@ export class CognitionRecorder {
   }
 
   private writeRecord(record: CognitionRecordV2): boolean {
+    if (this.closed) {
+      this.ignored++;
+      return false;
+    }
     if (!this.guard(() => this.options.sink.cognition(record))) {
       this.counts.recordsDropped++;
       return false;
@@ -276,6 +322,7 @@ export class CognitionRecorder {
   }
 
   private writeOutcome(outcome: CognitionOutcome): void {
+    if (this.closed) return void this.ignored++;
     if (!this.guard(() => this.options.sink.outcome(outcome))) {
       this.counts.outcomesDropped++;
       return;
@@ -323,6 +370,23 @@ const UNANSWERED = (
   appliedTick: null,
   latencyMs: 0,
 });
+
+/**
+ * One attempt as it stores: the raw text, and only what its messages ADD to the
+ * record's base prompt. Every attempt used to carry a full ~4 KB copy, so a
+ * retried row held the base twice for the sake of one appended sentence.
+ */
+function storedAttempt(
+  base: { system: string; user: string },
+  attempt: CognitionRecord['attempts'][number],
+): CognitionAttempt {
+  const delta = attemptPromptDelta(base, attempt.prompt);
+  return {
+    ...(delta ? { promptDelta: delta } : {}),
+    raw: attempt.raw,
+    ...(attempt.error !== undefined ? { error: attempt.error } : {}),
+  };
+}
 
 function resolvedOf(act: CompletedAct): ResolvedOutput | null {
   if (!act.resolved || !act.appliedPlan) return null;

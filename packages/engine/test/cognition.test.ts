@@ -84,7 +84,47 @@ describe('schema parser', () => {
   it('rejects non-JSON', () => {
     expect(() => parseMindOutput('the model rambled')).toThrow(MindOutputError);
   });
+
+  /** Round-1 review A3/A4: the fence tags and mutations a real model produces. */
+  it('reads any fence tag a model writes, in any case', () => {
+    for (const tag of ['json', 'JSON', 'js', 'JSON5', ' json']) {
+      const out = parseMindOutput(`\`\`\`${tag}\n{"plan":[{"kind":"Sleep","durationTicks":50}]}\n\`\`\``);
+      expect(out.plan[0], tag).toEqual({ kind: 'Sleep', durationTicks: 50 });
+    }
+  });
+
+  it('refuses to guess when two fenced blocks are both legal', () => {
+    expect(reasonOf('```json\n{"plan":[{"kind":"Idle"}]}\n```\n```json\n{"plan":[{"kind":"Sleep"}]}\n```')).toBe('ambiguous-fences');
+  });
+
+  it('refuses a repeated key rather than executing the last one unseen', () => {
+    expect(reasonOf('{"plan":[{"kind":"Idle"}],"plan":[{"kind":"Attack","targetId":2}]}')).toBe('duplicate-key');
+  });
+
+  it('refuses a number the engine cannot act on instead of dropping the field', () => {
+    expect(reasonOf('{"plan":[{"kind":"MoveTo","x":1e999,"y":5}]}')).toBe('bad-number');
+  });
+
+  it('refuses an arg outside the closed vocabulary instead of dropping it', () => {
+    // It parsed as a legal Build with `buildKind` dropped, and a shelter went up.
+    expect(reasonOf('{"plan":[{"kind":"Build","buildKind":"tower","x":1,"y":2}]}')).toBe('bad-arg');
+    expect(reasonOf('{"plan":[{"kind":"Eat","objectKind":"plutonium"}]}')).toBe('bad-arg');
+    expect(parseMindOutput('{"plan":[{"kind":"Build","buildKind":"wall","x":1,"y":2}]}').plan[0]).toEqual({ kind: 'Build', buildKind: 'wall', x: 1, y: 2 });
+  });
+
+  it('refuses an over-long plan rather than silently running the first eight', () => {
+    expect(reasonOf(JSON.stringify({ plan: Array.from({ length: 20 }, () => ({ kind: 'Idle' })) }))).toBe('plan-too-long');
+  });
 });
+
+function reasonOf(raw: string): string {
+  try {
+    parseMindOutput(raw);
+    return 'accepted';
+  } catch (err) {
+    return err instanceof MindOutputError ? err.reason : 'threw';
+  }
+}
 
 describe('LlmMind', () => {
   it('produces a valid plan through the backend and logs the call', async () => {

@@ -1,6 +1,6 @@
 import type { ThinkInput } from '../contract/types.js';
 import type { IMindBackend } from './IMindBackend.js';
-import { buildThinkPrompt, retryPrompt } from './prompt.js';
+import type { ThinkPrompt } from './prompt.js';
 
 export interface FireworksMindBackendOptions {
   apiKey: string;
@@ -44,11 +44,10 @@ export class FireworksMindBackend implements IMindBackend {
     };
   }
 
-  async complete(input: ThinkInput, retryError?: string): Promise<string> {
-    // Composed by `retryPrompt`, not here: the cognition record stores the same
-    // messages per attempt, and the two must be the same bytes.
-    const prompt = retryPrompt(buildThinkPrompt(input), retryError);
-
+  // Pure transport: `prompt` is already composed (retry feedback included) and
+  // is sent verbatim. Rebuilding it here from `_input` is what let the wire and
+  // the record disagree; the situation is now unused on purpose.
+  async complete(prompt: ThinkPrompt, _input: ThinkInput): Promise<string> {
     const res = await this.opts.fetchImpl(this.opts.baseUrl, {
       method: 'POST',
       headers: {

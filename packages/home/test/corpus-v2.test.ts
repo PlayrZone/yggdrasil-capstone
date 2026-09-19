@@ -127,6 +127,26 @@ describe('v2 corpus files', () => {
     expect(listCorpusRuns().map((r) => r.runId)).toEqual(['run-1']);
   });
 
+  /**
+   * The reviewer's carried nit: two sinks on one runId merged silently — both
+   * appended to the same files and the second `closeRun` overwrote the first's
+   * counts, leaving a manifest that reconciled against nothing.
+   */
+  it('refuses a second sink on a run that already has one, and frees the id at close', () => {
+    const sink = new JsonlCognitionSink('run-4');
+    sink.openRun({ ...manifest(), runId: 'run-4' });
+    expect(() => new JsonlCognitionSink('run-4')).toThrow(/already has an open sink/);
+    sink.closeRun(summary());
+    expect(() => new JsonlCognitionSink('run-4')).not.toThrow();
+  });
+
+  it('frees the id when a run is abandoned without closing', () => {
+    const sink = new JsonlCognitionSink('run-5');
+    sink.openRun({ ...manifest(), runId: 'run-5' });
+    sink.release();
+    expect(() => new JsonlCognitionSink('run-5')).not.toThrow();
+  });
+
   it('leaves the legacy corpus alone', () => {
     const legacy = join(home, 'corpus', 'civilization.jsonl');
     const sink = new JsonlCognitionSink('run-1');

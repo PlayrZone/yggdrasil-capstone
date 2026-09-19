@@ -80,6 +80,7 @@ export type {
   OutcomeCloseReason,
   ResolvedOutput,
   RecordedRunOptions,
+  RecordedRunOptionsInput,
   RecordedBody,
   RecorderWorld,
   RunManifest,
@@ -89,10 +90,15 @@ export type {
   ScaffoldState,
   ScaffoldKind,
   ScaffoldEvent,
+  AttemptPromptDelta,
   SerializedThinkInput,
   SerializedMemoryRecord,
+  SerializedKnowledgeRecord,
+  NonFiniteToken,
+  NonFiniteSubstitution,
 } from './record/types.js';
-export { serializeThinkInput, deserializeThinkInput } from './record/serialize.js';
+export { DEFAULT_RECORDED_PROVENANCE } from './record/types.js';
+export { serializeThinkInput, deserializeThinkInput, attemptPrompt, attemptPromptDelta } from './record/serialize.js';
 export { ScaffoldLedger } from './record/ScaffoldLedger.js';
 export { CognitionRecorder } from './record/CognitionRecorder.js';
 export type { CognitionRecorderOptions, CompletedAct } from './record/CognitionRecorder.js';
@@ -169,18 +175,49 @@ export { MockMindBackend } from './consciousness/MockMindBackend.js';
 export type { MockMindBackendOptions } from './consciousness/MockMindBackend.js';
 export { buildThinkPrompt, retryPrompt, knowledgeText } from './consciousness/prompt.js';
 export type { ThinkPrompt } from './consciousness/prompt.js';
-export { parseMindOutput, MindOutputError } from './consciousness/schema.js';
+export { parseMindOutput, parseMindOutputDetailed, MindOutputError } from './consciousness/schema.js';
+export type { MindOutputRejection, JsonSalvage, ParsedMindOutput } from './consciousness/schema.js';
 
 export { CognitionScheduler } from './scheduler/CognitionScheduler.js';
 export type { CognitionSchedulerOptions } from './scheduler/CognitionScheduler.js';
 export { CognitionLog } from './scheduler/CognitionLog.js';
 
-export { cognitionToExample, curateCorpus, acceptedAttempt, acceptedCompletion, planShape } from './training/corpus.js';
-export type { TrainingExample, CurateOptions, CurationResult } from './training/corpus.js';
+export { cognitionToExample, curateCorpus, acceptedAttempt, acceptedCompletion, planShape, needRegime } from './training/corpus.js';
+export type {
+  TrainingExample,
+  CurateOptions,
+  CurationResult,
+  CurationDrops,
+  NeedRegime,
+  PlanShapeCapReport,
+} from './training/corpus.js';
+export { NearDuplicateIndex, contentHash, shingleJaccard, NEAR_DUPLICATE_COMPLETION_WEIGHT } from './training/dedupe.js';
+export type { NearDuplicateOptions, DuplicateDocument } from './training/dedupe.js';
 export { summarizeCorpus } from './training/summarize.js';
 export type { DatasetCard, ScaffoldCounts, PlanShapeSuccess, Share } from './training/summarize.js';
-export { evalJsonValidity, evalKnowledgeFidelity } from './training/eval.js';
-export type { ValidityResult, FidelityResult, FidelityViolation } from './training/eval.js';
+export { evalJsonValidity } from './training/eval.js';
+export type { ValidityResult } from './training/eval.js';
+export { evalKnowledgeFidelity } from './training/fidelity.js';
+export type {
+  FidelityResult,
+  FidelityViolation,
+  FidelityDomainScore,
+  FidelityOptions,
+  FidelityVerdict,
+} from './training/fidelity.js';
+export { detectLeak, detectLexicalLeaks, domainMatcher, domainStems, stemWord, suppliedVocabulary, suppliedNames, isOrdinaryWord, DECISIVE_SURFACES, LEAK_DOMAINS } from './training/leakMatch.js';
+export type { LeakDomain, LeakEvidence, LeakEvidenceKind, LeakContext, DomainMatcher, ClaimRule } from './training/leakMatch.js';
+export { detectActLeak, holdsGround, PLANTS_THE_SEED, worksTheMaterials } from './training/leakActs.js';
+export type { ActLeakRule, IntentPattern } from './training/leakActs.js';
+export { MockLeakJudge, LlmLeakJudge } from './training/leakJudge.js';
+export type { ILeakJudge, LeakJudgement, LeakJudgeRequest, LeakJudgeVerdict } from './training/leakJudge.js';
+export { calibrateDetector, lexicalDetector, ownDomainDetector, judgeDetector, unionDetector } from './training/leakCalibration.js';
+export type { CalibrationItem, LeakDetector, CalibrationResult, CalibrationDomainScore, CalibrationConfusion } from './training/leakCalibration.js';
+export { LEXICAL_CALIBRATION, quotableRecall } from './training/leakCalibrationCard.js';
+export type { CalibrationCard, CalibrationPR, BlindMeasurement } from './training/leakCalibrationCard.js';
+export { COMMON_WORD_FORMS } from './training/commonWords.js';
+export { leakTrapBattery } from './training/leakTraps.js';
+export type { LeakTrap, BatteryOptions } from './training/leakTraps.js';
 
 export { AgentMind } from './agent/AgentMind.js';
 export type { AgentMindOptions } from './agent/AgentMind.js';
