@@ -213,7 +213,7 @@ export { WorldGate } from './contract/gate.js';
 export type { WorldGateCounts } from './contract/gate.js';
 // W1-B4 — where things are, and the only way to ask.
 export type { PlaceRef, DirectionId, SpaceOps } from './contract/space.js';
-export { placeFieldNames } from './contract/space.js';
+export { ForeignPlaceError, guardPlaces, placeFieldNames } from './contract/space.js';
 export type { WireIntent, WireOutput } from './contract/wire.js';
 export { PLACE_FIELD, encodeIntent, encodePlan, encodeOutput } from './contract/wire.js';
 

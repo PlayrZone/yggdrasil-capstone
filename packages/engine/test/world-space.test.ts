@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AgentMind, buildThinkPrompt, foragerAdapter, at, pointOf } from '../src/index.js';
-import type { AgentSnapshot, SimEvent, WorldView } from '../src/index.js';
+import { AgentMind, ForeignPlaceError, buildThinkPrompt, foragerAdapter, at, pointOf } from '../src/index.js';
+import type { AgentSnapshot, PlaceRef, SimEvent, WorldView } from '../src/index.js';
 import { memoryFromEvent } from '../src/memory/memoryFromEvent.js';
 import { SuccessionMiner } from '../src/learning/SuccessionMiner.js';
 import { toyWorld } from './fixtures/toyAdapter.js';
@@ -231,5 +231,106 @@ describe('the same mind lives in a world with no coordinates in it', () => {
     expect(whole).toContain('hunger 10, rest 10');
     // And its place is written the way IT writes one: a word, not a pair.
     expect(toyWorld.space.encode(spot('ridge'))).toEqual({ spot: 'ridge' });
+  });
+});
+
+/**
+ * TWO WORLDS IN ONE PROCESS, AND NEITHER ANSWERS FOR THE OTHER (W1-B4 verifier,
+ * backlog 4).
+ *
+ * A place carries no world tag, so until `guardPlaces` existed the continent
+ * answered questions about the toy world's places — and answered them WRONGLY
+ * and QUIETLY. `equal`, "the only comparison a mind is allowed to make",
+ * returned TRUE for two places that are not the same place and were never in the
+ * same world, because neither had an `x` and `undefined === undefined`. `label`,
+ * which `prompt.ts` splices into a prompt someone is paying for, said
+ * `"NaN,NaN"`.
+ *
+ * THE CHOICE, and it is a choice: every entry point THROWS a typed
+ * `ForeignPlaceError`. Not `unplaced`, not a counter — a mind that reached the
+ * wrong world has a bug, and a bug that returns a plausible number is the
+ * expensive kind. W1-C is the step that puts two worlds in one process.
+ */
+describe('a world refuses a place another world minted', () => {
+  const foreign = spot('hollow');
+  const other = spot('well');
+  const here = at(3, 4);
+
+  it('used to say two different places were the same place, and now says whose they are', () => {
+    // What it did: `hollow` and `well` are different spots, and the continent
+    // called them equal.
+    expect(toyWorld.space.equal(foreign, other)).toBe(false);
+    expect(() => foragerAdapter.space.equal(foreign, other)).toThrow(ForeignPlaceError);
+  });
+
+  it('refuses at every entry point that takes one, naming the op and the argument', () => {
+    const calls: [string, number, () => unknown][] = [
+      ['distance', 1, () => foragerAdapter.space.distance(foreign, here)],
+      ['distance', 2, () => foragerAdapter.space.distance(here, foreign)],
+      ['direction', 1, () => foragerAdapter.space.direction(foreign, here)],
+      ['direction', 2, () => foragerAdapter.space.direction(here, foreign)],
+      ['within', 1, () => foragerAdapter.space.within(foreign, here, 8)],
+      ['within', 2, () => foragerAdapter.space.within(here, foreign, 8)],
+      ['equal', 1, () => foragerAdapter.space.equal(foreign, here)],
+      ['equal', 2, () => foragerAdapter.space.equal(here, foreign)],
+      ['label', 1, () => foragerAdapter.space.label(foreign)],
+      ['encode', 1, () => foragerAdapter.space.encode(foreign)],
+    ];
+    for (const [op, argument, call] of calls) {
+      let thrown: unknown;
+      try {
+        call();
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown, `${op} argument ${argument}`).toBeInstanceOf(ForeignPlaceError);
+      const error = thrown as ForeignPlaceError;
+      expect(error.op).toBe(op);
+      expect(error.argument).toBe(argument);
+      expect(error.name).toBe('ForeignPlaceError');
+      expect(error.message).toBe(`space.${op}: argument ${argument} is not a place of this world`);
+    }
+  });
+
+  it('is symmetric — the toy world refuses the continent’s places too', () => {
+    expect(() => toyWorld.space.distance(here, foreign)).toThrow(ForeignPlaceError);
+    expect(() => toyWorld.space.label(here)).toThrow(ForeignPlaceError);
+    // …and it is not vacuous: its own places still work.
+    expect(toyWorld.space.distance(foreign, other)).toBe(2);
+  });
+
+  it('refuses an object that is no world’s place at all', () => {
+    for (const nonsense of [{}, { z: 1 }, [], 'here', 42]) {
+      expect(() => foragerAdapter.space.label(nonsense as unknown as PlaceRef), JSON.stringify(nonsense)).toThrow(
+        ForeignPlaceError,
+      );
+    }
+  });
+
+  /**
+   * THE GATE ASKS OWNERSHIP, NOT USABILITY, and the difference is why it is not
+   * simply `isPlace`. This world MINTS non-finite and half-written places of its
+   * own — an event authored with a NaN coordinate becomes a memory whose site
+   * renders into a prompt, and a model's `{"kind":"MoveTo","x":5}` reaches the
+   * body as half a place — and `isPlace`, which is the EDGE's question about
+   * untrusted JSON, says no to both. Refusing them here would throw inside a run
+   * that has always worked, so the gate asks the weaker question: does this carry
+   * any of the fields this world writes a place with?
+   */
+  it('lets through the unusable places this world really does mint', () => {
+    const nan = at(Number.NaN, 0);
+    const half = foragerAdapter.space.decode({ x: 5 })!;
+    expect(foragerAdapter.space.isPlace(nan)).toBe(false);
+    expect(foragerAdapter.space.isPlace(half)).toBe(true);
+    expect(foragerAdapter.space.distance(nan, at(0, 0))).toBeNaN();
+    expect(foragerAdapter.space.distance(half, at(0, 0))).toBeNaN();
+    expect(foragerAdapter.space.encode(half)).toEqual({ x: 5 });
+  });
+
+  /** The three that take `unknown` by contract still ANSWER rather than throw. */
+  it('still answers the edge’s questions about a stranger instead of throwing', () => {
+    expect(foragerAdapter.space.isPlace(foreign)).toBe(false);
+    expect(foragerAdapter.space.placeOf(foreign)).toBeUndefined();
+    expect(foragerAdapter.space.decode({ spot: 'hollow' })).toBeUndefined();
   });
 });

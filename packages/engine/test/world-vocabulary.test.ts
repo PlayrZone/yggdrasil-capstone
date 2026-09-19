@@ -212,6 +212,7 @@ describe('the mind→body edge over a real run', () => {
       seed: 'b3-refusal',
       agentCount: 4,
       mindBackend: new MockMindBackend({
+        world: foragerAdapter,
         policy: {
           think: (): MindOutput => ({
             goals: [],
@@ -250,6 +251,7 @@ describe('the mind→body edge over a real run', () => {
       seed: 'b3-undeclared',
       agentCount: 4,
       mindBackend: new MockMindBackend({
+        world: foragerAdapter,
         policy: {
           think: (): MindOutput => ({
             goals: [],

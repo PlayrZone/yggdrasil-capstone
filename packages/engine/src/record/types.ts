@@ -77,7 +77,13 @@ export interface NonFiniteSubstitution {
 export interface SerializedThinkInput
   extends Omit<
     ThinkInput,
-    'relationships' | 'recalledMemories' | 'knowledge' | 'snapshot' | 'worldView'
+    | 'relationships'
+    | 'recalledMemories'
+    | 'knowledge'
+    | 'snapshot'
+    | 'worldView'
+    | 'sacredPlace'
+    | 'tragedyPlaces'
   > {
   /** A Map does not survive JSON; its entries do, in the Map's own order. */
   relationships: [number, RelationshipRecord][];
@@ -90,6 +96,18 @@ export interface SerializedThinkInput
     resources: Written<ObservedResource>[];
     structures: Written<ObservedStructure>[];
   };
+  /**
+   * A story's site, and the places a tragedy makes a being shun. These two are
+   * places THEMSELVES rather than records carrying one, and a stored row holds
+   * the world's own fields — `{"x":900,"y":120}` on the forager plane — not a
+   * mind's opaque handle. They were typed as `PlaceRef` until W1-B4's verifier
+   * (backlog 5) pointed out that the whole record layer was running on the
+   * unstated assumption that those are the same thing. They are the same thing
+   * on a plane and on nothing else, so the stored type says what is stored and
+   * `deserializeThinkInput` asks the world for the handle back.
+   */
+  sacredPlace?: Record<string, unknown>;
+  tragedyPlaces?: Record<string, unknown>[];
   /**
    * The numbers the prompt was rendered from that JSON cannot hold. Each stores
    * as `0` — so the row stays valid JSON that any reader can parse — with the

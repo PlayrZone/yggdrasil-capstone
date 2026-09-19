@@ -1,4 +1,5 @@
 import type { WorldAdapter } from '../contract/adapter.js';
+import type { PlaceRef } from '../contract/space.js';
 import { inlinePlace, liftPlace } from '../contract/wire.js';
 import type {
   AgentSnapshot,
@@ -40,27 +41,32 @@ import type {
  * reads the stored numbers straight off disk (a miner bucketing needs sees the
  * placeholder `0`, not the NaN the being actually thought under).
  */
-export function serializeThinkInput(input: ThinkInput): SerializedThinkInput {
+export function serializeThinkInput(input: ThinkInput, world: WorldAdapter): SerializedThinkInput {
   const { relationships, recalledMemories, knowledge, ...rest } = input;
   const nonFinite: NonFiniteSubstitution[] = [];
   const frozen = freezeJson(
     {
       // EVERY PLACE WRITTEN BACK AS THE WORLD'S OWN FIELDS, where they have
-      // always been (W1-B4). A `PlaceRef`'s runtime value IS those fields, so
-      // this needs no adapter and the row is byte-identical to one recorded
-      // before the mind stopped holding coordinates — `COGNITION_SCHEMA_VERSION`
-      // is unchanged because a v3 row still means exactly one thing.
+      // always been (W1-B4). THE WORLD writes them — `space.encode`, the one
+      // reviewed serialisation seam — rather than this file prising the handle
+      // open itself, which is what it did until the W1-B4 verifier pointed out
+      // that "a place's runtime value is its wire form" was an unstated
+      // invariant of one world (backlog 5). For the forager plane the bytes are
+      // unchanged, so `COGNITION_SCHEMA_VERSION` is still 3 and a v3 row still
+      // means exactly one thing.
       // `sacredPlace`/`tragedyPlaces` are places themselves rather than records
-      // carrying one, so they store as they always did, untouched.
+      // carrying one; their runtime value IS what the world writes, so they
+      // store as they always did and `withPlacesLifted` asks `space.decode` for
+      // the handle back.
       //
       // WRITTEN IN THE INPUT'S OWN KEY ORDER, which is why this walks `rest`
       // rather than naming the two fields it rewrites: pulling `snapshot` out
       // and putting it back would move it to the end of the row, and a row's
       // key order is part of what "byte-identical" means.
-      ...withPlacesWritten(rest),
+      ...withPlacesWritten(rest, world),
       knowledge: knowledge.map(serializeKnowledge),
       relationships: [...relationships.entries()],
-      recalledMemories: recalledMemories.map(serializeMemory),
+      recalledMemories: recalledMemories.map((m) => serializeMemory(m, world)),
     } as unknown as SerializedThinkInput,
     (substitution) => nonFinite.push(substitution),
   );
@@ -77,6 +83,17 @@ export function serializeThinkInput(input: ThinkInput): SerializedThinkInput {
  * at all, and requiring an adapter would break every such caller for nothing.
  * Without one the input carries no places and `buildThinkPrompt` renders no
  * pull toward a story's site; with one the replay is byte-identical.
+ *
+ * WITHOUT ONE IT STILL CHECKS THE ROW (W1-B4 verifier, backlog 7). Making the
+ * adapter optional quietly made the VALIDATION optional too: `assertReplayable`
+ * reads which fields are a place and which pressures exist off the world, and
+ * with no world it read neither — so a row with `needs.hunger: null` or a lost
+ * coordinate replayed silently where it used to throw. The world-less path now
+ * asks the two questions it can ask without a world: every pressure the ROW
+ * itself names, and every stored number that has been LOST. The one thing it
+ * still cannot ask is whether a place field is MISSING, because which fields
+ * those are is the world's to say — which is exactly why the world is worth
+ * passing.
  */
 export function deserializeThinkInput(stored: SerializedThinkInput, world?: WorldAdapter): ThinkInput {
   // Substitutions are written back in place, so a row that carries any is copied
@@ -90,38 +107,56 @@ export function deserializeThinkInput(stored: SerializedThinkInput, world?: Worl
   return {
     // Key order kept, as on the way out: a row read and written again is the
     // same row.
-    ...(withPlacesLifted(rest, lift) as unknown as Omit<ThinkInput, 'relationships' | 'recalledMemories'>),
+    ...(withPlacesLifted(rest, lift, world) as unknown as Omit<ThinkInput, 'relationships' | 'recalledMemories'>),
     relationships: new Map(relationships.map(([id, r]) => [id, { ...r }])),
     recalledMemories: recalledMemories.map((m) => deserializeMemory(m, lift)),
   };
 }
 
 /** The records of a think input that CARRY a place, with it written out. */
-function withPlacesWritten(rest: Omit<ThinkInput, 'relationships' | 'recalledMemories' | 'knowledge'>): Record<string, unknown> {
+function withPlacesWritten(
+  rest: Omit<ThinkInput, 'relationships' | 'recalledMemories' | 'knowledge'>,
+  world: WorldAdapter,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(rest)) {
-    if (key === 'snapshot') out[key] = inlinePlace(value as AgentSnapshot);
+    if (key === 'snapshot') out[key] = inlinePlace(world, value as AgentSnapshot);
     else if (key === 'worldView') {
       const seen = value as WorldView;
       out[key] = {
         ...seen,
-        agents: seen.agents.map(inlinePlace),
-        resources: seen.resources.map(inlinePlace),
-        structures: seen.structures.map(inlinePlace),
+        agents: seen.agents.map((a) => inlinePlace(world, a)),
+        resources: seen.resources.map((r) => inlinePlace(world, r)),
+        structures: seen.structures.map((s) => inlinePlace(world, s)),
       };
     } else out[key] = value;
   }
   return out;
 }
 
-/** …and back. */
+/**
+ * …and back. THE ONE PLACE A STORED ROW BECOMES A MIND'S AGAIN, and the only
+ * function in this file the geometry guard allow-lists: `sacredPlace` and
+ * `tragedyPlaces` are stored as the world's own fields and come back as handles
+ * through `space.decode`, which is the inverse of the `space.encode` that wrote
+ * them. Without a world there is nothing to ask, so a row passes through exactly
+ * as it did before — the documented world-less mode, unchanged.
+ */
 function withPlacesLifted(
   rest: Record<string, unknown>,
   lift: <T>(row: Record<string, unknown>) => T,
+  world: WorldAdapter | undefined,
 ): Record<string, unknown> {
+  const asPlace = (stored: unknown): PlaceRef | undefined => {
+    if (stored === null || stored === undefined || typeof stored !== 'object') return stored as PlaceRef | undefined;
+    if (!world) return stored as PlaceRef;
+    return world.space.decode(stored as Record<string, unknown>);
+  };
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(rest)) {
-    if (key === 'snapshot') out[key] = lift<AgentSnapshot>(value as Record<string, unknown>);
+    if (key === 'sacredPlace') out[key] = asPlace(value);
+    else if (key === 'tragedyPlaces') out[key] = (value as unknown[]).map(asPlace);
+    else if (key === 'snapshot') out[key] = lift<AgentSnapshot>(value as Record<string, unknown>);
     else if (key === 'worldView') {
       const seen = value as { agents: unknown[]; resources: unknown[]; structures: unknown[] };
       out[key] = {
@@ -184,9 +219,9 @@ function serializeKnowledge(k: KnowledgeRecord): SerializedKnowledgeRecord {
   return rest;
 }
 
-function serializeMemory(m: MemoryRecord): SerializedMemoryRecord {
+function serializeMemory(m: MemoryRecord, world: WorldAdapter): SerializedMemoryRecord {
   const { embedding, ...rest } = m;
-  const written = inlinePlace(rest);
+  const written = inlinePlace(world, rest);
   if (embedding) written['embedding'] = Array.from(embedding);
   return written as unknown as SerializedMemoryRecord;
 }
@@ -339,5 +374,30 @@ function assertReplayable(
     num(k.confidence, `$.knowledge[${i}].confidence`, `knowledge[${k.id}].confidence`);
     num(k.evidenceCount, `$.knowledge[${i}].evidenceCount`, `knowledge[${k.id}].evidenceCount`);
   });
-  numbersIn(stored.sacredPlace as Record<string, unknown> | undefined, '$.sacredPlace');
+  numbersIn(stored.sacredPlace, '$.sacredPlace');
+  if (world) return;
+
+  // ─── No world: what can still be asked, is (verifier backlog 7) ───────────
+  //
+  // Every pressure the ROW names, rather than every pressure the world declares.
+  // For a real forager row the two sets are the same four, which is why this
+  // restores the check rather than changing it; for a row from a world this
+  // process has never heard of it is the only honest reading.
+  for (const key of Object.keys((s['needs'] ?? {}) as Record<string, unknown>)) {
+    num((s['needs'] as Record<string, unknown>)[key], `$.snapshot.needs.${key}`);
+  }
+  // A LOST NUMBER, wherever it sits. `null` is what a truncated or hand-edited
+  // row puts where a number was, and a non-finite one that `nonFinite` did not
+  // carry is a number the row failed to preserve. Which of the snapshot's keys
+  // are the place is the world's to say — but neither `x: null` nor `x: NaN`
+  // needs naming to be refused.
+  const lost = (row: Record<string, unknown> | undefined, at: string): void => {
+    if (!row) return;
+    for (const [key, value] of Object.entries(row)) {
+      if (value === null || typeof value === 'number') num(value, `${at}.${key}`);
+    }
+  };
+  lost(s, '$.snapshot');
+  lost(stored.sacredPlace, '$.sacredPlace');
+  stored.tragedyPlaces?.forEach((place, i) => lost(place, `$.tragedyPlaces[${i}]`));
 }

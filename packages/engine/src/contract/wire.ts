@@ -10,15 +10,19 @@ import type { Goal, Intent, MindOutput, Utterance } from './types.js';
  * Outside — to a model, in a corpus row, and to a body — a place is written the
  * way the WORLD writes one: two numbers `x`,`y` on the forager plane, a named
  * spot in a world with no plane. This file is the whole of the translation, and
- * it lives at exactly two seams:
+ * it lives at exactly three seams:
  *
  *  · the PARSER/PROMPT edge (`consciousness/schema.ts` reads the world's
  *    fields; `contract/actions.ts` writes them into the argument paragraph);
  *  · the BODY edge (`SimRuntime.applyPlan`), where the forager body goes on
  *    receiving the same `x`,`y` it always has — and, because the recorder
- *    stores what the world was handed, so does every corpus row.
+ *    stores what the world was handed, so does every corpus row;
+ *  · the MODEL'S OWN EDGE — anything standing in for a model has to WRITE what a
+ *    model writes. `MockMindBackend` did not, and a being driven by it lost its
+ *    destination on every act that had one (W1-B4 verifier, the fail). Naming
+ *    only two seams is what let that one go unnoticed.
  *
- * Nothing between the two ever sees a field name.
+ * Nothing between them ever sees a field name.
  */
 
 /**
@@ -92,15 +96,21 @@ export function encodePlan(world: WorldAdapter, plan: readonly Intent[]): WireIn
  * they have always been and a corpus recorded before this step and after it are
  * the same bytes.
  *
- * World-neutral on purpose: a place's wire fields are its own runtime fields,
- * so writing one out needs no adapter at all, and `serializeThinkInput` keeps
- * the single-argument form that every caller already has.
+ * IT ASKS THE WORLD, and that is the whole of the change the W1-B4 verifier
+ * asked for (backlog 5). It used to `Object.assign(out, value)` — the contract
+ * layer prising a place open with no adapter and no cast, on an invariant it
+ * never stated: that a place's runtime value IS its wire form. That invariant
+ * is a fact about the forager plane, not about space, and a world whose handle
+ * is an index into a side table would have been written to disk as `{}`. Now
+ * there is ONE reviewed serialisation seam, `space.encode`, and this is the only
+ * caller of it outside a world's own module.
  */
-export function inlinePlace<T extends object>(row: T): Record<string, unknown> {
+export function inlinePlace<T extends object>(world: WorldAdapter, row: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) {
-    if (key === PLACE_FIELD && value !== undefined && value !== null) Object.assign(out, value);
-    else out[key] = value;
+    if (key === PLACE_FIELD && value !== undefined && value !== null) {
+      Object.assign(out, world.space.encode(value as PlaceRef));
+    } else out[key] = value;
   }
   return out;
 }

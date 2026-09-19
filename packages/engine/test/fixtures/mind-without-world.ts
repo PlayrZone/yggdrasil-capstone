@@ -15,6 +15,11 @@
  * the files whose silent forager default B2 deleted, and a barrel or dynamic
  * import of the world in either used to leave guard AND proof green. They are
  * built here now, so the compiler has to resolve their imports too.
+ *
+ * The W1-B4 verifier (backlog 11) found the last one still outside every net:
+ * `FireworksMindBackend.ts`, the PAID backend, which nothing compiled against a
+ * worldless repository. It is built here now too — constructed, never called;
+ * the proof is about resolution, and it holds no key.
  */
 import { AgentMind } from '../../src/agent/AgentMind.js';
 import { WorldGate } from '../../src/contract/gate.js';
@@ -31,6 +36,7 @@ import { ruleKey } from '../../src/learning/ruleKey.js';
 import { KnowledgeStore } from '../../src/knowledge/KnowledgeStore.js';
 import { RelationshipStore } from '../../src/relationships/RelationshipStore.js';
 import { NarrativeStore } from '../../src/narrative/NarrativeStore.js';
+import { FireworksMindBackend } from '../../src/consciousness/FireworksMindBackend.js';
 import { LlmMind } from '../../src/consciousness/LlmMind.js';
 import { MockMindBackend } from '../../src/consciousness/MockMindBackend.js';
 import { policyFor } from '../../src/consciousness/policy.js';
@@ -74,6 +80,7 @@ export function inhabit(): number {
   // mind that drives it, the prompt it composes and the parser that reads the
   // reply. Not CALLED — the proof is about resolution, not behaviour.
   const backend = new MockMindBackend({ world });
+  const paid = new FireworksMindBackend({ apiKey: '', model: 'none' });
   const llm = new LlmMind(backend, { world, fallback: policyFor(world) });
   const parsed = parseMindOutput('{"plan":[{"kind":"Dawdle"}]}', world);
 
@@ -89,6 +96,7 @@ export function inhabit(): number {
     (world.space.equal(world.space.unplaced, world.space.unplaced) ? 1 : 0) +
     mind.gate.counts.undeclaredEvent +
     llm.modelId.length +
+    paid.modelId.length +
     parsed.plan.length +
     buildThinkPrompt(mind.buildThinkInput(snapshotOf(), viewOf(), 'periodic'), world).user.length
   );

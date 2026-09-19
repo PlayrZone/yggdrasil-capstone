@@ -1,3 +1,4 @@
+import { guardPlaces } from '../../contract/space.js';
 import type { DirectionId, PlaceRef, SpaceOps } from '../../contract/space.js';
 
 /**
@@ -29,9 +30,19 @@ export interface Point {
 type PartialPoint = Partial<Point>;
 
 /**
- * THE TWO CASTS IN THE REPOSITORY. A `PlaceRef` has no readable member by
- * design, so the world that mints one has to say, once and visibly, what its
- * own places are made of. Everything else here goes through these two.
+ * THE TWO CASTS THIS WORLD MAKES — not, as this comment once claimed, the two
+ * in the repository (W1-B4 verifier, backlog 5). Every world's space module
+ * makes its own pair: `test/fixtures/toySpace.ts` has the same two lines, and
+ * `contract/wire.ts` makes one more where it narrows an `Intent`'s own `place`
+ * field before handing it to `space.encode` — the single reviewed serialisation
+ * seam, allow-listed by name in `test/mind-no-geometry.test.ts`. What IS true of
+ * the repository is the direction: a `PlaceRef` is branded, so a cast is the
+ * only way to make one, and every cast that makes one lives in `worlds/**` or
+ * at that one seam.
+ *
+ * A `PlaceRef` has no readable member by design, so the world that mints one has
+ * to say, once and visibly, what its own places are made of. Everything else in
+ * this file goes through these two.
  */
 const asPlace = (point: PartialPoint): PlaceRef => point as unknown as PlaceRef;
 const asPoint = (place: PlaceRef): PartialPoint => place as unknown as PartialPoint;
@@ -75,7 +86,7 @@ function fieldsOf(place: PlaceRef): PartialPoint {
   return asPoint(place);
 }
 
-export const foragerSpace: SpaceOps = {
+const planeSpace: SpaceOps = {
   directions: DIRECTIONS,
   /** The two numbers this world's acts have always been written with — and
    *  `number`, so `x: 1e999` is still `bad-number` about `x`. */
@@ -161,3 +172,11 @@ export const foragerSpace: SpaceOps = {
     return usable(x) && usable(y) && !(x === undefined && y === undefined);
   },
 };
+
+/**
+ * …and the same plane with its door shut: a place another world minted reaches
+ * none of the arithmetic above, it reaches a `ForeignPlaceError` (W1-B4
+ * verifier, backlog 4). The raw object stays module-private so there is exactly
+ * one `foragerSpace` and no way to hold the unguarded one by accident.
+ */
+export const foragerSpace: SpaceOps = guardPlaces(planeSpace);

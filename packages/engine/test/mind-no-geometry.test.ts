@@ -4,6 +4,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { foragerAdapter } from '../src/worlds/forager/adapter.js';
+import { compilerOptionsFor, leakKey, placeLeaksIn } from './placeLeaks.js';
 
 /**
  * THE MIND STOPPED KNOWING GEOMETRY, ENFORCED (W1-B4).
@@ -29,6 +30,7 @@ import { foragerAdapter } from '../src/worlds/forager/adapter.js';
  */
 
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
+const TSCONFIG = fileURLToPath(new URL('../tsconfig.json', import.meta.url));
 
 /** The directories that are the mind (docs/rework/ARCHITECTURE.md §2). */
 const MIND_DIRS = ['agent', 'memory', 'learning', 'knowledge', 'relationships', 'narrative', 'consciousness'];
@@ -174,3 +176,139 @@ describe('the scan sees every way of reaching for a coordinate', () => {
     });
   }
 });
+
+/**
+ * ─── THE SAME GUARD, ASKED OF THE TYPE CHECKER ──────────────────────────────
+ *
+ * Everything above matches NAMES, and the W1-B4 verifier's second fail is the
+ * hole that leaves: `Object.values(a)` twice and a `Math.sqrt` is a full
+ * Euclidean distance in which not one token is a coordinate or a compass word.
+ * So `placeLeaksIn` asks the compiler instead — every expression whose TYPE is
+ * `PlaceRef` flowing into anything that could open it. A name can be avoided; a
+ * type cannot.
+ *
+ * ONE REVIEWED SEAM, ALLOW-LISTED BY FILE AND FUNCTION. Writing a place down is
+ * legitimate and has to happen somewhere; what is not legitimate is a blanket
+ * exemption for a file. The four entries below are the whole of it, each names
+ * the function it excuses, and a fifth finding anywhere — including a new one in
+ * the same file — fails.
+ */
+
+const POLICED_SEAMS = ['contract/wire.ts', 'record/serialize.ts'];
+
+const ALLOW_LIST: { key: string; why: string }[] = [
+  {
+    key: 'contract/wire.ts:encodeIntent:mint',
+    why: "narrows an Intent's own `place` field before handing it to `space.encode` — the codec's whole job",
+  },
+  {
+    key: 'contract/wire.ts:inlinePlace:mint',
+    why: 'the same narrowing for a record that carries one, on its way to `space.encode`',
+  },
+  {
+    key: 'record/serialize.ts:asPlace:mint',
+    why: 'inside `withPlacesLifted`: a stored row read back with NO world carries wire data, and the world-less mode returns it as it always did',
+  },
+];
+
+describe('nothing in the mind opens a place (W1-B4 verifier, the second fail)', () => {
+  const options = compilerOptionsFor(TSCONFIG);
+  const mindSources = mindFiles().map((file) => path.join(SRC, file));
+  const seamSources = POLICED_SEAMS.map((file) => path.join(SRC, file));
+  const controls = ['place-leaks.ts', 'place-legal.ts', 'place-refused.ts'].map((f) => path.join(SRC, '..', 'test', 'fixtures', f));
+  const program = ts.createProgram([...mindSources, ...seamSources, ...controls], options);
+
+  it('finds nothing in the seven directories that are the mind', () => {
+    expect(placeLeaksIn(program, mindSources).map(leakKey)).toEqual([]);
+  }, 120_000);
+
+  /**
+   * `contract/wire.ts` and `record/serialize.ts` are not the mind, but they are
+   * where a place is legitimately written down — so they are policed too, and
+   * everything they do is either on the list or a failure.
+   */
+  it('finds only the reviewed serialisation seam, by name, in the files that write a place down', () => {
+    const found = placeLeaksIn(program, seamSources).map(leakKey);
+    expect(found.filter((key) => !ALLOW_LIST.some((entry) => entry.key === key))).toEqual([]);
+    // …and the list is not stale: every entry on it is something that is really
+    // there, so a fix that removes a seam removes its excuse with it.
+    for (const entry of ALLOW_LIST) expect(found, entry.why).toContain(entry.key);
+  }, 120_000);
+
+  /**
+   * NEGATIVE CONTROLS — one per route. `place-leaks.ts` compiles CLEANLY, which
+   * is the whole point: the type system is no defence against any of these, so
+   * the guard is. Plant one of these in a mind directory and the test above
+   * turns red.
+   */
+  it('the routes that compile are all caught, and the fixture really does compile', () => {
+    const leaks = path.join(SRC, '..', 'test', 'fixtures', 'place-leaks.ts');
+    expect(diagnosticsFor(program, leaks)).toEqual([]);
+    expect(placeLeaksIn(program, [leaks]).map((leak) => `${leak.fn}:${leak.route}`).sort()).toEqual(
+      [
+        'castToAny:cast away',
+        'castToUnknown:cast away',
+        'compareByIdentity:comparison',
+        'forInLoop:for…in',
+        'inOperator:in',
+        'jsonStringify:reflection',
+        'mintFromAPair:mint',
+        'objectAssign:reflection',
+        'orderThem:arithmetic',
+        'objectEntries:reflection',
+        'objectKeys:reflection',
+        'objectValues:reflection',
+        'ownPropertyDescriptors:reflection',
+        'ownPropertyNames:reflection',
+        'prototypeOf:reflection',
+        'reflectOwnKeys:reflection',
+        'restDestructure:destructuring',
+        'spreadIntoAnObject:spread',
+        'stringify:reflection',
+        'structuredCloneIt:reflection',
+        'templateInterpolation:template',
+      ].sort(),
+    );
+  }, 120_000);
+
+  /**
+   * THE COMPILE PROOF. Every function in `place-refused.ts` carries a
+   * `@ts-expect-error`, so the file compiles clean IF AND ONLY IF every one of
+   * those lines really is a type error. Weaken the brand — make it optional
+   * again, give `PlaceRef` a member, add an index signature — and an expectation
+   * goes unused, which is itself an error, and this goes red naming the line.
+   */
+  it('the routes the compiler refuses stay refused — including minting one from nothing', () => {
+    const refused = path.join(SRC, '..', 'test', 'fixtures', 'place-refused.ts');
+    expect(diagnosticsFor(program, refused)).toEqual([]);
+    // …and the guard sees them too, so neither defence is load-bearing alone.
+    expect(placeLeaksIn(program, [refused]).map((leak) => `${leak.fn}:${leak.route}`).sort()).toEqual(
+      [
+        'constKeyAccess:element access',
+        'elementAccess:element access',
+        'memberAccess:member access',
+        'namedDestructure:destructuring',
+        'subtractThem:arithmetic',
+      ].sort(),
+    );
+  }, 120_000);
+
+  /** POSITIVE CONTROLS: the legal uses stay legal, or the guard is unusable. */
+  it('lets a mind ask the world, store a place, and check whether there is one', () => {
+    const legal = path.join(SRC, '..', 'test', 'fixtures', 'place-legal.ts');
+    expect(diagnosticsFor(program, legal)).toEqual([]);
+    expect(placeLeaksIn(program, [legal]).map(leakKey)).toEqual([]);
+  }, 120_000);
+});
+
+function diagnosticsFor(program: ts.Program, fileName: string): string[] {
+  const source = program.getSourceFile(fileName);
+  expect(source, `fixture not found by the compiler: ${fileName}`).toBeDefined();
+  return program
+    .getSemanticDiagnostics(source)
+    .concat(program.getSyntacticDiagnostics(source))
+    .map((d) => {
+      const line = d.start === undefined ? 0 : source!.getLineAndCharacterOfPosition(d.start).line + 1;
+      return `${path.basename(fileName)}:${line} TS${d.code} ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`;
+    });
+}

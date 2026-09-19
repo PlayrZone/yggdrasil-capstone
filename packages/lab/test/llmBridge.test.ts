@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildThinkPrompt, foragerAdapter, retryPrompt } from '@yggdrasil/engine';
-import type { ThinkInput } from '@yggdrasil/engine';
+import type { SpaceOps, ThinkInput } from '@yggdrasil/engine';
 import { RateLimiter } from '../src/main/ipcGuards.js';
-import { RETRY_ERROR_MAX, llmComplete, type CompletionBackend } from '../src/main/llmBridge.js';
+import { RETRY_ERROR_MAX, llmComplete, placeAt, type CompletionBackend } from '../src/main/llmBridge.js';
 
 /**
  * Tests for the body of `llm:complete` — main's half of the consciousness
@@ -180,6 +180,209 @@ describe('llmComplete', () => {
     await expect(llmComplete(rate, () => backend, 'junk', input, WORLD)).rejects.toThrow(/^BAD_THINK_PROMPT: /);
     await expect(llmComplete(rate, () => backend, 'junk', input, WORLD)).rejects.toThrow(/^BAD_THINK_PROMPT: /);
     await expect(llmComplete(rate, () => backend, promptFor(input), input, WORLD)).rejects.toThrow(/^RATE_LIMITED$/);
+    expect(backend.calls).toHaveLength(0);
+  });
+});
+
+/**
+ * THE WORLD IS WHAT KNOWS A PLACE (engine W1-B4, verifier item 6).
+ *
+ * A being's position is an opaque `PlaceRef`, so the guard cannot check it the
+ * way it used to; B4 left it at "must be a plain object", which `{}`,
+ * `{x:"120"}`, `{x:NaN,y:Infinity}` and a nested place all satisfy. And they
+ * were PAID FOR: `snapshot.place` reaches the billed text only through
+ * `placeText`, which renders nothing without a `sacredPlace`, so the prompt
+ * beside a junk place is the same prompt and binds perfectly. Main holds the
+ * world, so main hands the world's own `space.isPlace` to the gate.
+ */
+describe('llmComplete asks the world what a place is', () => {
+  const withPlace = (place: unknown): Record<string, unknown> =>
+    thinkInput({ snapshot: { ...(thinkInput()['snapshot'] as object), place } });
+
+  const refusesInput = async (input: Record<string, unknown>, prompt?: { system: string; user: string }): Promise<void> => {
+    const backend = fakeBackend();
+    await expect(llmComplete(limiter(), () => backend, prompt ?? promptFor(input), input, WORLD)).rejects.toThrow(/^BAD_THINK_INPUT: /);
+    expect(backend.calls).toHaveLength(0);
+  };
+
+  /** The whole point: nothing else in the path would have stopped these. */
+  it('would have billed for a junk place — the prompt beside one binds perfectly', () => {
+    for (const place of [{}, { x: '120', y: 80 }, { x: NaN, y: Infinity }, { place: { x: 120, y: 80 } }]) {
+      expect(promptFor(withPlace(place))).toEqual(promptFor(thinkInput()));
+    }
+  });
+
+  it.each([
+    ['an empty place', {}],
+    ['string coordinates', { x: '120', y: 80 }],
+    ['NaN and Infinity', { x: NaN, y: Infinity }],
+    ['a nested place', { place: { x: 120, y: 80 } }],
+    ['a bare null-prototype object', Object.create(null) as object],
+    ['a JSON-parsed own __proto__ key', JSON.parse('{"__proto__":{"x":120,"y":80}}') as object],
+  ])('refuses %s as BAD_THINK_INPUT, with no paid call', async (_name, place) => {
+    await refusesInput(withPlace(place));
+  });
+
+  it('still passes a genuine forager place', async () => {
+    const backend = fakeBackend();
+    const good = withPlace({ x: 120, y: 80 });
+    await expect(llmComplete(limiter(), () => backend, promptFor(good), good, WORLD)).resolves.toBe('{"intent":{"kind":"Idle"}}');
+    expect(backend.calls).toHaveLength(1);
+  });
+
+  /**
+   * A BEING IS NEVER HALF-SOMEWHERE, though the world itself allows a half
+   * place — and both halves of that sentence are load bearing.
+   *
+   * `foragerSpace.isPlace({y:80})` is TRUE by design: a model can write
+   * `{"kind":"MoveTo","x":5}` and the body's refusal of that half-written act
+   * is an event the being remembers, so the world must keep saying yes to one.
+   * That is the right answer for an intent ARGUMENT and the wrong one for a
+   * ThinkInput, where every place is one the world itself wrote with all of
+   * its `fields`. The edge asks the sharper question; the engine is not to be
+   * "fixed" to match it.
+   */
+  it('refuses a half-written place, though the world itself would allow one', async () => {
+    expect(foragerAdapter.space.isPlace({ y: 80 })).toBe(true);
+    expect(foragerAdapter.space.isPlace({ x: 120 })).toBe(true);
+    for (const place of [{ x: 120 }, { y: 80 }, {}, { x: 120, y: undefined }]) {
+      await refusesInput(withPlace(place));
+    }
+    // A deleted coordinate is the same hole by another route.
+    const deleted: Record<string, unknown> = { x: 120, y: 80 };
+    delete deleted['x'];
+    await refusesInput(withPlace(deleted));
+    // …and an INHERITED one does not fill it: a being's position is its own.
+    await refusesInput(withPlace(Object.assign(Object.create({ x: 120 }) as object, { y: 80 })));
+  });
+
+  /**
+   * The question is composed from the world's published `fields`, so a world
+   * whose place is one named `spot` gets `spot` required the day it registers
+   * — no line of this file changes.
+   */
+  it('requires whatever fields the world declares, not x and y', () => {
+    const spotSpace: Pick<SpaceOps, 'fields' | 'isPlace'> = {
+      fields: [{ id: 'spot', type: 'ref' }],
+      isPlace: (v: unknown): boolean => typeof (v as { spot?: unknown }).spot === 'string',
+    };
+    const isSpot = placeAt(spotSpace);
+    expect(isSpot({ spot: 'the ridge' })).toBe(true);
+    expect(isSpot({})).toBe(false);
+    expect(isSpot({ spot: undefined })).toBe(false);
+    expect(isSpot(Object.create({ spot: 'the ridge' }) as object)).toBe(false);
+    // The forager plane's own two, from the same composition.
+    const isHere = placeAt(foragerAdapter.space);
+    expect(isHere({ x: 120, y: 80 })).toBe(true);
+    expect(isHere({ x: 120 })).toBe(false);
+    // Neither half alone is the answer: complete but not a place, and a place
+    // but not complete, are both refused.
+    expect(isHere({ x: '120', y: 80 })).toBe(false);
+    expect(foragerAdapter.space.isPlace({ x: 120 })).toBe(true);
+  });
+
+  it('answers a trapping object with a refusal rather than an exception', () => {
+    const isHere = placeAt(foragerAdapter.space);
+    const trapped = new Proxy({ x: 120, y: 80 }, { getOwnPropertyDescriptor: (): never => { throw new Error('boom'); } });
+    expect(() => isHere(trapped)).not.toThrow();
+    expect(isHere(trapped)).toBe(false);
+  });
+
+  it('holds sacredPlace to the same question — it is the one rendered into the prompt', async () => {
+    const backend = fakeBackend();
+    const sacred = thinkInput({ sacredPlace: { x: 900, y: 120 } });
+    await llmComplete(limiter(), () => backend, promptFor(sacred), sacred, WORLD);
+    expect(backend.calls).toHaveLength(1);
+    expect(backend.calls[0]!.prompt).toEqual(promptFor(sacred));
+    for (const bad of [{}, { x: '900', y: 120 }, { x: Infinity, y: 120 }, 7]) {
+      await refusesInput(thinkInput({ sacredPlace: bad }), promptFor(thinkInput()));
+    }
+  });
+
+  it('holds every tragedyPlace to it too', async () => {
+    const backend = fakeBackend();
+    const ok = thinkInput({ tragedyPlaces: [{ x: 3, y: 4 }, { x: 5, y: 6 }] });
+    await llmComplete(limiter(), () => backend, promptFor(ok), ok, WORLD);
+    expect(backend.calls).toHaveLength(1);
+    // A half-written one is refused here too: these are places the world wrote.
+    for (const bad of [[{}], [{ x: 3, y: 4 }, {}], [{ x: 3, y: 4 }, { y: 6 }], [{ x: 3, y: 4 }, 'over there'], [null]]) {
+      await refusesInput(thinkInput({ tragedyPlaces: bad }));
+    }
+  });
+
+  /**
+   * An unknown world has nobody to ask about a place — so it must not be a way
+   * to get one past the question. It is refused in exactly the place and with
+   * exactly the words it has always been refused with, before a backend is ever
+   * asked for: the codes are a wire contract `LlmMind` reads verbatim.
+   */
+  it('refuses an unknown world rather than letting its places go unasked', async () => {
+    const backend = fakeBackend();
+    for (const worldId of ['town-of-strangers', undefined, { id: WORLD }]) {
+      await expect(llmComplete(limiter(), () => backend, promptFor(thinkInput()), withPlace({ x: '120', y: 80 }), worldId)).rejects.toThrow(
+        'BAD_THINK_PROMPT: unknown world',
+      );
+    }
+    expect(backend.calls).toHaveLength(0);
+  });
+
+  it('spends the token on a refused place, like every other refusal', async () => {
+    const backend = fakeBackend();
+    const rate = new RateLimiter(1, 60_000);
+    const bad = withPlace({ x: NaN, y: Infinity });
+    await expect(llmComplete(rate, () => backend, promptFor(bad), bad, WORLD)).rejects.toThrow(/^BAD_THINK_INPUT: /);
+    const good = thinkInput();
+    await expect(llmComplete(rate, () => backend, promptFor(good), good, WORLD)).rejects.toThrow(/^RATE_LIMITED$/);
+    expect(backend.calls).toHaveLength(0);
+  });
+
+  /**
+   * Reading a renderer-supplied object can itself raise. A raw `TypeError` out
+   * of the handler is none of the three codes the worker reads, so each of
+   * these must arrive as a refusal — and the hostile message must not ride out
+   * inside the reason.
+   */
+  it.each([
+    [
+      'a revoked Proxy',
+      (): unknown => {
+        const { proxy, revoke } = Proxy.revocable({ x: 120, y: 80 }, {});
+        revoke();
+        return proxy;
+      },
+    ],
+    [
+      'a Proxy whose get trap throws',
+      (): unknown =>
+        new Proxy(
+          { x: 120, y: 80 },
+          {
+            get(): never {
+              throw new Error('boom — a message that must not become a reason');
+            },
+          },
+        ),
+    ],
+    [
+      'an object with a throwing getter',
+      (): unknown => ({
+        get x(): number {
+          throw new Error('boom — a message that must not become a reason');
+        },
+        y: 80,
+      }),
+    ],
+  ])('turns %s into BAD_THINK_INPUT instead of a raw throw', async (_name, make) => {
+    const backend = fakeBackend();
+    const thrown: unknown = await llmComplete(limiter(), () => backend, promptFor(thinkInput()), withPlace(make()), WORLD).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toMatch(/^BAD_THINK_INPUT: /);
+    // A hostile object's own message is not a refusal reason.
+    expect(message).not.toMatch(/boom/);
     expect(backend.calls).toHaveLength(0);
   });
 });

@@ -1,3 +1,4 @@
+import { guardPlaces } from '../../src/contract/space.js';
 import type { DirectionId, PlaceRef, SpaceOps } from '../../src/contract/space.js';
 
 /**
@@ -74,7 +75,7 @@ function stepToward(from: string, to: string): DirectionId {
   return best;
 }
 
-export const toySpace: SpaceOps = {
+const wayfaring: SpaceOps = {
   /** You head FOR a place here; the directions are the spots themselves. */
   directions: [...TOY_SPOTS, 'here'],
   /** One field, and it is a word — not two, and not numbers. */
@@ -104,3 +105,10 @@ export const toySpace: SpaceOps = {
     return typeof named === 'string' && named in WAYS;
   },
 };
+
+/**
+ * Guarded exactly as the forager plane is, and for the same reason: hand this
+ * world a place from the continent and it must say so rather than answer
+ * `Infinity` hops to `undefined`.
+ */
+export const toySpace: SpaceOps = guardPlaces(wayfaring);

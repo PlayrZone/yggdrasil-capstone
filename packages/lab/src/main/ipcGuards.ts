@@ -63,9 +63,43 @@ export const PROMPT_LIMITS = {
  */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (typeof v !== 'object' || v === null) return false;
-  const proto = Object.getPrototypeOf(v) as unknown;
+  let proto: unknown;
+  try {
+    // A REVOKED Proxy throws from here, and a guard that throws escapes the
+    // reason-coded contract its callers read — `llmComplete` turns a `Check`
+    // into `BAD_THINK_INPUT: …` and has nothing to say about a raw TypeError.
+    // So the question is ANSWERED — "no, not plain" — rather than propagated.
+    proto = Object.getPrototypeOf(v);
+  } catch {
+    return false;
+  }
   return proto === Object.prototype || proto === null;
 }
+
+/**
+ * COULD THIS BE A PLACE — asked of the WORLD, which is the only thing that
+ * knows (engine W1-B4, `SpaceOps.isPlace`, "the edge's question").
+ *
+ * A being's position is an opaque `PlaceRef` now, so this file cannot check it
+ * the way it used to (`finite(x) && finite(y)`): what a place is MADE of is the
+ * world's — a plane writes two numbers, a graph world writes one name. But
+ * "plain JSON data" is not a check at all: `{}`, `{x:"120"}`, `{x:NaN}`, a
+ * nested place and a bare `Object.create(null)` all pass it, and a well-formed
+ * prompt beside one still binds, so such a request is PAID FOR.
+ *
+ * So the predicate is threaded in from the caller that holds the world
+ * (`llmBridge`), and this file stays pure and engine-free: it contributes the
+ * world-agnostic half — plain-object, size, depth, cycle, exotic — and the
+ * world contributes the half only it can answer.
+ */
+export type PlacePredicate = (value: unknown) => boolean;
+
+/**
+ * Fixed sentences. A hostile object's own message must not ride out through a
+ * refusal reason, so nothing thrown is ever quoted — only that it was thrown.
+ */
+const UNREADABLE_INPUT = 'input could not be read as plain data';
+const UNREADABLE_PROMPT = 'prompt could not be read as plain data';
 
 const hasOwn = Object.prototype.hasOwnProperty;
 
@@ -149,31 +183,39 @@ export function estimateBytes(value: unknown, budget: number, maxDepth: number):
       return;
     }
     path.add(obj);
-    if (Array.isArray(v)) {
-      bytes += 2 + v.length;
-      for (const item of v) {
-        if (done()) break;
-        walk(item, depth + 1);
+    try {
+      if (Array.isArray(v)) {
+        bytes += 2 + v.length;
+        for (const item of v) {
+          if (done()) break;
+          walk(item, depth + 1);
+        }
+      } else if (v instanceof Map) {
+        bytes += 2 + v.size * 2;
+        for (const [k, item] of v) {
+          if (done()) break;
+          walk(k, depth + 1);
+          walk(item, depth + 1);
+        }
+      } else if (isPlainObject(v)) {
+        bytes += 2;
+        // `for…in` with an own-check, not Object.keys/entries: no key array is
+        // materialised up front, so an object with a million keys blows the
+        // budget a few hundred keys in instead of paying for all of them.
+        for (const k in v) {
+          if (done()) break;
+          if (!hasOwn.call(v, k)) continue;
+          bytes += Buffer.byteLength(k, 'utf8') + 4;
+          walk(v[k], depth + 1);
+        }
+      } else {
+        exotic = true;
       }
-    } else if (v instanceof Map) {
-      bytes += 2 + v.size * 2;
-      for (const [k, item] of v) {
-        if (done()) break;
-        walk(k, depth + 1);
-        walk(item, depth + 1);
-      }
-    } else if (isPlainObject(v)) {
-      bytes += 2;
-      // `for…in` with an own-check, not Object.keys/entries: no key array is
-      // materialised up front, so an object with a million keys blows the
-      // budget a few hundred keys in instead of paying for all of them.
-      for (const k in v) {
-        if (done()) break;
-        if (!hasOwn.call(v, k)) continue;
-        bytes += Buffer.byteLength(k, 'utf8') + 4;
-        walk(v[k], depth + 1);
-      }
-    } else {
+    } catch {
+      // A node whose own INSPECTION raises — a revoked Proxy (`Array.isArray`
+      // and `instanceof` both ask its prototype), a trapping handler, a getter
+      // that throws — is not plain JSON data either, and saying so is what
+      // keeps a walk over renderer-supplied data from throwing at all.
       exotic = true;
     }
     path.delete(obj);
@@ -205,6 +247,17 @@ export type PromptCheck = { ok: true; prompt: ThinkPromptShape } | { ok: false; 
  * sent after it was approved.
  */
 export function validateThinkPrompt(prompt: unknown): PromptCheck {
+  try {
+    return readThinkPrompt(prompt);
+  } catch {
+    // Reading a renderer-supplied object can itself raise — a trapping Proxy,
+    // an accessor that throws. That is a refusal like any other, never an
+    // exception out of a function whose whole job is to return one.
+    return { ok: false, reason: UNREADABLE_PROMPT };
+  }
+}
+
+function readThinkPrompt(prompt: unknown): PromptCheck {
   if (!isPlainObject(prompt)) return { ok: false, reason: 'prompt must be a plain object' };
   // Key-by-key with an own-check rather than Object.keys: an object carrying a
   // million strangers is refused at the first one, without materialising a key
@@ -237,9 +290,30 @@ export function validateThinkPrompt(prompt: unknown): PromptCheck {
  * by shape; unknown ones are tolerated (the engine's prompt builder only reads
  * known fields) but still counted against the size budget, so an unknown key
  * cannot be used to smuggle megabytes past the cap.
+ *
+ * `isPlace` is the WORLD's answer to what a place is (see `PlacePredicate`).
+ * Omitting it leaves places checked only structurally, which is not enough on
+ * its own: a caller with no world must refuse the request for THAT reason —
+ * `llmBridge` does, `BAD_THINK_PROMPT: unknown world`, before any backend is
+ * asked for — rather than let an unasked place through to a paid call.
+ *
+ * Never throws. Everything a hostile object can do while being read — a
+ * revoked Proxy, a trapping handler, a getter that raises — comes back as a
+ * refusal with a fixed reason, because the codes are a wire contract.
  */
-export function validateThinkInput(input: unknown): Check {
+export function validateThinkInput(input: unknown, isPlace?: PlacePredicate): Check {
+  try {
+    return readThinkInput(input, isPlace);
+  } catch {
+    return fail(UNREADABLE_INPUT);
+  }
+}
+
+function readThinkInput(input: unknown, isPlace?: PlacePredicate): Check {
   if (!isPlainObject(input)) return fail('input must be an object');
+  // Plain data AND a place in this world. The first is this file's question,
+  // the second is the world's; a place has to answer both.
+  const isPlaceHere = (v: unknown): boolean => isPlainObject(v) && (isPlace === undefined || isPlace(v) === true);
 
   const snapshot = input['snapshot'];
   if (!isPlainObject(snapshot)) return fail('snapshot must be an object');
@@ -250,11 +324,11 @@ export function validateThinkInput(input: unknown): Check {
   if (!isPlainObject(snapshot['inventory'])) return fail('snapshot.inventory must be an object');
   if (!finite(snapshot['health'])) return fail('snapshot.health must be a finite number');
   // WHERE A BEING IS IS AN OPAQUE PLACE (engine W1-B4). It used to be the two
-  // numbers `x`,`y`, and this guard checked them — but what a place is MADE OF
-  // is the world's (a plane writes two numbers, a graph writes one name), so
-  // all this edge can honestly demand is that it is plain JSON data. It still
-  // counts against `estimateBytes`, which is what the check was actually for.
-  if (!isPlainObject(snapshot['place'])) return fail('snapshot.place must be an object');
+  // numbers `x`,`y`, and this guard checked them; what a place is MADE OF is
+  // the world's, so the world is asked — `space.isPlace`, threaded in above.
+  // "Plain JSON data" alone let `{}`, `{x:"120"}`, `{x:NaN,y:Infinity}` and a
+  // nested place through to a billed call.
+  if (!isPlaceHere(snapshot['place'])) return fail('snapshot.place is not a place in this world');
 
   const worldView = input['worldView'];
   if (!isPlainObject(worldView)) return fail('worldView must be an object');
@@ -295,9 +369,19 @@ export function validateThinkInput(input: unknown): Check {
   }
   if (input['mostTold'] !== undefined && !bounded(input['mostTold'], THINK_LIMITS.string)) return fail('mostTold must be a bounded string');
   if (input['offerMaking'] !== undefined && typeof input['offerMaking'] !== 'boolean') return fail('offerMaking must be a boolean');
-  // Likewise: a place, not a pair. What is inside one is the world's business.
-  if (input['sacredPlace'] !== undefined && !isPlainObject(input['sacredPlace'])) {
-    return fail('sacredPlace must be an object');
+  // The other two places in a ThinkInput, asked the same question. `sacredPlace`
+  // is the one that reaches the billed text — `placeText` renders a distance, a
+  // direction and a label off it — and `tragedyPlaces` are places the same world
+  // minted, so a malformed one is malformed here too. The cap above already
+  // bounds how many there are to ask about.
+  if (input['sacredPlace'] !== undefined && !isPlaceHere(input['sacredPlace'])) {
+    return fail('sacredPlace is not a place in this world');
+  }
+  const tragedy = input['tragedyPlaces'];
+  if (Array.isArray(tragedy)) {
+    for (const place of tragedy) {
+      if (!isPlaceHere(place)) return fail('tragedyPlaces contains a value that is not a place in this world');
+    }
   }
 
   const size = estimateBytes(input, THINK_LIMITS.bytes, THINK_LIMITS.depth);
@@ -347,6 +431,20 @@ export type LlmGate =
   | { ok: true; prompt: ThinkPromptShape }
   | { ok: false; code: 'RATE_LIMITED' | 'BAD_THINK_PROMPT' | 'BAD_THINK_INPUT'; reason: string };
 
+/** What the gate needs beyond the two halves themselves. */
+export interface GuardOptions {
+  /**
+   * The world's `space.isPlace`, from the caller that resolved the world.
+   * `undefined` means NO WORLD WAS RESOLVED — the places in the input are then
+   * only structurally checked, and such a call must be refused by the caller
+   * for that reason (`llmBridge`: `BAD_THINK_PROMPT: unknown world`) before it
+   * can reach a backend.
+   */
+  isPlace?: PlacePredicate;
+  /** Injectable clock, for tests. */
+  now?: number;
+}
+
 /**
  * The whole `llm:complete` gate, in the order that matters.
  *
@@ -359,12 +457,16 @@ export type LlmGate =
  * and the input is only along for the ride. A legacy caller passing the old
  * `(input, retryError)` pair therefore fails here, cleanly — a ThinkInput is
  * not `{system, user}` — instead of being forwarded as if it were a prompt.
+ *
+ * It RETURNS every refusal, including the ones a hostile payload tries to raise
+ * out of the validators: the three codes are read verbatim by the worker's
+ * `LlmMind`, and a thrown `TypeError` is none of them.
  */
-export function guardLlmComplete(rate: RateLimiter, prompt: unknown, input: unknown, now?: number): LlmGate {
-  if (!rate.tryTake(now)) return { ok: false, code: 'RATE_LIMITED', reason: 'rate limit exceeded' };
+export function guardLlmComplete(rate: RateLimiter, prompt: unknown, input: unknown, opts: GuardOptions = {}): LlmGate {
+  if (!rate.tryTake(opts.now)) return { ok: false, code: 'RATE_LIMITED', reason: 'rate limit exceeded' };
   const promptCheck = validateThinkPrompt(prompt);
   if (!promptCheck.ok) return { ok: false, code: 'BAD_THINK_PROMPT', reason: promptCheck.reason };
-  const check = validateThinkInput(input);
+  const check = validateThinkInput(input, opts.isPlace);
   if (!check.ok) return { ok: false, code: 'BAD_THINK_INPUT', reason: check.reason };
   return { ok: true, prompt: promptCheck.prompt };
 }

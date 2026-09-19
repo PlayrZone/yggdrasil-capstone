@@ -1,4 +1,4 @@
-import { Experiment, MockMindBackend } from '../../src/index.js';
+import { Experiment, MockMindBackend, foragerAdapter } from '../../src/index.js';
 import type {
   CognitionOutcome,
   CognitionRecordV2,
@@ -39,7 +39,13 @@ import type {
  * against `strayArgTrace.01a23d2.json`, captured by running THIS FILE in a
  * worktree at `01a23d2`, the commit before the seam moved.
  *
- * It imports nothing that W1-B3 added, so the same source runs in both trees.
+ * It imports nothing that W1-B3 added, so the same source runs in both trees —
+ * with one deletion: `MockMindBackend` now REQUIRES the world whose wire it
+ * writes (W1-B4 verifier, the fail), and at `01a23d2` it forbade one alongside a
+ * policy. Drop `world: foragerAdapter` from the construction below to
+ * re-capture. The scripted intents here are already written in the WIRE's own
+ * fields (`intentWith` casts a raw `{x, y, …}` record), so the codec copies them
+ * through untouched and the trace is the same either way.
  */
 
 /** Every value is legal for its argument, so the parser passes all of them. */
@@ -193,7 +199,7 @@ export async function runStrayArgCohort(): Promise<StrayArgTrace> {
   const exp = new Experiment({
     seed: 'w1-b3-stray-args',
     agentCount: 12,
-    mindBackend: new MockMindBackend({ policy }),
+    mindBackend: new MockMindBackend({ world: foragerAdapter, policy }),
     now: () => 0,
     recording: { sink, runId: 'stray-args', nowMs: () => 0 },
   });

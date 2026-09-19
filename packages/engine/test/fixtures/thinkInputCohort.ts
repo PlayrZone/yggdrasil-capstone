@@ -1,4 +1,4 @@
-import { Experiment, MockMindBackend } from '../../src/index.js';
+import { Experiment, MockMindBackend, foragerAdapter } from '../../src/index.js';
 import type {
   CognitionOutcome,
   CognitionRecordV2,
@@ -24,7 +24,13 @@ import type {
  * before the step and after it are the same bytes, which is why
  * `COGNITION_SCHEMA_VERSION` did not have to move.
  *
- * It imports nothing W1-B4 added, so the same source runs in both trees.
+ * It imports nothing W1-B4 added, so the same source runs in both trees — with
+ * one deletion: `MockMindBackend` now REQUIRES the world whose wire it writes
+ * (W1-B4 verifier, the fail), and at `c727af7` the `{policy}` branch forbade
+ * one. Drop `world: foragerAdapter` from the line below to re-capture, and
+ * nothing else. The policy here emits `Idle`/`Dig`, which carry no place, so the
+ * bytes are the same either way; `mockCohort.ts` is the fixture that would not
+ * be.
  *
  * The run is chosen to put a coordinate in every place a row can hold one: the
  * being's own position (`snapshot`), everything it can see (`worldView`), where
@@ -87,7 +93,7 @@ export async function runThinkInputCohort(): Promise<ThinkInputTrace> {
   const exp = new Experiment({
     seed: 'w1-b4-think-input',
     agentCount: 12,
-    mindBackend: new MockMindBackend({ policy }),
+    mindBackend: new MockMindBackend({ world: foragerAdapter, policy }),
     now: () => 0,
     recording: { sink, runId: 'think-input', nowMs: () => 0 },
   });

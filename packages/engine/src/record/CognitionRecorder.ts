@@ -164,7 +164,7 @@ export class CognitionRecorder {
     const tick = input.worldView.tick;
     this.counts.promptsSent++;
     this.slot(beingId).frozen = {
-      input: serializeThinkInput(input),
+      input: serializeThinkInput(input, this.options.adapter),
       prompt: { ...prompt },
       scaffold: {
         ...this.options.scaffold.beingState(beingId, tick, (narrativeId) =>

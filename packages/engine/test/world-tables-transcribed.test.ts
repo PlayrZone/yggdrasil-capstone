@@ -229,9 +229,9 @@ describe('the perspective switch became data without changing', () => {
           const built = memoryFromEvent(foragerAdapter, event, selfId, CONTEXT);
           // W1-B4: the memory holds an opaque place where it held `x`/`y`, and
           // the place IS those two fields — so what is compared is the memory
-          // as it WRITES (`inlinePlace`), which is the form a corpus row and a
+          // as it WRITES (`inlinePlace`, through the world's own `space.encode`), which is the form a corpus row and a
           // digest have always seen. Same bytes, same slot, same order.
-          const now = built === undefined ? undefined : inlinePlace(built);
+          const now = built === undefined ? undefined : inlinePlace(foragerAdapter, built);
           if (JSON.stringify(was) !== JSON.stringify(now)) {
             divergences.push(`${type}/self=${selfId}/${JSON.stringify(payload)}`);
           }

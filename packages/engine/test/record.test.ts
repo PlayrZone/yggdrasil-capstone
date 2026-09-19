@@ -92,7 +92,7 @@ class ScriptedMind implements IMind {
 }
 
 function scripted(make: (input: ThinkInput) => MindOutput): MockMindBackend {
-  return new MockMindBackend({ policy: new ScriptedMind(make) });
+  return new MockMindBackend({ world: foragerAdapter, policy: new ScriptedMind(make) });
 }
 
 /** Advance in small chunks, letting the scheduler's promises land between them. */
@@ -176,7 +176,7 @@ describe('lossless cognition record — replay', () => {
       offerMaking: false,
     };
 
-    const stored = wire(serializeThinkInput(input));
+    const stored = wire(serializeThinkInput(input, foragerAdapter));
     const replayed = buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter));
     const original = buildThinkPrompt(input);
     expect(replayed.system).toBe(original.system);
@@ -927,13 +927,13 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     expect(sent.user).toContain('about NaN away (toward NaN,3)');
     expect(sent.system).toContain('curiosity -Infinity');
 
-    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input)), foragerAdapter));
+    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input, foragerAdapter)), foragerAdapter));
     expect(replayed.user).toBe(sent.user);
     expect(replayed.system).toBe(sent.system);
   });
 
   it('stores the placeholder 0 on disk and the token beside it', () => {
-    const stored = wire(serializeThinkInput(everyNonFinite()));
+    const stored = wire(serializeThinkInput(everyNonFinite(), foragerAdapter));
     expect(stored.snapshot.needs.hunger).toBe(0);
     expect(stored.snapshot.needs.rest).toBe(0);
     expect(stored.snapshot.health).toBe(0);
@@ -953,7 +953,7 @@ describe('a non-finite number replays to the bytes that were sent', () => {
   });
 
   it('restores -0 exactly and leaves a clean input unflagged', () => {
-    const stored = wire(serializeThinkInput(nonFiniteInput({ x: -0, y: -0 })));
+    const stored = wire(serializeThinkInput(nonFiniteInput({ x: -0, y: -0 }), foragerAdapter));
     expect(Object.is(stored.snapshot.x, 0)).toBe(true); // JSON has no -0…
     expect(stored.nonFinite).toEqual([
       { path: '$.snapshot.x', value: '-0' },
@@ -963,18 +963,18 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     expect(Object.is(pointOf(replayed.snapshot.place).x, -0)).toBe(true);
     expect(Object.is(pointOf(replayed.snapshot.place).y, -0)).toBe(true);
 
-    expect(wire(serializeThinkInput(nonFiniteInput())).nonFinite).toBeUndefined();
+    expect(wire(serializeThinkInput(nonFiniteInput(), foragerAdapter)).nonFinite).toBeUndefined();
   });
 
   it('leaves the stored row untouched, so the same row replays twice', () => {
-    const stored = wire(serializeThinkInput(everyNonFinite()));
+    const stored = wire(serializeThinkInput(everyNonFinite(), foragerAdapter));
     const first = buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter));
     expect(stored.snapshot.needs.hunger).toBe(0); // still the placeholder
     expect(buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter)).user).toBe(first.user);
   });
 
   it('refuses a row whose number was LOST, naming the field, and accepts one that was restored', () => {
-    const clean = wire(serializeThinkInput(nonFiniteInput()));
+    const clean = wire(serializeThinkInput(nonFiniteInput(), foragerAdapter));
     // What a row looks like after JSON dropped a number outright.
     const lost = { ...clean, snapshot: { ...clean.snapshot, health: null as unknown as number } };
     expect(() => deserializeThinkInput(lost, foragerAdapter)).toThrow(/snapshot\.health is null/);
@@ -992,15 +992,67 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     expect(() => deserializeThinkInput(lostCount, foragerAdapter)).toThrow(/snapshot\.inventory\.berry/);
 
     // …while a faithfully restored NaN is the value the prompt was built from.
-    expect(() => deserializeThinkInput(wire(serializeThinkInput(everyNonFinite())), foragerAdapter)).not.toThrow();
+    expect(() => deserializeThinkInput(wire(serializeThinkInput(everyNonFinite(), foragerAdapter)), foragerAdapter)).not.toThrow();
   });
 
   it('refuses a side-channel that disagrees with the row rather than writing elsewhere', () => {
-    const stored = wire(serializeThinkInput(nonFiniteInput({ health: NaN })));
+    const stored = wire(serializeThinkInput(nonFiniteInput({ health: NaN }), foragerAdapter));
     const misnamed = { ...stored, nonFinite: [{ path: '$.snapshot.needs.nope', value: 'NaN' as const }] };
     expect(() => deserializeThinkInput(misnamed, foragerAdapter)).toThrow(/does not name a substituted number/);
     const notAPlaceholder = { ...stored, snapshot: { ...stored.snapshot, health: 42 } };
     expect(() => deserializeThinkInput(notAPlaceholder, foragerAdapter)).toThrow(/does not name a substituted number/);
+  });
+
+  /**
+   * WITHOUT A WORLD IT STILL CHECKS THE ROW (W1-B4 verifier, backlog 7).
+   *
+   * Making the adapter optional quietly made the validation optional too: which
+   * fields are a place and which pressures exist are both read off the world, so
+   * with no world `assertReplayable` checked NEITHER, and a row with a lost
+   * coordinate or `needs.hunger: null` replayed silently where it used to throw.
+   * `eval/trace.ts` is such a caller. It now asks the two questions that need no
+   * world — every pressure the ROW names, and every stored number that is gone —
+   * and says out loud that only a world can tell it a place field is MISSING.
+   */
+  it('refuses a malformed place and a lost pressure even when no world was handed over', () => {
+    const clean = wire(serializeThinkInput(nonFiniteInput({ sacredPlace: { x: 900, y: 120 } }), foragerAdapter));
+    expect(() => deserializeThinkInput(clean)).not.toThrow();
+
+    const nulled = { ...clean, snapshot: { ...clean.snapshot, x: null as unknown as number } };
+    expect(() => deserializeThinkInput(nulled)).toThrow(/snapshot\.x is null/);
+    const notANumber = { ...clean, snapshot: { ...clean.snapshot, y: NaN as unknown as number } };
+    expect(() => deserializeThinkInput(notANumber)).toThrow(/snapshot\.y is NaN/);
+    const lostNeed = {
+      ...clean,
+      snapshot: { ...clean.snapshot, needs: { ...clean.snapshot.needs, hunger: null as unknown as number } },
+    };
+    expect(() => deserializeThinkInput(lostNeed)).toThrow(/snapshot\.needs\.hunger is null/);
+    const brokenSite = { ...clean, sacredPlace: { x: null, y: 120 } };
+    expect(() => deserializeThinkInput(brokenSite)).toThrow(/sacredPlace\.x is null/);
+    const brokenTragedy = { ...clean, tragedyPlaces: [{ x: 1, y: 2 }, { x: 3, y: null }] };
+    expect(() => deserializeThinkInput(brokenTragedy)).toThrow(/tragedyPlaces\[1\]\.y is null/);
+
+    // …and the one it cannot ask: which of the snapshot's keys were the place.
+    const missing = { ...clean, snapshot: { ...clean.snapshot } };
+    delete (missing.snapshot as Record<string, unknown>)['x'];
+    expect(() => deserializeThinkInput(missing)).not.toThrow();
+    expect(() => deserializeThinkInput(missing, foragerAdapter)).toThrow(/snapshot\.x is undefined/);
+  });
+
+  /**
+   * A STORED ROW HOLDS THE WORLD'S FIELDS, AND COMES BACK AS A HANDLE. Written
+   * by `space.encode` and read by `space.decode` — the inverse pair, rather than
+   * the record layer assuming that a place's runtime value IS its wire form
+   * (verifier, backlog 5). The handle that comes back is a NEW object, so a
+   * replay cannot alias the stored row.
+   */
+  it('lifts a story’s site and the shunned places back through the world', () => {
+    const input = nonFiniteInput({ sacredPlace: { x: 900, y: 120 } });
+    const stored = wire(serializeThinkInput(input, foragerAdapter));
+    expect(stored.sacredPlace).toEqual({ x: 900, y: 120 });
+    const replayed = deserializeThinkInput(stored, foragerAdapter);
+    expect(foragerAdapter.space.equal(replayed.sacredPlace!, at(900, 120))).toBe(true);
+    expect(replayed.sacredPlace).not.toBe(stored.sacredPlace);
   });
 });
 
@@ -1067,7 +1119,7 @@ describe('a row does not carry bookkeeping the prompt never read', () => {
   });
 
   it('strips provenance from every knowledge record, everywhere in the row', () => {
-    const stored = wire(serializeThinkInput(inputWith(believer(12))));
+    const stored = wire(serializeThinkInput(inputWith(believer(12)), foragerAdapter));
     for (const k of stored.knowledge) expect('provenance' in k).toBe(false);
     expect(JSON.stringify(stored)).not.toContain('provenance');
     // What a prompt DOES read is untouched.
@@ -1077,7 +1129,7 @@ describe('a row does not carry bookkeeping the prompt never read', () => {
 
   it('replays byte-for-byte from the stripped row', () => {
     const input = inputWith(believer(12));
-    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input)), foragerAdapter));
+    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input, foragerAdapter)), foragerAdapter));
     const sent = buildThinkPrompt(input);
     expect(replayed.user).toBe(sent.user);
     expect(replayed.system).toBe(sent.system);
@@ -1085,7 +1137,7 @@ describe('a row does not carry bookkeeping the prompt never read', () => {
 
   it('is most of a populated row', () => {
     const input = inputWith(believer(12));
-    const stored = serializeThinkInput(input);
+    const stored = serializeThinkInput(input, foragerAdapter);
     const after = Buffer.byteLength(JSON.stringify(stored));
     // Exactly what the old path stored: the live records, spread verbatim.
     const before = Buffer.byteLength(JSON.stringify({ ...stored, knowledge: input.knowledge }));

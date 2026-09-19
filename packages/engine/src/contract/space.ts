@@ -31,17 +31,24 @@ import type { ParamSchema } from './actions.js';
  *    this step and after it are the same bytes. A handle into a side table
  *    would not survive a JSON round trip, and a stringified form would not
  *    survive a float.
- *  · **Weakly branded, not nominally.** `PlaceRef` declares one optional member
- *    nothing has, so an object with real fields is not assignable to it and a
- *    world has to say `as unknown as PlaceRef` once, in its own space module,
- *    where a reader can see the cast. The reverse needs a cast too, which is
- *    the asymmetry the whole step is about.
+ *  · **Nominally branded, and REQUIRED.** The brand below is a property keyed by
+ *    a `unique symbol` this module does not export, so no other file can write
+ *    one — `const p: PlaceRef = {}` and every other object literal is a compile
+ *    error (TS2739: the brand is missing), and the only way to produce a place
+ *    is the cast a world makes in its own space module, in `worlds/**`, where a
+ *    reader can see it. It was OPTIONAL until the W1-B4 verifier pointed out
+ *    that an optional brand is no brand at all: `{}` satisfied it, so any mind
+ *    could MINT a place with no cast and hand it to `SpaceOps` (verifier, the
+ *    second fail). The runtime value is unchanged — the brand is declared, never
+ *    assigned — so JSON, corpus bytes and every float are what they were.
  *  · **Not `===` comparable in any meaningful way.** Two places that are the
  *    same place are usually two objects, so `equal` is the only answer, and it
  *    is the world's.
  */
+declare const placeBrand: unique symbol;
+
 export interface PlaceRef {
-  readonly __place?: never;
+  readonly [placeBrand]: 'place';
 }
 
 /**
@@ -126,4 +133,107 @@ export interface SpaceOps {
 /** The names of the wire fields a place is written as, in the order written. */
 export function placeFieldNames(space: SpaceOps): string[] {
   return space.fields.map((field) => field.id);
+}
+
+/**
+ * A PLACE FROM SOMEWHERE ELSE, REFUSED OUT LOUD (W1-B4 verifier, backlog 4).
+ *
+ * A place carries no world tag, and until this existed nothing noticed when one
+ * world was handed another's: `equal` returned TRUE for two places that are not
+ * the same place and were never in the same world, `distance` answered `0` or
+ * `NaN`, and `label` — which `prompt.ts` splices into a prompt a model is paid
+ * to read — produced `"NaN,NaN"` or `undefined`. Silent garbage, in the one
+ * comparison a mind is allowed to make.
+ *
+ * THE CHOICE, stated so it is not rediscovered: every `SpaceOps` entry point
+ * that takes a place THROWS. It does not substitute `unplaced` and it does not
+ * count and carry on, because both of those answer a question that was never
+ * asked — a mind that reached the wrong world has a bug, and a bug that returns
+ * a plausible number is the expensive kind. W1-C puts two worlds in one process;
+ * this is what it will hit instead of a wrong answer.
+ */
+export class ForeignPlaceError extends Error {
+  override readonly name = 'ForeignPlaceError';
+
+  constructor(
+    /** The entry point that was asked. */
+    readonly op: string,
+    /** Which argument it was, by position, counted from 1. */
+    readonly argument: number,
+  ) {
+    super(`space.${op}: argument ${argument} is not a place of this world`);
+  }
+}
+
+/**
+ * ONE WORLD'S SPACE, WITH THE DOOR SHUT. Wraps a world's own `SpaceOps` so that
+ * every entry point taking a place refuses one this world did not mint.
+ *
+ * It wraps rather than being written into each world because the check is not a
+ * fact about any world: a world says WHAT its places are, and this says that
+ * nothing else may be passed off as one. `placeOf`, `decode` and `isPlace` take
+ * `unknown` by contract and are passed straight through.
+ *
+ * THE QUESTION IS OWNERSHIP, NOT USABILITY, and the difference is load-bearing.
+ * `isPlace` is the EDGE's question — could this untrusted JSON be a place here —
+ * and the forager plane answers it strictly, refusing `{x: NaN}` because a model
+ * that writes one has written nonsense. But a world MINTS non-finite places of
+ * its own: an event authored with a NaN coordinate becomes a memory whose place
+ * is `at(NaN, …)`, that memory's site renders into a prompt, and a row carrying
+ * it replays to the bytes that were sent (`test/record.test.ts`, "a non-finite
+ * number replays to the bytes that were sent"). Gating on `isPlace` alone throws
+ * there — a place this world made, refused by this world. So the gate asks the
+ * weaker, correct question: does this value carry any of the fields this world
+ * WRITES a place with (`SpaceOps.fields`, the world's own data)? A continent
+ * place has `x` or `y`; a toy world's has `spot`; `{}` has neither, and neither
+ * does the other world's. Nothing that reaches the arithmetic today is refused,
+ * and nothing from another world reaches it at all.
+ */
+export function guardPlaces(space: SpaceOps): SpaceOps {
+  const own = Object.prototype.hasOwnProperty;
+  const fields = space.fields.map((field) => field.id);
+  const minted = (value: PlaceRef): boolean => {
+    if (value === null || typeof value !== 'object') return false;
+    if (space.isPlace(value)) return true;
+    return fields.some((id) => own.call(value, id));
+  };
+  const check = (op: string, argument: number, value: PlaceRef): void => {
+    if (!minted(value)) throw new ForeignPlaceError(op, argument);
+  };
+  return {
+    directions: space.directions,
+    fields: space.fields,
+    unplaced: space.unplaced,
+    distance(a, b) {
+      check('distance', 1, a);
+      check('distance', 2, b);
+      return space.distance(a, b);
+    },
+    direction(from, to) {
+      check('direction', 1, from);
+      check('direction', 2, to);
+      return space.direction(from, to);
+    },
+    within(a, b, radius) {
+      check('within', 1, a);
+      check('within', 2, b);
+      return space.within(a, b, radius);
+    },
+    equal(a, b) {
+      check('equal', 1, a);
+      check('equal', 2, b);
+      return space.equal(a, b);
+    },
+    label(place) {
+      check('label', 1, place);
+      return space.label(place);
+    },
+    encode(place) {
+      check('encode', 1, place);
+      return space.encode(place);
+    },
+    placeOf: (carrier) => space.placeOf(carrier),
+    decode: (fields) => space.decode(fields),
+    isPlace: (value) => space.isPlace(value),
+  };
 }
