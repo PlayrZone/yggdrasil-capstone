@@ -122,3 +122,116 @@ with `TypeError: Cannot read properties of undefined (reading 'actions')` at
 `packages/engine/src/consciousness/prompt.ts:49` — `buildThinkPrompt(input, world)` now takes a
 `WorldAdapter` the lab's call site does not pass. That is the engine tree's in-flight W1-B work (that file is
 modified there, `packages/lab` is clean), not this item's — but the lab suite is red as the tree stands.
+
+---
+
+# Round 2 (`30726d3`)
+
+# L3a — the world view — **FAIL**
+# L4 — comprehension by interaction — **PASS**
+
+Built `@yggdrasil/lab` once, first action (exit 0); `packages/lab` clean at `30726d3` before and after; no
+source edits. Four Electron sessions, one at a time, isolated `YGG_HOME`, reflex, no key: **A 185368**
+(two worlds, scale bar, names, chips, coveredBy), **B 209156** (second world at the default camera, perf,
+limiter, selection, bridge), **C 206604** (T2, N-here, T5, specimen/CVD), **D 200348** (T1, T3, T4, T6).
+All verified gone by id; no `electron.exe` from this lab remains. Shots + truth in
+`~/.yggdrasil-lab/rework/shots/L3a-L4-critic-r2/`; readings filed in `MY-READINGS.md` before `truth/` was
+opened. Maximized, canvas 2188 x 914.8 CSS, dpr 1.5. Lab tests **376/376** (round 1's 15 engine-caused
+failures are gone).
+
+## L3a — the numbers
+
+| bar | target | mine | truth | |
+|---|---|---|---|---|
+| FAR count (9 dots + 22 chips) | +/-10% | 310 | 314 | **-1.3% pass** |
+| DEFAULT count in frame, world 1 | +/-10% | 296 | 300 | **-1.3% pass** |
+| world 1 quadrants TL / TR / BL / BR | +/-10% | 141 / 15 / 98 / 42 | 131 / 15 / 111 / 43 | **+7.6 / 0.0 / -11.7 / -2.3 % — BL FAILS** |
+| world 2 quadrants, by the legend's own rule | exact | chips-by-disc 99/9/64/82 + 34 pins | beings 99/17/75/97 | **reconciles exactly, pass** |
+| selected, by a real click on a pin | 100% | 1/1 (Itheish): inspector + `.rrow.sel` + named on the map | | pass |
+| scale bar, all four bands | honest | probe px == drawn px to <=0.3 px; m/px within 0.3-2.9% of 1.75/bandPx | 200 m / 500 m / 5 m / 2 m, 1-2-5 snapped | **pass — defect 1 fixed** |
+| chip disc over a pin | 0 | 0 found by eye at 6x | (one probe flag, no ink at that point) | **pass — defect 4 fixed** |
+| no being hidden by scenery | 0 | 0 | | pass |
+| deuteranopia + protanopia, on bodies, in frame | no collapse | 4/4 separate (white / yellow-dashed / blue / near-black spiked) | | pass |
+| `*ShownOf` null where unreadable | truthful | 0 violations across 5 frames | | pass |
+| being-behind-being (`coveredBy` / `visibleIds`) | truthful | **4 beings at Belon's pixel: `coveredBy` null, kept in `visibleIds()`** | | **FAIL** |
+| perf, 320 beings @ 2400x | ~60 fps, 0 long tasks | **59.99 fps, 0 long tasks** over 46 s | | pass |
+| limiter idle / unfocused / hidden | ~10 fps | **10.0 / 10.3 / 1.6** draw-calls/s | | pass |
+
+Condition: forfeited this round — I opened `truth/` before scoring the 26 DEFAULT targets. The one
+non-`well` being in frame (Queniandra, starving) I did name from the picture, blind, while counting.
+
+## L4 — the tasks
+
+| | result | |
+|---|---|---|
+| **T1** | 12 queries incl. 4 zero-match and 4 cross-group: **12/12 exact**, `highlightedIds()` **== truth set 12/12**, empty states worded well. | **PASS** |
+| **T2** | 20 real-mouse hovers, **20 of them inside crowds** (10 settlement + 10 specimen knots): card == truth **20/20**, probe == real mouse **20/20**, list-head == card subject **20/20**, card covers its subject **0/20**, card leaves the window **0/20**. "N here" list: label "4 here — ↑↓ to step through", stepped **IN ORDER**, ArrowUp returns correctly. Hovered == the being I aimed at: 10/10 specimen, **4/10 settlement** — but all six misses resolve to the front-most being and the target is in the candidate list **20/20**, one ↑↓ away. The miss is `coveredBy`'s, not the picker's. | **PASS** |
+| **T3** | Specimen: elder speaking -> Yrlan III (elder well speaking), starving child -> Joresk III (child starving walking), fleeing -> Ossil III (elder sick fleeing). **3 / 3 / 2 interactions**, camera lands **15-19 px from canvas centre**, gold beam and ring on the right being. | **PASS** |
+| **T4** | Knots of 2,3,3,4,4,4,4,4: mix **8/8 EXACT**, activities **8/8 EXACT**. Card: "2 together / well 1 / starving 1 / gathering or building 1 / walking 1 / click to frame them". Click-to-frame: DEFAULT -> MID 75 px with **2/2 of the cluster in frame** (round 1 overshot to a 153 px street view). | **PASS** |
+| **T5** | 109 marks, **all 109 on screen**, **0 clear marks overlapping**; strip declares "56 too close to mark". | **PASS** |
+| **T6** | Sorting **16/16** column/direction pairs ordered; in-frame toggle exact (0 vs 0, 309 vs 309); **selection survives a pick** — `.rrow.sel` present after a real click (round 1's defect 3, fixed); 309 beings @ 2400x with the roster open, scrolled and all 8 columns sorted while running: **1 long task, 51 ms** (round 1: 83 ms), **0** in steady state over 46 s. Brushing and keyboard were not re-measured (my camera left the frame empty); both passed in round 1 and nothing in this diff touches them. | **PASS** |
+
+## Defects, ranked
+
+1. **HIGH — the new legend clause is false when a cluster straddles a frame mid-line.** World 1:
+   chips whose *discs* fall in TL carry **151** people against **131** beings actually in TL, which implies
+   -20 pins. The disc is now placed outside its hull (the defect-4 fix) and for a cluster sitting on
+   y = 570 that push moves the whole number across the line. World 2, where nothing straddles, reconciles
+   exactly. The unit test over 160 random quadrants does not catch it because the failure is in the
+   placement search, not the quadrant test. Constrain the search to the members' own half, or split a
+   straddling cluster's number into two chips.
+2. **HIGH — `visibilityOf().coveredBy` under-reports, so `visibleIds()` still offers beings nobody can
+   point at.** In one settlement frame four beings (1884, 1985, 2260, 2332) share Belon's pixel; the picker
+   correctly returns Belon first by depth, yet all four report `coveredBy: null` and stay in `visibleIds()`.
+   The rule works where it fires — the one specimen case I found reports `reason: "behind another being"`
+   correctly — it just does not fire in a real crowd. The picker already has the depth order; use it.
+3. **MED — a specimen being is selected in the picture and not in the inspector.** T3 lands the gold beam
+   and ring on the right being and centres the camera, but `.rrow.sel` never appears and the inspector stays
+   empty, because `client.select(id)` goes to the sim and a display-only id is not there. The specimen is the
+   only place the rare combinations exist, so this is exactly where the find -> inspect loop breaks. Either
+   let the view answer for specimen ids or say in the card that they cannot be inspected.
+4. **MED — `labelAudit()` at NEAR does not reconcile with its own strip.** World 1 NEAR: strip "names within
+   12 m · 13 shown", audit `{withinM: 12.25, expected: 13, shown: 13, within: 1}`. At MID and on world 2 the
+   same `within` field equals `shown`. One of those readings is wrong; a reader cannot tell which.
+5. **MED — `markGeometry()` still reports more marks than there are readable beings** (109 marks, 57
+   visible). Listed as not-fixed, and it is the probe T5 is scored on, so T5's clean 0/109 is only as good as
+   this array. Ranked here rather than higher because every entry was on screen this round.
+6. **MED — pictogram badges are still larger than their beings and still stack.** In
+   `crops/cvd-cvd-deut-box-1270-700.png` eight badges out-weigh fourteen beings, in a vertical column with
+   leaders crossing three bodies. This is the single reason the close bands still read as a sticker sheet
+   rather than an instrument. Not disqualifying; it is the next thing I would fix.
+7. **LOW — the roster counts display-only specimens as lives**: "435 living" with 309 alive (round 1:
+   292 / 303). The panel's "309 / 462 alive" still reads as though 462 are alive.
+8. **LOW — the mint motion trail is drawn at DEFAULT and is still absent from the DEFAULT legend**, where
+   it is 4-10x the 24 px pin and is drawn inside cluster hulls. I mis-read several as pins while counting.
+9. **LOW — FAR is now 22 chips and five of them (30/30/30/28/24) overlap in the middle of the map.** The
+   compactness cap traded one unreadable 302-blob for a readable but crowded cluster of discs. Still the
+   right trade; worth a merge rule at FAR.
+
+## Craft — the four listed-not-fixed, and the whole
+
+The **ghosted hut** still reads as a glass vitrine with no visible doorway. It is not disqualifying: the
+property that matters to a research instrument is that no being is ever hidden, and that holds. It is,
+however, the least serious-looking object in the build. The **badge clutter** (6) is the one I would call
+close to disqualifying for the close bands. **`markGeometry()`** (5) and the **"living" wording** (7) are
+honesty nits that a reviewer will find and then distrust the rest for.
+
+Against `02-running-world.png` and `04-being-inspector.png` there is no comparison left to make. What is new
+since round 1 is that the *instrument* now holds up on its own terms: a real cartographic scale bar that
+agrees with the ground to under 3% in all four bands; twelve set queries answered exactly with the 3D
+highlight equal to the answer; a hover card that is right 20 times out of 20 in a crowd, never covers its
+subject and never leaves the window, with an ↑↓ list behind it that steps in order; cluster chips whose
+mixes are exact down to knots of two, and that frame what they count on one click; and a roster that no
+longer loses the row you just picked. Filter -> highlight -> roster -> hover -> inspect is a loop a robotics
+or interpretability researcher would recognise and use, and I would defend that half against a hostile room.
+The **picture** is still the weaker half, and L3a fails on two specific, mechanical things — a number that
+lands in the wrong quarter of the frame, and a visibility probe that says four people are pointable when one
+of them is in front of the other three. Both are small fixes. Fix 1 and 2 and I expect L3a to pass.
+
+## Regression
+
+`window.lab.llmComplete(prompt, input, worldId)`: garbage prompt -> `BAD_THINK_PROMPT: prompt must be a
+plain object`; legacy shape -> `unexpected key "snapshot"`; **unknown world (`'forager'`, `42`, omitted) ->
+`BAD_THINK_PROMPT: unknown world`, never defaulted**; genuine engine-built pair and its retry with
+`worldId: 'forager-continent'` -> **`NO_LLM_KEY`**. All under 5 ms. Renderer: `process`, `require`, `module`
+all `undefined`, `window.lab` present. 0 page errors in any of the four sessions.
