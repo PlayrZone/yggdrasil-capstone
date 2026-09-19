@@ -196,6 +196,8 @@ export function ChipCard({
     count: number;
     matched: number;
     filtering: boolean;
+    /** True where the chip is a building speaking for the people inside it. */
+    inside?: boolean;
     mix: { word: string; count: number; color: string }[];
     activities: { word: string; count: number }[];
   };
@@ -204,7 +206,7 @@ export function ChipCard({
   return (
     <div className="hovercard chipcard" style={placeCard(at, 30 + summary.mix.length * 17 + summary.activities.length * 17)} role="tooltip">
       <div className="hhead">
-        <b>{summary.count} together</b>
+        <b>{summary.count}{summary.inside ? ' inside this shelter' : ' together'}</b>
         {summary.filtering && <span>{summary.matched} match</span>}
       </div>
       <ul className="hmix">

@@ -38,7 +38,24 @@ export interface WorldProbe {
     visible: boolean; markPx: number; bodyPx: number; inFrame: boolean; collapsed: boolean;
     behindLand: boolean; coveredBy: number | null; reason: string;
   } | null;
+  /**
+   * Where the thing DRAWN for this being is, in client coordinates — the point
+   * to put a cursor on, and the point the view itself bins by.
+   *
+   * One point, and it is the mark's: the centre of the ground ring or the pin,
+   * which is what a reader sees in every band that draws one. Where a
+   * building's occupants chip has taken a being's mark away, this is the middle
+   * of its body instead, because that is then the only thing of it in the
+   * picture. `countAudit()`'s quadrants, `markGeometry()` and the cover rule
+   * behind `visibleIds()` all use this same point — round seven had the probe
+   * 11.3 px from the audit's own binning, enough to file 8.6% of a frame in a
+   * different quarter than the picture did.
+   */
   screenPositionOf(id: number): { x: number; y: number } | null;
+  /** Just the ground mark's centre, drawn or not. */
+  markScreenPositionOf(id: number): { x: number; y: number } | null;
+  /** Just the figure's middle — what the hover card places itself clear of. */
+  bodyScreenPositionOf(id: number): { x: number; y: number } | null;
   /** Where it stands, in scene units — the frame `placeCamera` takes. */
   worldPositionOf(id: number): { x: number; y: number; z: number } | null;
   /** What this being is doing, how it is, the marks that say so — and whether they can be read. */
@@ -127,6 +144,25 @@ export interface WorldProbe {
   daylight(): number;
   /** Which contract the picture is keeping: `far`, `default`, `mid` or `near`. */
   zoomBand(): ZoomBand;
+  /**
+   * Where the camera stands and how far it is ALLOWED to stand — the numbers
+   * behind "can a mouse reach this band".
+   *
+   * `stopFigurePx` is how tall a grown being stands at the orbit's far stop and
+   * `enterFarPx` is what entering FAR from DEFAULT costs; `farReachable` is the
+   * comparison, made by the band table rather than by eye. A reviewer wheeled
+   * 120 notches into a stop that was one hysteresis step short and stayed in
+   * DEFAULT at the edge itself, so the stop is now re-derived every frame from
+   * the live projection and printed here.
+   */
+  cameraReport(): {
+    distance: number; minDistance: number; maxDistance: number;
+    worldPerPx: number; figurePx: number; stopFigurePx: number; enterFarPx: number;
+    band: ZoomBand;
+    /** The canvas on screen, and the canvas the projection was derived from. */
+    canvasW: number; canvasH: number; projectionH: number;
+    atStop: boolean; farReachable: boolean;
+  };
   /** How tall a grown being stands on screen right now, in CSS pixels. */
   bandPixels(): number;
   /** How wide the map's ring is drawn on screen right now, in CSS pixels. */
@@ -201,9 +237,13 @@ export interface WorldProbe {
   matchCount(): MatchCount;
   /** Who the view is emphasising right now — empty while nothing is filtered. */
   highlightedIds(): number[];
-  /** What one crowd chip is made of: how many, in what state, doing what. */
+  /**
+   * What one chip is made of: how many, in what state, doing what — and
+   * whether it is a crowd on open ground or the people INSIDE a building,
+   * whose individual rings that building is carrying for them.
+   */
   chipSummary(cluster: number): {
-    cluster: number; count: number; matched: number;
+    cluster: number; count: number; matched: number; inside: boolean;
     mix: MixSegment[]; activities: { word: string; count: number }[]; ids: number[];
   } | null;
   /**
@@ -251,11 +291,52 @@ export interface WorldProbe {
     setFilter(next: Partial<FilterState>): void;
     clearFilters(): void;
     hover(id: number | null): void;
+    /**
+     * Choose a being, through the code path a CLICK runs and no other. It does
+     * not move the camera — that is the selbar's own button, and it is
+     * `centreOn` here. Round seven's driver select did both at once and lost
+     * the roster row that a real click keeps.
+     */
     select(id: number | null): void;
+    /** The selbar's "Centre on it" button. */
+    centreOn(id: number): void;
     roster(open: boolean): void;
     zoomToCluster(cluster: number): void;
   };
 }
+
+/**
+ * THE BRIDGE, for a reviewer re-testing its refusals from the page.
+ *
+ * `window.lab.llmComplete(prompt, input, worldId)` is guarded in main, in this
+ * order: rate limit, PROMPT shape, INPUT shape, then the world. So a garbage or
+ * legacy prompt is refused before the world is ever looked at, and an unknown
+ * `worldId` can only be reached with a well-formed pair — which is why the
+ * refusal could not be re-tested from the page without one. No engine import is
+ * needed to build it; both shapes are structural, and this is the whole call:
+ *
+ * ```js
+ * await window.lab.llmComplete(
+ *   { system: 's', user: 'u' },
+ *   {
+ *     // Where a being is: two finite numbers on this build. (The engine is
+ *     // moving to an opaque `place`; if the refusal says `snapshot.place`,
+ *     // that has landed and it takes whatever the world calls a place.)
+ *     snapshot: { id: 1, name: 'x', traits: {}, needs: {}, inventory: {}, health: 1, x: 120, y: 88 },
+ *     worldView: { tick: 0, season: 'spring', agents: [], resources: [], structures: [] },
+ *     recalledMemories: [], knowledge: [], goals: [], trigger: 'periodic',
+ *   },
+ *   'nope',
+ * );
+ * // rejects: BAD_THINK_PROMPT: unknown world — never defaulted to a world
+ * ```
+ *
+ * With a real `worldId` the same call is refused for the other reason — the
+ * prompt is not the one that world's own builder renders from that input —
+ * which is the binding this bridge exists for. Neither path sends anything, and
+ * every refusal names the field it tripped on, so the shape above can be walked
+ * in from any starting point.
+ */
 
 declare global {
   interface Window {

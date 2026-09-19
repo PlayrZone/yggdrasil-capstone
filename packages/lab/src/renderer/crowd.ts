@@ -168,6 +168,19 @@ export interface BodyBox {
   y1: number;
   /** Metres from the eye. */
   depth: number;
+  /**
+   * The being's drawn MARK — its ground ring or its pin — as a disc on screen.
+   *
+   * A figure is not the only thing drawn for a being, and out where the body is
+   * a few pixels it is not the thing a reader sees at all. `mr` is 0 for a
+   * being whose mark this frame is suppressed (inside a hut's chip), and
+   * `hasBody` is false for one drawn too small to be a figure — which is
+   * exactly when the mark is all there is to point at.
+   */
+  mx: number;
+  my: number;
+  mr: number;
+  hasBody: boolean;
 }
 
 /**
@@ -204,6 +217,13 @@ export const COVER_OVERLAP = 0.48;
  * reports it at or covers `minOverlap` of its figure. Nothing is ever covered
  * by a being that is itself covered, so a stack of ten resolves to one visible
  * being and nine that name it.
+ *
+ * Round three of the rule adds the other half of what is DRAWN. A being whose
+ * body is too small to be a figure is carried by its mark alone, and the picker
+ * offers it on the mark layer — where a nearer being's mark over the same pixel
+ * wins on depth. So a mark-only being standing under somebody else's ring is
+ * covered by it, and a being with a figure of its own never is: its own body is
+ * drawn at its own point, which is what the picker's body layer says.
  */
 export function coveringBodies(boxes: readonly BodyBox[], minOverlap = COVER_OVERLAP): Map<number, number> {
   const out = new Map<number, number>();
@@ -225,7 +245,16 @@ function coversBox(front: BodyBox, back: BodyBox, minOverlap: number): boolean {
   // The point the view REPORTS this being at — where a driver aims — inside the
   // other one's figure. This fires for a small being behind a large one whose
   // boxes share little area, and it is the case round one of this rule caught.
-  if (back.x >= front.x0 && back.x <= front.x1 && back.y >= front.y0 && back.y <= front.y1) return true;
+  if (front.hasBody && back.x >= front.x0 && back.x <= front.x1 && back.y >= front.y0 && back.y <= front.y1) return true;
+  // The same question about the other thing a being is drawn as. Only for a
+  // being with no figure of its own: with one, its own body is what is drawn at
+  // its own point, and the picker says so.
+  if (!back.hasBody && front.mr > 0) {
+    const dx = back.x - front.mx;
+    const dy = back.y - front.my;
+    if (dx * dx + dy * dy <= front.mr * front.mr) return true;
+  }
+  if (!front.hasBody || !back.hasBody) return false;
   const w = Math.min(front.x1, back.x1) - Math.max(front.x0, back.x0);
   if (w <= 0) return false;
   const h = Math.min(front.y1, back.y1) - Math.max(front.y0, back.y0);

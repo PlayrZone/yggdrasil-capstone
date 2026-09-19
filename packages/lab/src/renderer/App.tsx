@@ -438,6 +438,8 @@ export function App(): React.ReactElement {
           visibleIds: () => world.visibleIds(),
           visibilityOf: (id) => world.visibilityOf(id),
           screenPositionOf: (id) => world.screenPositionOf(id),
+          markScreenPositionOf: (id) => world.markScreenPositionOf(id),
+          bodyScreenPositionOf: (id) => world.bodyScreenPositionOf(id),
           worldPositionOf: (id) => world.worldPositionOf(id),
           stateOf: (id) => world.stateOf(id),
           stageOf: (id) => world.stageOf(id),
@@ -457,6 +459,7 @@ export function App(): React.ReactElement {
           beingPixels: () => world.beingPixels(),
           daylight: () => world.daylightNow(),
           zoomBand: () => world.zoomBand(),
+          cameraReport: () => world.cameraReport(),
           bandPixels: () => world.bandPixels(),
           annotationPixels: () => world.annotationPixels(),
           scaleReport: () => world.scaleReport(),
@@ -489,11 +492,12 @@ export function App(): React.ReactElement {
             setFilter: (next) => setFilter({ ...emptyFilter(), ...next }),
             clearFilters: () => setFilter(emptyFilter()),
             hover: (id) => setBrush(id === null ? NO_BRUSH : { id, source: 'roster' }),
-            select: (id) => {
-              chooseBeing(id);
-              world.setSelected(id);
-              if (id !== null) world.centreOn(id);
-            },
+            // A CLICK, through the click's own code path — `World3D.choose` is
+            // the line `handleClick` runs. Moving the camera is a separate act
+            // with a separate button ("Centre on it"), and doing it inside the
+            // selection is what lost the roster row a real click keeps.
+            select: (id) => world.choose(id),
+            centreOn: (id) => { world.centreOn(id); },
             roster: (open) => setRosterOpen(open),
             zoomToCluster: (cluster) => world.zoomToCluster(cluster),
           },

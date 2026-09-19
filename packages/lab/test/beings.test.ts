@@ -44,6 +44,8 @@ import {
   labelWidth,
   ELDER_M,
   figurePxAt,
+  figureSpread,
+  FIGURE_HALF_W,
   LEGEND_EXTRA,
   legendFor,
   maxLeaderFor,
@@ -310,6 +312,49 @@ describe('the world is life-size, and the bands are read off how big a being IS'
       // A tall window pulls further back; it never pulls IN, or the wide shot
       // would get narrower the more screen you gave it.
       expect(stop).toBeGreaterThanOrEqual(WORLD * 1.35);
+    }
+  });
+
+  /**
+   * The wheel, simulated: OrbitControls multiplies the orbit radius per notch
+   * and clamps it to `maxDistance`, and the band walks with hysteresis from
+   * wherever the camera already was. Round seven wheeled 120 notches into the
+   * stop on a maximized window and came to rest at 0.620 px — the FAR edge
+   * itself — with the strip still reading DEFAULT, so the band existed and no
+   * mouse could enter it. This is that test, at every window and aspect this
+   * view opens at: turn the wheel until it stops, and be in FAR, and STAY in
+   * FAR for another hundred notches against the stop.
+   */
+  it('reaches FAR with the WHEEL — and stays there — on every window', () => {
+    // Every shape a window is opened at, as width × height in CSS pixels —
+    // 4:3, 16:9, ultrawide, and the maximized canvas a reviewer measured.
+    const canvases: [number, number][] = [
+      [1024, 768], [1280, 720], [1366, 630], [1600, 837], [1920, 1080],
+      [2188, 914.8], [2560, 1080], [3440, 1164.75], [3840, 2160],
+    ];
+    for (const [w, h] of canvases) {
+      // The projection is a fact about the HEIGHT: a being's size on screen is
+      // its height in metres over the height of the frustum. The width is in
+      // here only to show that it never enters.
+      const perPx = (2 * Math.tan((45 * Math.PI) / 360)) / h;
+      const stop = maxOrbitDistance(perPx, WORLD * 1.35);
+      // The default camera: about seven tenths of a world span out.
+      let d = Math.min(stop, WORLD * 0.72);
+      let band = bandForPixels(figurePxAt(d, perPx));
+      let entered = -1;
+      for (let notch = 0; notch < 220; notch++) {
+        // three's `_getZoomScale`: 0.95 ^ |deltaY × 0.01| per notch, deltaY 100.
+        d = Math.min(stop, d / 0.95);
+        band = bandForPixels(figurePxAt(d, perPx), band);
+        if (band === 'far' && entered < 0) entered = notch;
+      }
+      // Entered, well before the wheel gives up — and still there at the stop,
+      // which is the half of it that the hysteresis breaks if the stop is sized
+      // for the edge rather than for the crossing.
+      expect({ w, h, band }).toEqual({ w, h, band: 'far' });
+      expect(entered).toBeGreaterThanOrEqual(0);
+      expect(entered).toBeLessThan(160);
+      expect(d).toBeCloseTo(stop, 6);
     }
   });
 
@@ -1960,6 +2005,62 @@ describe('the naming claim is one sentence, and it is the one the chip prints', 
       }
       expect(reach.within).toBe(subjects.filter((s) => s.readable && s.distance <= reach.withinM).length);
     }
+  });
+
+  /**
+   * Round seven's NEAR defect, as a property: the radius and the choice of who
+   * to name have to be measured in the SAME metres.
+   *
+   * The strip measured from the eye while the card, the roster and the naming
+   * order measured from what the camera is looking at, and on an orbit those
+   * are hundreds of metres apart — so three of five frames printed a radius
+   * with nothing readable inside it above eight drawn names, every name true
+   * and the sentence under them false. Naming nearest-first in one metric and
+   * quoting the radius in that same metric cannot produce that frame: if
+   * anything readable was named, something readable is inside.
+   */
+  it('prints a radius that contains names, whenever names were placed nearest-first', () => {
+    for (let seed = 1; seed <= 200; seed++) {
+      const next = rng(seed);
+      const budget = 4 + Math.floor(next() * 14);
+      const people = [];
+      for (let i = 0; i < 60; i++) people.push({ distance: next() * 40, readable: next() > 0.2 });
+      // The budgeter's own order, in the distance the claim is made in.
+      const order = people.filter((p) => p.readable).sort((a, b) => a.distance - b.distance);
+      const named = new Set(order.slice(0, budget));
+      const subjects = people.map((p) => ({ ...p, named: named.has(p) }));
+      const reach = nameRadius(subjects, 25);
+      const shown = subjects.filter((s) => s.named).length;
+      if (shown === 0) continue;
+      // A radius with names drawn over it holds at least one of them — the
+      // reading a reviewer takes off the picture and the strip together.
+      expect(reach.within).toBeGreaterThan(0);
+      expect(reach.within).toBeLessThanOrEqual(shown);
+      for (const s of subjects) {
+        if (s.readable && s.distance <= reach.withinM) expect(s.named).toBe(true);
+      }
+    }
+  });
+
+  it('bounds a figure by what was DRAWN, lean and all', () => {
+    // The upright figure, and the poses the view actually puts them in: a
+    // worker swinging at something is half a radian forward, and a box that
+    // ignores it leaves a third of that body outside itself — which is where
+    // two "visible" beings with somebody else drawn over them came from.
+    expect(figureSpread(0, false)).toBeCloseTo(FIGURE_HALF_W, 6);
+    expect(figureSpread(0.52, false)).toBeGreaterThan(figureSpread(0.07, false));
+    expect(figureSpread(0.9, true)).toBe(0.52); // laid out flat: width is height
+    // Monotone in the lean, and never narrower than standing straight.
+    let last = 0;
+    for (let lean = 0; lean <= 1.2; lean += 0.05) {
+      const s = figureSpread(lean, false);
+      expect(s).toBeGreaterThanOrEqual(FIGURE_HALF_W);
+      expect(s).toBeGreaterThanOrEqual(last);
+      last = s;
+    }
+    // A lean back is as wide as a lean forward — the sign is a direction, not
+    // a size.
+    expect(figureSpread(-0.4, false)).toBeCloseTo(figureSpread(0.4, false), 6);
   });
 
   it('caps a badge against the figure it belongs to, at any marker size', () => {

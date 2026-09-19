@@ -138,8 +138,18 @@ export function distanceForFigurePx(px: number, worldPerPx: number): number {
   return ADULT_M / Math.max(1e-9, px * worldPerPx);
 }
 
-/** Room past the FAR edge, so the band is somewhere to BE and not a hairline. */
-const FAR_HEADROOM = 1.3;
+/**
+ * Room past the FAR edge, so the band is somewhere to BE and not a hairline.
+ *
+ * It has to swallow TWO margins, not one. Entering FAR from DEFAULT costs the
+ * hysteresis step — `BAND_EDGE_PX[0] × (1 − BAND_HYSTERESIS)` — and a camera
+ * that lands exactly there has entered a band it leaves again on the next
+ * rounding. Round seven's reviewer wheeled 120 notches into the stop and stayed
+ * in DEFAULT at 0.620 px, which is the edge itself. So the stop is placed a
+ * further half-band past the crossing: at 1.5 a being is 0.38 px at the stop,
+ * comfortably under the 0.577 px entry and nowhere near the 0.663 px exit.
+ */
+const FAR_HEADROOM = 1.5;
 
 /**
  * How far the orbit is allowed to pull back — stated in the same terms as the
@@ -157,6 +167,13 @@ const FAR_HEADROOM = 1.3;
  * comfortably under the FAR edge INCLUDING the hysteresis it has to cross, with
  * headroom, and never nearer than the old span-based reach on a small window.
  * `floor` keeps the wide shot at least as wide as it has always been.
+ *
+ * Round seven found the other half of it: this number is only as live as the
+ * `worldPerPx` it was computed from. Derived once, on a resize, it is a claim
+ * about a canvas that may no longer be the one on screen — so the view now
+ * re-derives it every frame, from the projection it is actually drawing with,
+ * and `cameraReport()` prints both so the stop can be checked rather than
+ * argued about.
  */
 export function maxOrbitDistance(worldPerPx: number, floor: number): number {
   const enterFar = distanceForFigurePx(BAND_EDGE_PX[0]! * (1 - BAND_HYSTERESIS), worldPerPx);
@@ -683,6 +700,29 @@ export const STAGE_FORM: StageForm[] = [
 
 export function stageForm(stage: number): StageForm {
   return STAGE_FORM[stage] ?? STAGE_FORM[STAGE_ADULT]!;
+}
+
+/**
+ * How far a drawn figure reaches SIDEWAYS from its own axis, as a fraction of
+ * its height — the box that bounds the silhouette actually on screen.
+ *
+ * It exists because "who is drawn where this being is" has to be decidable by
+ * arithmetic. The picker answers it with a ray against the real mesh; the cover
+ * rule answers it with a box, and the two disagree exactly where the box is
+ * narrower than the figure. A being standing straight is about a fifth as wide
+ * as it is tall — but the view LEANS them: a worker swings forward past half a
+ * radian and someone resting is laid out flat, and a upright-only box leaves a
+ * third of that body outside itself. Round seven's two residual "offered but
+ * the picker returns somebody else" beings were both in that gap.
+ *
+ * `lean` is the pitch `writeMarkers` actually wrote this frame, so there is no
+ * table here to drift out of step with the drawing.
+ */
+export const FIGURE_HALF_W = 0.21;
+
+export function figureSpread(lean: number, lying: boolean): number {
+  if (lying) return 0.52;
+  return FIGURE_HALF_W + Math.abs(Math.sin(lean)) * 0.62;
 }
 
 /**

@@ -651,7 +651,14 @@ describe('a pick offers what is drawn at that pixel', () => {
  */
 describe('the probes do not offer a being somebody else is standing in front of', () => {
   const box = (id: number, x: number, y: number, depth: number, w = 20, h = 60): BodyBox =>
-    ({ id, x, y, x0: x - w / 2, y0: y - h / 2, x1: x + w / 2, y1: y + h / 2, depth });
+    ({
+      id, x, y, x0: x - w / 2, y0: y - h / 2, x1: x + w / 2, y1: y + h / 2, depth,
+      mx: x, my: y, mr: 0, hasBody: true,
+    });
+
+  /** A being drawn too small to be a figure: its mark is all there is of it. */
+  const pin = (id: number, x: number, y: number, depth: number, r = 11): BodyBox =>
+    ({ id, x, y, x0: x, y0: y, x1: x, y1: y, depth, mx: x, my: y, mr: r, hasBody: false });
 
   it('names whoever is in front at the very point the view reports', () => {
     const boxes = [box(1, 100, 100, 30), box(2, 104, 104, 12)];
@@ -735,5 +742,38 @@ describe('the probes do not offer a being somebody else is standing in front of'
     const boxes = [box(1, 100, 100, 30), box(2, 110, 100, 10, 20, 60)];
     expect(coveringBody(boxes, 1)).toBe(2); // 100 is the left edge of #2
     expect(coveringBody([box(1, 100, 100, 30), box(2, 111, 100, 10, 20, 60)], 1)).toBeNull();
+  });
+
+  /**
+   * Round seven's residual: two beings of a hundred and one still offered while
+   * `pickAtScreen` at their own reported point answered somebody else. A being
+   * is drawn as a body AND as a mark, and out where the body is a few pixels
+   * the mark is the whole of it — which is the layer the picker then decides on
+   * by depth.
+   */
+  it('covers a mark-only being standing under somebody else s pin', () => {
+    const boxes = [pin(1, 100, 100, 30), pin(2, 104, 103, 12)];
+    expect(coveringBody(boxes, 1)).toBe(2);
+    expect(coveringBody(boxes, 2)).toBeNull();
+    // Just outside the front mark's disc is still two pins a reader can tell
+    // apart, which is what the FAR and DEFAULT counts are made of.
+    expect(coveringBody([pin(1, 100, 100, 30), pin(2, 112, 100, 12)], 1)).toBeNull();
+  });
+
+  it('never lets a MARK cover a being that has a figure of its own', () => {
+    // The picker offers a body before any mark, whatever the depths: a ring
+    // drawn round somebody's feet does not stop them being pointable. Marks
+    // overlap constantly in a settlement, and treating that as cover would
+    // empty `visibleIds()` of most of a crowd.
+    const boxes = [box(1, 100, 100, 30), pin(2, 100, 100, 5, 40)];
+    expect(coveringBody(boxes, 1)).toBeNull();
+  });
+
+  it('still resolves a stack of pins to exactly one', () => {
+    const boxes = [pin(1, 100, 100, 20), pin(2, 101, 101, 21), pin(3, 99, 102, 22)];
+    const cover = coveringBodies(boxes);
+    expect([...boxes].filter((b) => !cover.has(b.id))).toHaveLength(1);
+    expect(cover.get(2)).toBe(1);
+    expect(cover.get(3)).toBe(1);
   });
 });

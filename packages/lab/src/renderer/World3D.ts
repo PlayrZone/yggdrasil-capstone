@@ -42,6 +42,8 @@ import {
   ADULT_M,
   annotationOpacity,
   annotationRadius,
+  BAND_EDGE_PX,
+  BAND_HYSTERESIS,
   bandCountsBeings,
   bandForPixels,
   bandPromise,
@@ -56,6 +58,7 @@ import {
   conditionWord,
   describeState,
   displayName,
+  figureSpread,
   focusShiftPx,
   headingOctant,
   HUE_WELL,
@@ -343,6 +346,18 @@ const PICTO_MIN_BODY_PX = DETAIL_MIN_PX;
 const MIX_SEGMENTS = 4;
 const CLUSTER_CELL_MARKERS = 1.25;
 const CLUSTER_MIN = 3;
+
+/**
+ * How many people have to be piled inside one building before the building
+ * speaks for them — and how many buildings may do so in one frame.
+ *
+ * Three is where a hut stops being a picture of people and becomes a knot: two
+ * overlapping rings are still two rings. The cap is there because every chip
+ * costs an outline node, and a frame that spent all of them on huts would have
+ * none left for the crowds outside. See `planInside`.
+ */
+const INSIDE_MIN = 3;
+const INSIDE_CHIPS_MAX = 8;
 
 /** Half the height of a count chip, in CSS pixels, and the air around it. */
 const CHIP_HALF_H = 9;
@@ -874,6 +889,8 @@ interface FadeUniforms {
   uThickY: { value: number };
   /** Where the THING's middle is above this mesh's own instance anchor. */
   uCentreY: { value: number };
+  /** How much opacity a ghosted surface keeps where it turns away from the eye. */
+  uRim: { value: number };
   /** How many of `uSubject` are live this frame. */
   uSubjectN: { value: number };
   /** View-space x, y, z, radius per being the reader is looking at. */
@@ -923,6 +940,7 @@ function applyGhostFade(
   thick = 3.3,
   thickY = 4.6,
   centreY = 0,
+  rim = 0,
 ): void {
   // Mostly-opaque instances that occasionally blend. depthWrite stays ON: each
   // mesh is one object to the sorter, so the trees behind a tree are settled by
@@ -940,6 +958,7 @@ function applyGhostFade(
       uThick: { value: thick },
       uThickY: { value: thickY },
       uCentreY: { value: centreY },
+      uRim: { value: rim },
       uSubjectN: { value: 0 },
       uSubject: { value: subjects },
     };
@@ -958,6 +977,7 @@ function applyGhostFade(
         uniform float uThick;
         uniform float uThickY;
         uniform float uCentreY;
+        uniform float uRim;
         uniform int uSubjectN;
         uniform vec4 uSubject[${SUBJECT_SLOTS}];
         varying float vGhostA;`,
@@ -1001,7 +1021,21 @@ function applyGhostFade(
           }
           float sel = uSelR > 0.0 ? 1.0 - smoothstep(uSelR * 0.55, uSelR * 1.6, distance(fadeWorld, uSel)) : 0.0;
           float g = max(block, sel);
-          vGhostA = min(mix(uFadeFloor, 1.0, lens), mix(1.0, uGhostFloor, g));
+          // A ghosted BUILDING keeps its edges. A hut faded evenly to a fifth
+          // is a glass vitrine — a reviewer's word — with grey slabs in it and
+          // no doorway: the one object in the frame that does not read as what
+          // it is. So the surfaces turned away from the eye hold their opacity
+          // while the flat panels drop, which leaves the silhouette, the eaves,
+          // the ridge and the jambs of the door drawn, and lets the people
+          // inside show through the walls exactly as before. Off (uRim = 0) for
+          // foliage: a tree's edge is not a frame, it is more tree.
+          float floorA = uGhostFloor;
+          if (uRim > 0.0) {
+            vec4 rimView = modelViewMatrix * instanceMatrix * vec4(transformed, 1.0);
+            float grazing = 1.0 - abs(dot(normalize(transformedNormal), normalize(-rimView.xyz)));
+            floorA = clamp(uGhostFloor + uRim * smoothstep(0.30, 0.90, grazing), 0.0, 1.0);
+          }
+          vGhostA = min(mix(uFadeFloor, 1.0, lens), mix(1.0, floorA, g));
         }`,
       );
     shader.fragmentShader = shader.fragmentShader
@@ -1159,6 +1193,15 @@ export class World3D {
    * badges in a vertical column over three bodies.
    */
   private beingPictoClear = new Uint8Array(0);
+  /**
+   * 1 while this being is standing inside a structure whose OCCUPANTS chip is
+   * carrying its ring — see `planInside`. Its body is still drawn, through the
+   * ghost; what it loses is the ring, the badge and the arrow that turned six
+   * people in a hut into one scribble of tangled hoops.
+   */
+  private beingInside = new Uint8Array(0);
+  /** The forward pitch `writeMarkers` actually drew this being at, in radians. */
+  private beingLean = new Float32Array(0);
   /** How many beings in frame drew a mark of their own — the countable term. */
   private pinsDrawn = 0;
   private instanceCount = 0;
@@ -1333,6 +1376,14 @@ export class World3D {
   private readonly screenPoints: ScreenPoint[] = [];
   /** `screenPoints[k]` is being `screenIndex[k]` in the per-frame arrays. */
   private readonly screenIndex: number[] = [];
+  /** Where the same being's FEET landed, so a body box is measured, not inferred. */
+  private readonly screenFootY: number[] = [];
+  /** Whether any being's mark is being carried by a structure's chip this frame. */
+  private insideAny = false;
+  /** How many of the leading clusters are OCCUPANTS chips — see `planInside`. */
+  private insideCount = 0;
+  /** Where each of those hangs, in scene units: over its own building's ridge. */
+  private readonly insideAnchors: number[] = [];
   private clusters: Cluster[] = [];
   /** The leader from a chip back to the outline it counts. */
   private readonly chipLeadNodes: HTMLElement[] = [];
@@ -1376,6 +1427,8 @@ export class World3D {
   private readonly scout = new THREE.PerspectiveCamera(45, 1, 0.25, 1);
   private readonly ndc = new THREE.Vector2();
   private readonly probe = new THREE.Vector3();
+  /** The ground under the camera's target — the one point distances are quoted from. */
+  private readonly aimPoint = new THREE.Vector3();
   private readonly focusTarget = new THREE.Vector3();
   private ro: ResizeObserver | null = null;
   private downX = 0;
@@ -1389,6 +1442,9 @@ export class World3D {
   private hiddenWildlife = 0;
   /** World units per CSS pixel at one unit of distance — the marker-size maths. */
   private worldPerPx = 0.002;
+  /** The canvas size the projection above was derived from — see `syncProjection`. */
+  private viewW = 0;
+  private viewH = 0;
   private readonly onPointerDown: (e: PointerEvent) => void;
   private readonly onPointerUp: (e: PointerEvent) => void;
   private readonly onPointerMove: (e: PointerEvent) => void;
@@ -2360,6 +2416,8 @@ export class World3D {
     this.beingOnScreen = new Uint8Array(cap);
     this.beingMarkClear = new Uint8Array(cap);
     this.beingPictoClear = new Uint8Array(cap);
+    this.beingInside = new Uint8Array(cap);
+    this.beingLean = new Float32Array(cap);
     this.stageIds = [new Int32Array(cap), new Int32Array(cap), new Int32Array(cap)];
     for (let bucket = 0; bucket < RING_BUCKETS; bucket++) {
       const mesh = this.ringMeshes[bucket];
@@ -2730,6 +2788,14 @@ export class World3D {
    * world for it. Cheap: one distance per being.
    */
   private sizeMarkers(): void {
+    // The orbit's far stop, re-derived from the projection being drawn with
+    // RIGHT NOW. It used to be set on resize, which is one frame's worth of
+    // truth about a number that has to hold for every frame after it: a
+    // reviewer wheeled 120 notches into a stop sized for a canvas that was no
+    // longer there and came to rest at 0.620 px — the FAR edge itself — with
+    // the band still reading DEFAULT. Two lines a frame, and the widest
+    // contract this view has is reachable by mouse on any window.
+    this.controls.maxDistance = maxOrbitDistance(this.worldPerPx, WORLD * 1.35);
     const distance = this.camera.position.distanceTo(this.controls.target);
     this.bandPx = figurePxAt(distance, this.worldPerPx);
     this.band = bandForPixels(this.bandPx, this.band);
@@ -2784,8 +2850,10 @@ export class World3D {
       const i = this.screenIndex[k]!;
       // A being a crowd chip has already counted draws nothing at all, so it
       // cannot have a mark misattributed to it and must not suppress its
-      // neighbours' either.
-      if (this.isCollapsed(i)) continue;
+      // neighbours' either. Nor can a being whose mark its building is
+      // carrying — and it must not be counted among the marks "too close to
+      // mark", which is a statement about marks that were drawn.
+      if (this.isCollapsed(i) || this.beingInside[i] === 1) continue;
       const p = this.screenPoints[k]!;
       points.push({ x: p.x, y: p.y, r: this.markRadiusOf(i) });
       index.push(i);
@@ -2910,6 +2978,7 @@ export class World3D {
       const surface = this.beingPos[i * 3 + 1]!;
       const sz = this.beingPos[i * 3 + 2]!;
       const mark = this.beingMark[i]!;
+      this.beingLean[i] = 0;
       // `mark` is the MAP's unit here, not a size for the being: everything
       // drawn on the ground is measured in it, and the being itself is
       // measured in metres and never in this.
@@ -2973,22 +3042,31 @@ export class World3D {
       // the arrow is dropped from the geometry rather than drawn where a reader
       // would have to guess whose it is.
       const clear = this.beingMarkClear[i] === 1;
-      const bucket = ringBucket(ringStyleFor(cond, act), stageCore(stage, this.band), clear);
-      const ringMesh = this.ringMeshes[bucket]!;
-      const ringAt = this.ringCount[bucket]!;
-      this.ringCount[bucket] = ringAt + 1;
-      const r = deco * RING_R * stageFootprint(stage, this.band);
-      this.basis.makeBasis(this.right, this.up, this.fwd);
-      this.basis.scale(this.dummy.scale.setScalar(r));
-      this.basis.setPosition(sx + this.up.x * r * 0.09, surface + this.up.y * r * 0.09, sz + this.up.z * r * 0.09);
-      ringMesh.setMatrixAt(ringAt, this.basis);
-      ringMesh.setColorAt(ringAt, this.color.setHex(ringHue));
-      this.ringDim[bucket]?.setX(ringAt, dim);
+      // Inside a hut, the ring is the hut's chip's business. Six to eleven
+      // people in one shelter drew six to eleven cream hoops through each
+      // other's, through the ghosted walls, and the result was a white scribble
+      // a reviewer could neither count nor separate. The BODIES stay — nothing
+      // is ever hidden — and the chip over the roof carries how many and in
+      // what state. See `planInside`.
+      const inside = this.beingInside[i] === 1;
+      if (!inside) {
+        const bucket = ringBucket(ringStyleFor(cond, act), stageCore(stage, this.band), clear);
+        const ringMesh = this.ringMeshes[bucket]!;
+        const ringAt = this.ringCount[bucket]!;
+        this.ringCount[bucket] = ringAt + 1;
+        const r = deco * RING_R * stageFootprint(stage, this.band);
+        this.basis.makeBasis(this.right, this.up, this.fwd);
+        this.basis.scale(this.dummy.scale.setScalar(r));
+        this.basis.setPosition(sx + this.up.x * r * 0.09, surface + this.up.y * r * 0.09, sz + this.up.z * r * 0.09);
+        ringMesh.setMatrixAt(ringAt, this.basis);
+        ringMesh.setColorAt(ringAt, this.color.setHex(ringHue));
+        this.ringDim[bucket]?.setX(ringAt, dim);
 
-      if (detail && movingFor(act)) {
-        trails.setMatrixAt(trailAt, this.basis);
-        trails.setColorAt(trailAt, this.color.setHex(ringHue).multiplyScalar(dim));
-        trailAt++;
+        if (detail && movingFor(act)) {
+          trails.setMatrixAt(trailAt, this.basis);
+          trails.setColorAt(trailAt, this.color.setHex(ringHue).multiplyScalar(dim));
+          trailAt++;
+        }
       }
 
       // Bodies move, and the movement is a second reading of the act: walking
@@ -3024,6 +3102,10 @@ export class World3D {
       } else if (act === ACT_SOCIAL) {
         roll = Math.sin(phase * 0.7) * 0.05; // turned toward whoever is listening
       }
+      // The pitch as DRAWN, kept for the box that has to bound this silhouette
+      // — see `figureSpread`. A table of leans beside this one would drift out
+      // of step with it the first time an act was re-posed.
+      this.beingLean[i] = lean;
       this.dummy.position.set(sx, surface + bob, sz);
       this.dummy.rotation.set(lean, heading, roll);
       this.dummy.scale.setScalar(height);
@@ -3036,7 +3118,7 @@ export class World3D {
       // unless it is lifted to meet it.
       mesh.setColorAt(at, this.color.setHex(bodyTint(hue)).multiplyScalar(match ? 1.45 : 1.45 * DIM_BODY));
 
-      if (!detail) continue;
+      if (!detail || inside) continue;
       // In a crowd, no pictogram either — and for the same reason as the
       // arrow. Round five's activity score was 38% and nearly every miss was a
       // chip read off the wrong body. The roster and the hover card answer
@@ -3293,11 +3375,13 @@ export class World3D {
           existing.geometry.dispose();
         }
         // A shelter somebody is standing in, or behind, is as much of a wall as
-        // a tree is, and it clears on the same rule — by going to a fifth of
-        // its opacity, at exactly the size it has always been, with its
-        // footprint left drawn on the ground.
+        // a tree is, and it clears on the same rule — at exactly the size it
+        // has always been, with its footprint left drawn on the ground. Two
+        // fifths rather than a fifth, and its edges kept (`uRim`), because a
+        // building that ghosts to a featureless pane stops reading as a
+        // building — see the rim term in `applyGhostFade`.
         const material = structureMaterial(kind);
-        applyGhostFade(material, this.foliageFades, this.subjects, 3.5, 11, 0.25, 0.22, 3.1, 2.3, 2.2);
+        applyGhostFade(material, this.foliageFades, this.subjects, 3.5, 11, 0.25, 0.38, 3.1, 2.3, 2.2, 0.45);
         const mesh = new THREE.InstancedMesh(structureGeometry(kind), material, capacityFor(n));
         mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
         this.structureMeshes.set(kind, mesh);
@@ -3528,7 +3612,8 @@ export class World3D {
   markAudit(): { drawn: number; held: number; clear: number } {
     let drawn = 0;
     for (let k = 0; k < this.screenPoints.length; k++) {
-      if (!this.isCollapsed(this.screenIndex[k]!)) drawn++;
+      const i = this.screenIndex[k]!;
+      if (!this.isCollapsed(i) && this.beingInside[i] !== 1) drawn++;
     }
     return { drawn, held: this.marksHeld, clear: drawn - this.marksHeld };
   }
@@ -3542,7 +3627,10 @@ export class World3D {
     const out: { id: number; x: number; y: number; r: number; clear: boolean }[] = [];
     for (let k = 0; k < this.screenPoints.length; k++) {
       const i = this.screenIndex[k]!;
-      if (this.isCollapsed(i)) continue;
+      // Only marks that were DRAWN: a being inside a building has none — its
+      // count is in the chip over the roof — and listing one here would be the
+      // array claiming ink that is not on the screen.
+      if (this.isCollapsed(i) || this.beingInside[i] === 1) continue;
       const p = this.screenPoints[k]!;
       out.push({ id: p.id, x: p.x, y: p.y, r: this.markRadiusOf(i), clear: this.beingMarkClear[i] === 1 });
     }
@@ -3826,6 +3914,21 @@ export class World3D {
     const id = this.hoveredId !== null && this.indexOf(this.hoveredId) >= 0
       ? this.hoveredId
       : this.pick(e.clientX, e.clientY);
+    this.choose(id);
+  }
+
+  /**
+   * Choosing a being, in the two lines a CLICK runs — the view marks it and the
+   * shell is told, in that order.
+   *
+   * `ui.select` goes through here rather than reassembling the same steps
+   * beside it. Round seven's driver did the latter and ended with the inspector
+   * open on a specimen and no row marked in the roster, while a real click on
+   * the same being kept both: two spellings of one action, and only one of them
+   * tested. A driver surface that does not exercise the real path is a surface
+   * that can pass while the product is broken.
+   */
+  choose(id: number | null): void {
     this.setSelected(id);
     this.onSelect?.(id);
   }
@@ -3875,26 +3978,80 @@ export class World3D {
   }
 
   /**
+   * Where this being's ground MARK is centred, in scene units — the exact point
+   * `writeMarkers` puts the ring or the dot at, lift along the ground's own
+   * normal included.
+   *
+   * One point, written once. Round seven had three of them: the probe projected
+   * the body's mid-height, the audit binned a point half a mark-radius above the
+   * ground, and the ink was drawn at the ground itself — 11.3 px apart on
+   * average, enough to file 8.6% of a frame's beings in the wrong quadrant from
+   * the very probe the docs point a driver at.
+   */
+  private markAnchor(i: number, out: THREE.Vector3): THREE.Vector3 {
+    const mark = this.beingMark[i]!;
+    const lift = bandShowsBodies(this.band)
+      ? mark * RING_R * stageFootprint(this.beingStage[i]!, this.band) * 0.09
+      : mark * DOT_R * 0.2;
+    return out.set(
+      this.beingPos[i * 3]! + this.beingNormal[i * 3]! * lift,
+      this.beingPos[i * 3 + 1]! + this.beingNormal[i * 3 + 1]! * lift,
+      this.beingPos[i * 3 + 2]! + this.beingNormal[i * 3 + 2]! * lift,
+    );
+  }
+
+  /**
    * Project every drawn being to the canvas, keeping the ones actually in
    * frame. Everything that ranks, counts or labels a being reads this, so the
    * view can never report something it did not draw where it says it drew it.
+   *
+   * The point is the MARK's, because the mark is what is drawn for a being in
+   * every band that draws one, and `screenPositionOf` returns this same array
+   * entry. Where a hut's chip has taken a being's ring away, `reprojectInside`
+   * moves that entry onto the body instead — the drawn thing, whichever it is.
+   * The feet are kept beside it: a body box is measured up from the ground, and
+   * deriving the ground back out of the mark by arithmetic is how two of these
+   * points drifted apart in the first place.
    */
   private projectBeings(): void {
     this.screenPoints.length = 0;
     this.screenIndex.length = 0;
+    this.screenFootY.length = 0;
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
     this.beingOnScreen.fill(0, 0, this.instanceCount);
     for (let i = 0; i < this.instanceCount; i++) {
-      this.probe.set(this.beingPos[i * 3]!, this.beingPos[i * 3 + 1]! + this.beingMark[i]! * 0.5, this.beingPos[i * 3 + 2]!);
-      this.probe.project(this.camera);
+      this.markAnchor(i, this.probe).project(this.camera);
       if (this.probe.z > 1) continue; // behind the camera
       const px = ((this.probe.x + 1) / 2) * w;
       const py = ((1 - this.probe.y) / 2) * h;
       if (px < 0 || px > w || py < 0 || py > h) continue;
+      this.probe.set(this.beingPos[i * 3]!, this.beingPos[i * 3 + 1]!, this.beingPos[i * 3 + 2]!).project(this.camera);
       this.beingOnScreen[i] = 1;
       this.screenPoints.push({ id: this.ids[i]!, x: px, y: py });
+      this.screenFootY.push(((1 - this.probe.y) / 2) * h);
       this.screenIndex.push(i);
+    }
+    // The points the last plan moved onto bodies stay on bodies until the plan
+    // changes — the flags here are the ones `writeMarkers` is about to draw by.
+    this.reprojectInside();
+  }
+
+  /**
+   * Move the reported point onto the BODY for every being whose mark a hut's
+   * chip is now carrying — run once the inside groups are known, before
+   * anything reads the points.
+   */
+  private reprojectInside(): void {
+    if (!this.insideAny) return;
+    const h = this.canvas.clientHeight;
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const i = this.screenIndex[k]!;
+      if (this.beingInside[i] !== 1) continue;
+      const mid = (this.beingPos[i * 3 + 1]! + this.beingTop[i]!) * 0.5;
+      this.probe.set(this.beingPos[i * 3]!, mid, this.beingPos[i * 3 + 2]!).project(this.camera);
+      if (this.probe.z > 1) continue;
+      this.screenPoints[k]!.y = ((1 - this.probe.y) / 2) * h;
     }
   }
 
@@ -3922,28 +4079,18 @@ export class World3D {
    * that counts them and are not drawn at all, and `countAudit()` reports the
    * two terms so the arithmetic can be checked against the picture.
    *
-   * At NEAR there are no chips. Standing in the street, a number floating over
-   * six visible people is answering a question nobody at that distance is
-   * asking, and the band's own contract says to pull back to count.
+   * At NEAR there are no crowd chips. Standing in the street, a number floating
+   * over six visible people is answering a question nobody at that distance is
+   * asking, and the band's own contract says to pull back to count. The one
+   * exception is a chip that is not about a crowd at all: the people INSIDE a
+   * building, whose rings a ghosted wall turns into a scribble in both close
+   * bands — see `planInside`.
    */
   private updateCrowds(now: number): void {
     if (this.hullNodes.length === 0) return;
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
     const collapses = bandCountsBeings(this.band);
-    if (this.band === 'near') {
-      if (this.clusters.length > 0) {
-        this.clusters = [];
-        this.clusterIds = [];
-        for (const node of this.hullNodes) node.style.display = 'none';
-        for (const node of this.countNodes) node.style.display = 'none';
-        for (const node of this.chipLeadNodes) node.style.display = 'none';
-      }
-      this.beingCrowded.fill(0, 0, this.instanceCount);
-      this.chipRects.length = 0;
-      this.pinRects.length = 0;
-      return;
-    }
     // Ten times a second is enough while the camera is still; while it is NOT,
     // the grouping has to be redone in the same frame as the projection it is
     // built from, or for a tenth of a second the view draws pins inside hulls
@@ -3951,6 +4098,11 @@ export class World3D {
     // would report an arithmetic that does not close.
     if (now - this.lastCluster > 90 || (collapses && (this.camMoving || this.crowdsStrayed(w, h)))) {
       this.lastCluster = now;
+      // The huts first: whoever they take is out of the crowd grouping below,
+      // and their chips are the ones that must survive the budget, because a
+      // being whose ring has been taken away and whose chip was dropped is a
+      // being in neither term.
+      const housed = this.planInside();
       if (collapses) {
         // One PIN wide, so two marks that could touch are always in the same
         // group — that is what makes "no two pins a reader counts separately
@@ -3958,6 +4110,9 @@ export class World3D {
         // FRAME is passed in, so no chip spans the lines a reader counts
         // across: a quadrant count is the same arithmetic as a whole-frame one.
         this.clusters = planCount(this.screenPoints, this.annotationPixels(), CLUSTER_BUDGET, { w, h }).chips;
+      } else if (this.band === 'near') {
+        // No crowd grouping in the street — only the huts.
+        this.clusters = [];
       } else {
         this.clusters = clusterHierarchy(
           this.screenPoints,
@@ -3967,10 +4122,27 @@ export class World3D {
           Math.min(w, h) / 6,
         );
       }
+      // A being the hut's chip is already speaking for is not also a member of
+      // a crowd: two chips over one knot was exactly what a reviewer found.
+      if (housed.length > 0) {
+        for (const cl of this.clusters) {
+          const keep = cl.members.filter((m) => this.beingInside[this.screenIndex[m]!] !== 1);
+          if (keep.length !== cl.members.length) {
+            cl.count -= cl.members.length - keep.length;
+            cl.members = keep;
+          }
+        }
+        this.clusters = housed.concat(this.clusters.filter((cl) => cl.count >= 2));
+      }
       // Never more groups than there are outlines to draw them with. A cluster
       // past the last node would suppress its members' pins and then draw no
       // number for them — beings in neither term of the count.
-      if (this.clusters.length > this.hullNodes.length) this.clusters.length = this.hullNodes.length;
+      if (this.clusters.length > this.hullNodes.length) {
+        for (let c = this.hullNodes.length; c < this.clusters.length; c++) {
+          for (const m of this.clusters[c]!.members) this.beingInside[this.screenIndex[m]!] = 0;
+        }
+        this.clusters.length = this.hullNodes.length;
+      }
       // Each group is anchored in the WORLD, so its outline follows the orbit
       // smoothly between the ten times a second the grouping itself is redone.
       this.beingCrowded.fill(0, 0, this.instanceCount);
@@ -4010,14 +4182,21 @@ export class World3D {
         }
         this.clusterIds[c] = ids;
         const n = cl.members.length;
-        this.clusterWorld[c * 4] = cx / n;
-        this.clusterWorld[c * 4 + 1] = cy / n;
-        this.clusterWorld[c * 4 + 2] = cz / n;
-        this.clusterWorld[c * 4 + 3] = this.camera.position.distanceTo(
-          this.probe.set(cx / n, cy / n, cz / n),
-        );
+        // An occupants chip hangs on the BUILDING — over its ridge, where a
+        // reader is already looking — not on the centroid of the people inside
+        // it, which is the middle of the hut and under the roof.
+        const house = c < this.insideCount ? c * 3 : -1;
+        const ax = house >= 0 ? this.insideAnchors[house]! : cx / n;
+        const ay = house >= 0 ? this.insideAnchors[house + 1]! : cy / n;
+        const az = house >= 0 ? this.insideAnchors[house + 2]! : cz / n;
+        this.clusterWorld[c * 4] = ax;
+        this.clusterWorld[c * 4 + 1] = ay;
+        this.clusterWorld[c * 4 + 2] = az;
+        this.clusterWorld[c * 4 + 3] = this.camera.position.distanceTo(this.probe.set(ax, ay, az));
       }
       this.clusterIds.length = this.clusters.length;
+      this.insideAny = this.insideCount > 0;
+      this.reprojectInside();
     }
 
     this.chipRects.length = 0;
@@ -4063,6 +4242,99 @@ export class World3D {
       if (parts) this.paintChip(parts, cl);
       this.placeChip(c, count, lead, px, py, rx, ry, text.length * 3.5 + 7, w, h, cl.region);
     }
+  }
+
+  /**
+   * The people INSIDE a building, as one chip on the building.
+   *
+   * A hut with six to eleven beings in it is the worst object this view draws.
+   * The walls ghost out so nobody is hidden — that promise holds and must keep
+   * holding — but what is left is six cream rings, six badges and six arrows
+   * threaded through each other and through a translucent roof, which a
+   * reviewer called "one white cloud of tangled rings" and could neither count
+   * nor separate. Nothing was hidden and nothing was legible either.
+   *
+   * So a structure that is holding a pile of people speaks for them: their
+   * rings, badges and arrows come off, their BODIES stay exactly where they are
+   * (visible through the ghost, which is the promise), and one chip sits over
+   * the ridge with the count and the same condition-mix bar every crowd chip
+   * carries. Hovering it lists the occupants; clicking it frames them. The
+   * chips are ordinary clusters, so `chipSummary`, `chipsOnScreen` and
+   * `zoomToCluster` all answer about them without a second code path.
+   *
+   * Only where the pile is real: at least `INSIDE_MIN` of the occupants have a
+   * neighbour whose mark overlaps theirs. Three people standing apart in a big
+   * hut are three readable beings and keep their marks. The selected being
+   * always keeps its own — it is the one promise every band makes.
+   */
+  private planInside(): Cluster[] {
+    this.insideCount = 0;
+    this.beingInside.fill(0, 0, this.instanceCount);
+    this.insideAny = false;
+    // The close bands only. Out where a being is a pin, the crowd chips already
+    // own this problem and a hut is a few pixels of roof.
+    if (!bandShowsDetail(this.band)) return [];
+    const out: Cluster[] = [];
+    const reach = SHELTER_FOOTPRINT / 2 + 0.5;
+    for (let s = 0; s < this.structures.length && out.length < INSIDE_CHIPS_MAX; s++) {
+      if (this.structures[s]!.kind !== 'shelter') continue;
+      const hx = this.structureAt[s * 3]!;
+      const hy = this.structureAt[s * 3 + 1]!;
+      const hz = this.structureAt[s * 3 + 2]!;
+      const members: number[] = [];
+      for (let k = 0; k < this.screenPoints.length; k++) {
+        const i = this.screenIndex[k]!;
+        const id = this.ids[i]!;
+        if (id === this.selectedId || isSpecimenId(id)) continue;
+        const by = this.beingPos[i * 3 + 1]!;
+        if (by < hy - 1.5 || by > hy + SHELTER.ridge) continue;
+        const dx = this.beingPos[i * 3]! - hx;
+        const dz = this.beingPos[i * 3 + 2]! - hz;
+        if (dx * dx + dz * dz > reach * reach) continue;
+        members.push(k);
+      }
+      if (members.length < INSIDE_MIN) continue;
+      let piled = 0;
+      for (let a = 0; a < members.length; a++) {
+        const pa = this.screenPoints[members[a]!]!;
+        const ra = this.markRadiusOf(this.screenIndex[members[a]!]!);
+        for (let b = 0; b < members.length; b++) {
+          if (a === b) continue;
+          const pb = this.screenPoints[members[b]!]!;
+          const rb = this.markRadiusOf(this.screenIndex[members[b]!]!);
+          if (Math.hypot(pa.x - pb.x, pa.y - pb.y) < (ra + rb) * 0.95) { piled++; break; }
+        }
+      }
+      if (piled < INSIDE_MIN) continue;
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      for (const m of members) {
+        const p = this.screenPoints[m]!;
+        const r = this.markRadiusOf(this.screenIndex[m]!);
+        x0 = Math.min(x0, p.x - r);
+        y0 = Math.min(y0, p.y - r);
+        x1 = Math.max(x1, p.x + r);
+        y1 = Math.max(y1, p.y + r);
+        this.beingInside[this.screenIndex[m]!] = 1;
+      }
+      this.insideAnchors[out.length * 3] = hx;
+      this.insideAnchors[out.length * 3 + 1] = hy + SHELTER.ridge * 0.92;
+      this.insideAnchors[out.length * 3 + 2] = hz;
+      out.push({
+        count: members.length,
+        x: (x0 + x1) / 2,
+        y: (y0 + y1) / 2,
+        rx: Math.max(14, (x1 - x0) / 2),
+        ry: Math.max(12, (y1 - y0) / 2),
+        members,
+        depth: 0,
+      });
+    }
+    this.insideCount = out.length;
+    this.insideAny = out.length > 0;
+    return out;
   }
 
   /**
@@ -4239,13 +4511,17 @@ export class World3D {
     // by camera distance, reported seven names, and drew none of them.
     if (now - this.lastLabelPick > 240 || (this.hoveredId !== null && !this.labelPicked.includes(this.hoveredId))) {
       this.lastLabelPick = now;
-      const cam = this.camera.position;
+      // Nearest to WHAT THE VIEW IS LOOKING AT, which is the distance the card,
+      // the roster and the printed radius are all in. Ranking by the eye and
+      // measuring the claim from the target put eight names outside their own
+      // radius in three of five NEAR frames.
+      const aim = this.aimGround();
       const near: { k: number; d: number }[] = [];
       for (let k = 0; k < this.screenPoints.length; k++) {
         const i = this.screenIndex[k]!;
-        const dx = this.beingPos[i * 3]! - cam.x;
-        const dy = this.beingPos[i * 3 + 1]! - cam.y;
-        const dz = this.beingPos[i * 3 + 2]! - cam.z;
+        const dx = this.beingPos[i * 3]! - aim.x;
+        const dy = this.beingPos[i * 3 + 1]! - aim.y;
+        const dz = this.beingPos[i * 3 + 2]! - aim.z;
         near.push({ k, d: dx * dx + dy * dy + dz * dz });
       }
       // Rank first, distance second. Sorting by distance alone and then taking
@@ -4418,7 +4694,12 @@ export class World3D {
       const id = this.ids[i]!;
       if (isSpecimenId(id)) continue;
       this.nameSubjects.push({
-        distance: this.distanceTo(i),
+        // From the ground the camera is LOOKING at — the same metres the card
+        // and the roster print, and the same ones `updateLabels` chooses
+        // candidates by. Measuring the radius from the eye while choosing who
+        // to name from the target is how a true radius came to contain none of
+        // the names drawn over it.
+        distance: this.aimDistanceTo(i),
         readable: this.markerPixelsOf(i) >= READABLE_MARK_PX && !this.isCollapsed(i),
         named: this.placedIds.has(id),
       });
@@ -4480,14 +4761,18 @@ export class World3D {
    * the shell asks for this a few times a second and hands it straight to a
    * virtualized table, so it has to be cheap enough to be uninteresting.
    *
-   * `distance` is measured from what the camera is LOOKING AT rather than from
-   * the eye. "How far is this one from where I am" is the question a researcher
-   * orbiting a settlement is actually asking, and the eye is often a kilometre
-   * behind the thing it is pointed at.
+   * `distance` is measured from the GROUND THE CAMERA IS LOOKING AT rather than
+   * from the eye — see `aimDistanceTo`. "How far is this one from where I am"
+   * is the question a researcher orbiting a settlement is actually asking, the
+   * eye is often a kilometre behind the thing it is pointed at, and this is the
+   * same number the card prints and the naming radius is measured in.
    */
   rosterRows(): RosterRow[] {
     const out: RosterRow[] = new Array<RosterRow>(this.instanceCount);
-    const aim = this.controls.target;
+    const aim = this.aimGround();
+    const ax = aim.x;
+    const ay = aim.y;
+    const az = aim.z;
     for (let i = 0; i < this.instanceCount; i++) {
       const id = this.ids[i]!;
       const act = this.beingAct[i]!;
@@ -4495,9 +4780,9 @@ export class World3D {
       const stage = this.beingStage[i]!;
       const name = displayName(id, this.names.get(id));
       const on = this.headingOnScreenAt(i);
-      const dx = this.beingPos[i * 3]! - aim.x;
-      const dy = this.beingPos[i * 3 + 1]! - aim.y;
-      const dz = this.beingPos[i * 3 + 2]! - aim.z;
+      const dx = this.beingPos[i * 3]! - ax;
+      const dy = this.beingPos[i * 3 + 1]! - ay;
+      const dz = this.beingPos[i * 3 + 2]! - az;
       out[i] = {
         id,
         name: name.text,
@@ -4544,10 +4829,6 @@ export class World3D {
     const cond = this.beingCond[i]!;
     const name = displayName(id, this.names.get(id));
     const on = this.headingOnScreenAt(i);
-    const aim = this.controls.target;
-    const dx = this.beingPos[i * 3]! - aim.x;
-    const dy = this.beingPos[i * 3 + 1]! - aim.y;
-    const dz = this.beingPos[i * 3 + 2]! - aim.z;
     const specimen = isSpecimenId(id);
     return {
       id,
@@ -4563,7 +4844,9 @@ export class World3D {
       planOf: this.beingPlanOf[i]!,
       hunger: this.beingHunger[i]!,
       rest: this.beingRest[i]!,
-      distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
+      // The same metres the roster prints and the naming radius is measured in
+      // — from the ground the view is looking at. See `aimDistanceTo`.
+      distance: this.aimDistanceTo(i),
       inFrame: this.beingOnScreen[i] === 1,
       visible: this.isVisible(id),
       crowded: this.isCollapsed(i),
@@ -4575,10 +4858,17 @@ export class World3D {
     };
   }
 
-  /** The being's own patch of screen, in client coordinates. */
+  /**
+   * The being's own patch of screen, in client coordinates.
+   *
+   * The BODY's middle, deliberately — this is what the hover card sits clear
+   * of, and a card placed off the mark at the feet would sit over the figure it
+   * is describing. `screenPositionOf` answers the other question ("where do I
+   * point") and the two are different points in the close bands.
+   */
   private markBoxOf(i: number): { x: number; y: number; r: number } | null {
     if (this.beingOnScreen[i] !== 1) return null;
-    const at = this.screenPositionOf(this.ids[i]!);
+    const at = this.bodyScreenPositionOf(this.ids[i]!) ?? this.screenPositionOf(this.ids[i]!);
     if (!at) return null;
     return { x: at.x, y: at.y, r: Math.max(8, this.markerPixelsOf(i) * 0.5) };
   }
@@ -4592,7 +4882,7 @@ export class World3D {
    * being the place where this instrument gives up.
    */
   chipSummary(cluster: number): {
-    cluster: number; count: number; matched: number;
+    cluster: number; count: number; matched: number; inside: boolean;
     mix: MixSegment[]; activities: { word: string; count: number }[]; ids: number[];
   } | null {
     const cl = this.clusters[cluster];
@@ -4612,6 +4902,10 @@ export class World3D {
       cluster,
       count: cl.count,
       matched,
+      // Whether this chip is a crowd on open ground or the people inside a
+      // building — the card says which, because "6 together" and "6 in this
+      // shelter" are different facts about the same picture.
+      inside: cluster < this.insideCount,
       mix: conditionMix(members),
       activities: groupByActivity(members),
       ids,
@@ -4779,22 +5073,33 @@ export class World3D {
       const scale = depth * this.worldPerPx;
       if (scale <= 0) continue;
       const bodyPx = stageForm(this.beingStage[i]!).scale / scale;
-      const feet = p.y + (this.beingMark[i]! * 0.5) / scale;
-      if (bodyPx < 4) continue; // too small to be a figure; its mark carries it
+      // Measured, not inferred: `screenFootY` is the ground point this being
+      // stands on, projected in the same pass as its mark.
+      const feet = this.screenFootY[k]!;
       const lying = this.beingAct[i] === ACT_RESTING;
-      const halfW = Math.max(3, bodyPx * (lying ? 0.52 : 0.21));
+      // The figure as DRAWN, lean and all — a box narrower than the silhouette
+      // is a box the picker's ray reaches outside of, which is how a being can
+      // be "visible" with somebody else painted over it.
+      const halfW = Math.max(3, bodyPx * figureSpread(this.beingLean[i]!, lying));
       const high = lying ? bodyPx * 0.34 : bodyPx;
+      // Too small to be a figure: the mark is all there is of it, and the box
+      // is empty so nothing claims a body was drawn here.
+      const hasBody = bodyPx >= 4;
       const box = {
         id: p.id,
-        // The point the view reports for this being — mid-body, the same one
-        // `screenPositionOf` projects.
+        // The point the view reports for this being — the same one
+        // `screenPositionOf` returns, which is the entry above.
         x: p.x,
-        y: feet - bodyPx * 0.5,
-        x0: p.x - halfW,
-        y0: feet - high,
-        x1: p.x + halfW,
-        y1: feet + bodyPx * 0.06,
+        y: p.y,
+        x0: hasBody ? p.x - halfW : p.x,
+        y0: hasBody ? feet - high : feet,
+        x1: hasBody ? p.x + halfW : p.x,
+        y1: hasBody ? feet + bodyPx * 0.06 : feet,
         depth,
+        mx: p.x,
+        my: this.beingInside[i] === 1 ? feet : p.y,
+        mr: this.beingInside[i] === 1 ? 0 : this.markRadiusOf(i),
+        hasBody,
       };
       this.boxes.push(box);
       this.boxById.set(box.id, box);
@@ -4816,6 +5121,35 @@ export class World3D {
     const dy = (this.beingPos[i * 3 + 1]! + this.beingTop[i]!) * 0.5 - this.camera.position.y;
     const dz = this.beingPos[i * 3 + 2]! - this.camera.position.z;
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * How far this being is from WHERE THE VIEW IS LOOKING, in metres — the
+   * ground under the camera's target.
+   *
+   * The one distance this view quotes. Round seven had two: the hover card and
+   * the roster measured from the target, and the naming rule measured from the
+   * EYE, which on an orbit is most of a kilometre further back. The two
+   * populations that came out of that disagreed so badly that three NEAR frames
+   * printed a radius with nothing readable inside it above eight drawn names —
+   * every one of those names true, and the sentence under them false.
+   *
+   * The target's own `y` is not it either: the aim rides above the ground while
+   * the camera pitches, and "how far is that person from what I am looking at"
+   * is a question about the ground. So the ground under the aim, always.
+   */
+  private aimDistanceTo(i: number): number {
+    const aim = this.aimGround();
+    const dx = this.beingPos[i * 3]! - aim.x;
+    const dy = this.beingPos[i * 3 + 1]! - aim.y;
+    const dz = this.beingPos[i * 3 + 2]! - aim.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /** The ground point the camera is aiming at — one per frame, reused. */
+  private aimGround(): THREE.Vector3 {
+    const aim = this.controls.target;
+    return this.aimPoint.set(aim.x, this.surfaceAt(aim.x + HALF, aim.z + HALF), aim.z);
   }
 
   /**
@@ -5414,6 +5748,46 @@ export class World3D {
     return bandPromise(this.band);
   }
 
+  /**
+   * Where the camera is standing and how far it is ALLOWED to stand — the two
+   * numbers behind "can a mouse reach this band", printed rather than argued
+   * about.
+   *
+   * `stopFigurePx` is how tall a grown being stands when the orbit is at its
+   * far stop: it has to be under `BAND_EDGE_PX[0] × (1 − BAND_HYSTERESIS)` or
+   * FAR is a band the wheel cannot enter, whatever the band table says. Every
+   * term is measured off the live projection, so a stop derived from a canvas
+   * that has since changed shows up here as a mismatch.
+   */
+  cameraReport(): {
+    distance: number; minDistance: number; maxDistance: number;
+    worldPerPx: number; figurePx: number; stopFigurePx: number; enterFarPx: number;
+    band: ZoomBand; canvasW: number; canvasH: number; projectionH: number;
+    atStop: boolean; farReachable: boolean;
+  } {
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const stop = this.controls.maxDistance;
+    const stopPx = figurePxAt(stop, this.worldPerPx);
+    const enterFarPx = BAND_EDGE_PX[0]! * (1 - BAND_HYSTERESIS);
+    return {
+      distance,
+      minDistance: this.controls.minDistance,
+      maxDistance: stop,
+      worldPerPx: this.worldPerPx,
+      figurePx: this.bandPx,
+      stopFigurePx: stopPx,
+      enterFarPx,
+      band: this.band,
+      canvasW: this.canvas.clientWidth,
+      canvasH: this.canvas.clientHeight,
+      // The canvas the projection was derived from. It is `canvasH` or the view
+      // is drawing one picture and measuring another — see `syncProjection`.
+      projectionH: this.viewH,
+      atStop: distance >= stop - 1,
+      farReachable: bandForPixels(stopPx, 'default') === 'far',
+    };
+  }
+
   /** Where this being stands, in scene units — the same frame `placeCamera` takes. */
   worldPositionOf(id: number): { x: number; y: number; z: number } | null {
     const i = this.indexOf(id);
@@ -5421,12 +5795,64 @@ export class World3D {
     return { x: this.beingPos[i * 3]!, y: this.beingPos[i * 3 + 1]!, z: this.beingPos[i * 3 + 2]! };
   }
 
+  /**
+   * Where the thing DRAWN for this being is, in client coordinates — the point
+   * a reader would put a finger on, and the point everything else in this file
+   * bins, groups and covers by.
+   *
+   * There is exactly one of these per being per frame and it is the entry in
+   * `screenPoints`: the centre of its ground mark, or — where a structure's
+   * chip has taken that mark away — the middle of its body, which is then the
+   * only thing of it in the picture. `markScreenPositionOf` and
+   * `bodyScreenPositionOf` answer the two halves for a caller that needs a
+   * specific one; this answers "point at it", and `countAudit()`,
+   * `markGeometry()` and the cover rule all use the same answer.
+   */
   screenPositionOf(id: number): { x: number; y: number } | null {
+    const i = this.indexOf(id);
+    if (i < 0) return null;
+    const k = this.screenSlotOf(i);
+    if (k >= 0) return this.toClient(this.screenPoints[k]!.x, this.screenPoints[k]!.y);
+    return this.beingInside[i] === 1 ? this.bodyScreenPositionOf(id) : this.markScreenPositionOf(id);
+  }
+
+  /** The centre of this being's ground mark, drawn or not. */
+  markScreenPositionOf(id: number): { x: number; y: number } | null {
+    const i = this.indexOf(id);
+    if (i < 0) return null;
+    const k = this.screenSlotOf(i);
+    if (k >= 0 && this.beingInside[i] !== 1) {
+      return this.toClient(this.screenPoints[k]!.x, this.screenPoints[k]!.y);
+    }
+    this.markAnchor(i, this.probe).project(this.camera);
+    if (this.probe.z > 1) return null; // behind the camera
+    return this.toNdcClient();
+  }
+
+  /** The middle of this being's figure — what a hover card places itself clear of. */
+  bodyScreenPositionOf(id: number): { x: number; y: number } | null {
     const i = this.indexOf(id);
     if (i < 0) return null;
     this.probe.set(this.beingPos[i * 3]!, (this.beingPos[i * 3 + 1]! + this.beingTop[i]!) / 2, this.beingPos[i * 3 + 2]!);
     this.probe.project(this.camera);
     if (this.probe.z > 1) return null; // behind the camera
+    return this.toNdcClient();
+  }
+
+  /** Which screen-point slot holds this being this frame, or -1. */
+  private screenSlotOf(i: number): number {
+    if (this.beingOnScreen[i] !== 1) return -1;
+    const id = this.ids[i]!;
+    for (let k = 0; k < this.screenPoints.length; k++) if (this.screenPoints[k]!.id === id) return k;
+    return -1;
+  }
+
+  private toClient(x: number, y: number): { x: number; y: number } {
+    const rect = this.canvas.getBoundingClientRect();
+    return { x: rect.left + x * (rect.width / Math.max(1, this.canvas.clientWidth)), y: rect.top + y * (rect.height / Math.max(1, this.canvas.clientHeight)) };
+  }
+
+  private toNdcClient(): { x: number; y: number } {
     const rect = this.canvas.getBoundingClientRect();
     return {
       x: rect.left + ((this.probe.x + 1) / 2) * rect.width,
@@ -5454,6 +5880,9 @@ export class World3D {
     this.rendered++;
     const t = this.clock.getElapsedTime();
     const now = performance.now();
+    // Before anything is sized or clamped: the projection has to be about the
+    // canvas this frame is going onto. See `syncProjection`.
+    this.syncProjection();
     this.controls.update();
     this.keepAboveGround();
     this.updateLight();
@@ -5603,10 +6032,38 @@ export class World3D {
     };
   }
 
+  /**
+   * Make the projection agree with the canvas that is actually on screen —
+   * every frame, cheaply, instead of trusting a notification.
+   *
+   * This is the whole of round seven's first defect. `worldPerPx` is the number
+   * every band edge, every mark size and the orbit's far stop are stated in,
+   * and it was computed once per `ResizeObserver` callback. Measured live, the
+   * view was drawing a 359 px canvas with a `worldPerPx` derived from a 385 px
+   * one — a notification that never arrived, or arrived before the last layout
+   * settled, and nothing ever checked. On a window that had been maximized the
+   * gap was 40%, which put the orbit's stop a hysteresis step short of the band
+   * it was sized for: FAR existed, `placeCamera` could reach it, and the wheel
+   * could not.
+   *
+   * The canvas's own size is read here every frame anyway — `projectBeings`,
+   * `updateCrowds` and `updateLabels` all read it — so this costs a comparison,
+   * and the projection can never be a frame behind the picture again.
+   */
+  private syncProjection(): void {
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    if (w === 0 || h === 0) return; // hidden — keep the last good size
+    if (w === this.viewW && h === this.viewH) return;
+    this.resize();
+  }
+
   private resize(): void {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
     if (w === 0 || h === 0) return; // hidden — keep the last good size
+    this.viewW = w;
+    this.viewH = h;
     this.renderer.setSize(w, h, false);
     // The name layer is the canvas's own rectangle, so a label that leaves the
     // view is clipped by the view rather than landing on the legend below it.
