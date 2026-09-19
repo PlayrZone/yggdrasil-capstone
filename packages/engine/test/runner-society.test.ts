@@ -5,6 +5,7 @@ import { createGahallianBody } from '../src/body/GahallianBody.js';
 import type { GahallianBody } from '../src/body/GahallianBody.js';
 import { identityAt } from '../src/body/identities.js';
 import { AgentMind } from '../src/agent/AgentMind.js';
+import { foragerAdapter } from '../src/worlds/forager/adapter.js';
 import type { SimEvent, Traits } from '../src/contract/types.js';
 import type { BirthRecord } from '../src/runner/RuntimeView.js';
 import type { SocietyHost } from '../src/runner/society/SocietySystem.js';
@@ -64,7 +65,7 @@ class TestHost implements SocietyHost {
 
   admit(agentId: number, _traits: Traits): void {
     this.agentIds.push(agentId);
-    this.minds.set(agentId, new AgentMind(agentId));
+    this.minds.set(agentId, new AgentMind(agentId, foragerAdapter));
     this.admitted.push(agentId);
   }
 

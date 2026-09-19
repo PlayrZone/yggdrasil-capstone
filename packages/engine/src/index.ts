@@ -141,6 +141,27 @@ export type {
 } from './contract/types.js';
 export { NEED_PRESSING, NEED_CRITICAL } from './contract/types.js';
 
+// ── The WorldAdapter seam (W1-B) — one brain, any world ──────────────────────
+export type {
+  WorldAdapter,
+  WorldSpec,
+  DriveSchema,
+  ContextSchema,
+  EventSchema,
+  EventRoles,
+  EventRoleSchema,
+  PrestigeSchema,
+  RelationshipDeltas,
+  TimeOps,
+  TraitCurve,
+  CognitionDefaults,
+  EventId,
+  ContextFeatureId,
+  DriveId,
+} from './contract/adapter.js';
+export { defineWorld, featureActive, traitCurveValue } from './contract/adapter.js';
+export { foragerAdapter } from './worlds/forager/adapter.js';
+
 export type { MaterialProps, MaterialTier } from './world/materials.js';
 export { MATERIAL_PROPERTIES, isEdible, isPoisonous } from './world/materials.js';
 

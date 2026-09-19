@@ -1,8 +1,8 @@
 import type { World } from '../core/World.js';
 import type { PerceptionSystem } from '../body/PerceptionSystem.js';
 import type { GahallianBody } from '../body/GahallianBody.js';
-import { TICKS_PER_DAY } from '../body/WorldRegularities.js';
 import type { AgentMind } from '../agent/AgentMind.js';
+import type { WorldAdapter } from '../contract/adapter.js';
 import type { KnowledgeRecord } from '../contract/types.js';
 import { CognitionRecorder } from '../record/CognitionRecorder.js';
 import type { ScaffoldLedger } from '../record/ScaffoldLedger.js';
@@ -13,6 +13,7 @@ import type { RecordingOptions, RunFlags } from './options.js';
 /** What the recorder needs to look at, all of it already public on the runtime. */
 export interface RecorderHost {
   readonly seed: string;
+  readonly adapter: WorldAdapter;
   readonly world: World;
   readonly perception: PerceptionSystem;
   readonly minds: ReadonlyMap<number, AgentMind>;
@@ -35,7 +36,7 @@ export function recorderWorld(host: RecorderHost): RecorderWorld {
     name: (id): string => host.nameOf(id),
     generation: (id): number => host.generationOf(id),
     witnesses: (event): number[] => host.perception.witnessesOf(host.world, event),
-    day: (tick): number => Math.floor(tick / TICKS_PER_DAY) + 1,
+    day: (tick): number => Math.floor(tick / host.adapter.time.ticksPerDay) + 1,
   };
 }
 

@@ -1,3 +1,4 @@
+import type { WorldAdapter } from '../contract/adapter.js';
 import type {
   AgentSnapshot,
   Goal,
@@ -71,7 +72,7 @@ export interface AgentMindOptions {
 export class AgentMind {
   readonly memory: MemoryStream;
   readonly knowledge: KnowledgeStore;
-  readonly relationships = new RelationshipStore();
+  readonly relationships: RelationshipStore;
   readonly narratives = new NarrativeStore();
   readonly learners: ILearner[];
   goals: Goal[] = [];
@@ -81,21 +82,28 @@ export class AgentMind {
   private readonly consolidateInterval: number;
   private readonly mythBehavior: boolean;
 
+  /**
+   * `world` is the being's whole knowledge of what kind of place it is in, and
+   * it is handed in rather than looked up: two experiments in two worlds must
+   * be able to run side by side in one process.
+   */
   constructor(
     readonly agentId: number,
+    world: WorldAdapter,
     options: AgentMindOptions = {},
   ) {
     this.memory = new MemoryStream(options.memoryHotCapacity ?? 512);
     const provenance = options.provenance ?? 'compact';
     this.knowledge = new KnowledgeStore(provenance);
+    this.relationships = new RelationshipStore(world);
     this.learners = [
-      new ContextMiner(provenance),
-      new SuccessionMiner({ provenance }),
+      new ContextMiner(world, provenance),
+      new SuccessionMiner(world, { provenance }),
       new SocialMiner(provenance),
-      new OutcomeMiner(provenance),
+      new OutcomeMiner(world, provenance),
     ];
     if (options.craftLearning) this.learners.push(new CraftObservationMiner(provenance));
-    this.mind = options.mind ?? new ReflexMind();
+    this.mind = options.mind ?? new ReflexMind(world);
     this.thinkInterval = options.thinkInterval ?? 120;
     this.consolidateInterval = options.consolidateInterval ?? 300;
     this.mythBehavior = options.mythBehavior ?? true;

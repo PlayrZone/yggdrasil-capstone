@@ -12,6 +12,7 @@ import {
 } from '../src/body/Climate.js';
 import { ResourceNodeSystem, createResourceNode } from '../src/body/ResourceNodeSystem.js';
 import { TICKS_PER_DAY } from '../src/body/WorldRegularities.js';
+import { foragerAdapter } from '../src/worlds/forager/adapter.js';
 
 describe('Climate — seasons', () => {
   it('cycles spring→summer→autumn→winter and wraps', () => {
@@ -21,6 +22,23 @@ describe('Climate — seasons', () => {
     expect(seasonAt(TICKS_PER_SEASON * 3)).toBe('winter');
     expect(seasonAt(TICKS_PER_YEAR)).toBe('spring'); // wrapped
     expect(TICKS_PER_SEASON).toBe(SEASON_DAYS * TICKS_PER_DAY);
+  });
+
+  /**
+   * The forager world writes its clock out rather than importing the body's
+   * derived constants — `Climate`, `WorldRegularities` and `ResourceNodeSystem`
+   * form an import cycle, so `TICKS_PER_SEASON` and `TICKS_PER_YEAR` initialise
+   * to NaN when the graph is entered at `PerceptionSystem` instead of at
+   * `body/index.ts`, and a world's clock must not depend on that. This file
+   * reaches the body in the order that works, so it is where the two are tied
+   * together. (The cycle itself is a pre-existing engine bug, reported, unfixed.)
+   */
+  it('is the same clock the forager world declares', () => {
+    expect(foragerAdapter.time.ticksPerDay).toBe(TICKS_PER_DAY);
+    expect(foragerAdapter.time.ticksPerSeason).toBe(TICKS_PER_SEASON);
+    expect(foragerAdapter.time.ticksPerYear).toBe(TICKS_PER_YEAR);
+    expect(foragerAdapter.time.adultAge).toBe(TICKS_PER_SEASON); // Scenario's ADULT_AGE
+    expect(foragerAdapter.time.seasonAt).toBe(seasonAt);
   });
 
   it('winter halts growth and presses hardest; summer is easy', () => {

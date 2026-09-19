@@ -1,3 +1,5 @@
+import { featureActive } from '../contract/adapter.js';
+import type { ContextSchema, WorldAdapter } from '../contract/adapter.js';
 import type { ContextFeatureKey, MemoryRecord, NeedKey } from '../contract/types.js';
 import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
@@ -8,21 +10,23 @@ interface OutcomeCell {
   provenance: ProvenanceSample;
 }
 
-const FEATURES: ContextFeatureKey[] = ['nearWater', 'night', 'inShelter', 'highland'];
 const MIN_SAMPLES = 3;
-
-function featureActive(m: MemoryRecord, f: ContextFeatureKey): boolean {
-  if (f === 'highland') return m.context.elevationBand === 2;
-  return m.context[f];
-}
 
 /**
  * Mines own-action → need-delta correlations, overall and conditioned on
  * context: "Sleeping in shelter eases rest", "Eating (mushroomRed)
- * worsens safety". Negative deltas are relief (needs are pressure).
+ * worsens safety". Negative deltas are relief (needs are pressure). The
+ * world declares which context features exist, and in which order.
  */
 export class OutcomeMiner implements ILearner {
-  constructor(private readonly provenance: ProvenanceLevel = 'compact') {}
+  private readonly features: readonly ContextSchema[];
+
+  constructor(
+    world: WorldAdapter,
+    private readonly provenance: ProvenanceLevel = 'compact',
+  ) {
+    this.features = world.context;
+  }
 
   private cells = new Map<string, OutcomeCell>();
   private keyParts = new Map<
@@ -40,7 +44,7 @@ export class OutcomeMiner implements ILearner {
       if (delta === 0) continue;
       const conditions: (ContextFeatureKey | null)[] = [
         null,
-        ...FEATURES.filter((f) => featureActive(memory, f)),
+        ...this.features.filter((f) => featureActive(memory.context, f)).map((f) => f.id),
       ];
       for (const feature of conditions) {
         const key = `${memory.type}:${feature ?? '*'}:${need}`;

@@ -1,5 +1,5 @@
 import type { ContextFeatures, MemoryRecord, Needs, SimEventType } from '../src/index.js';
-import { importanceOf } from '../src/index.js';
+import { foragerAdapter, importanceOf } from '../src/index.js';
 
 export const CTX: ContextFeatures = {
   nearWater: false,
@@ -30,7 +30,7 @@ export function mem(
     needDeltas,
     outcome: 'neutral',
     summaryText: type,
-    importance: importanceOf(type, needDeltas),
+    importance: importanceOf(foragerAdapter, type, needDeltas),
     origin: 'experience',
     ...overrides,
   };

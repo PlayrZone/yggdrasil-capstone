@@ -4,6 +4,7 @@ import {
   OutcomeMiner,
   SocialMiner,
   SuccessionMiner,
+  foragerAdapter,
   renderStatement,
   ruleKey,
 } from '../src/index.js';
@@ -12,7 +13,7 @@ import { CTX, mem, resetIds } from './helpers.js';
 describe('ContextMiner', () => {
   it('discovers "food is found near water" from lived correlation', () => {
     resetIds();
-    const miner = new ContextMiner();
+    const miner = new ContextMiner(foragerAdapter);
     // 8 of 10 berry gathers happened near water…
     for (let i = 0; i < 10; i++) {
       miner.observe(
@@ -44,7 +45,7 @@ describe('ContextMiner', () => {
 
   it('stays silent when the correlation is just the base rate', () => {
     resetIds();
-    const miner = new ContextMiner();
+    const miner = new ContextMiner(foragerAdapter);
     // Near water half the time, gathering near water half the time: lift ≈ 1.
     for (let i = 0; i < 12; i++) {
       miner.observe(
@@ -64,7 +65,7 @@ describe('ContextMiner', () => {
 describe('SuccessionMiner', () => {
   it('discovers seed → plant from repeated succession at the same spot', () => {
     resetIds();
-    const miner = new SuccessionMiner();
+    const miner = new SuccessionMiner(foragerAdapter);
     for (let i = 0; i < 3; i++) {
       const base = i * 2000;
       miner.observe(mem(base, 'SeedDeposited', { objectKind: 'seed', x: 10, y: 10 }));
@@ -86,7 +87,7 @@ describe('SuccessionMiner', () => {
 
   it('ignores successions outside the time window or far away', () => {
     resetIds();
-    const miner = new SuccessionMiner({ windowTicks: 100, radius: 5 });
+    const miner = new SuccessionMiner(foragerAdapter, { windowTicks: 100, radius: 5 });
     miner.observe(mem(0, 'SeedDeposited', { x: 0, y: 0 }));
     miner.observe(mem(500, 'PlantSprouted', { x: 0, y: 0 })); // too late
     miner.observe(mem(600, 'SeedDeposited', { x: 0, y: 0 }));
@@ -100,7 +101,7 @@ describe('SuccessionMiner', () => {
 
   it('permits false knowledge: a coincidence can become a belief', () => {
     resetIds();
-    const miner = new SuccessionMiner();
+    const miner = new SuccessionMiner(foragerAdapter);
     // Pure coincidence, twice: drinking water then witnessing a death.
     for (let i = 0; i < 2; i++) {
       miner.observe(mem(i * 3000, 'DrankWater', { x: 0, y: 0 }));
@@ -154,7 +155,7 @@ describe('SocialMiner', () => {
 describe('OutcomeMiner', () => {
   it('discovers that sheltered sleep eases rest', () => {
     resetIds();
-    const miner = new OutcomeMiner();
+    const miner = new OutcomeMiner(foragerAdapter);
     for (let i = 0; i < 4; i++) {
       miner.observe(
         mem(i * 100, 'SleptSafely', {
@@ -179,7 +180,7 @@ describe('OutcomeMiner', () => {
 
   it('learns from observation (demonstration) too, but discounted vs first-hand', () => {
     resetIds();
-    const miner = new OutcomeMiner();
+    const miner = new OutcomeMiner(foragerAdapter);
     // A few glimpses of an elder eating are not enough to cross the threshold
     // (observation is weighted 0.4, so 4 watches ≈ 1.6 evidence < 3).
     for (let i = 0; i < 4; i++) {

@@ -1,3 +1,4 @@
+import type { EventRoleSchema, WorldAdapter } from '../contract/adapter.js';
 import type {
   ContextFeatures,
   MemoryRecord,
@@ -16,13 +17,20 @@ import { importanceOf } from './importance.js';
  * observation. This perspective mapping is where subjective worldviews
  * start to diverge.
  *
+ * WHAT differs per perspective is the world's (`events[].roles`); the parts
+ * that are the same for every event live here, because they are the mechanism:
+ * who the subjects are, that a target reads its own need-change, and that a
+ * bystander gets a discounted read of the actor's.
+ *
  * Returns undefined when the event is not memorable from this perspective.
  */
 export function memoryFromEvent(
+  world: WorldAdapter,
   event: SimEvent,
   selfId: number,
   context: ContextFeatures,
 ): Omit<MemoryRecord, 'id'> | undefined {
+  const schema = world.eventById.get(event.type);
   const isActor = event.actorId === selfId;
   const isTarget = event.targetIds.includes(selfId);
   const needDeltas = (isActor ? (event.payload['needDeltas'] as Partial<Needs> | undefined) : undefined) ?? {};
@@ -32,34 +40,22 @@ export function memoryFromEvent(
   const craftInputs = event.payload['inputs'] as Partial<Record<ObjectKind, number>> | undefined;
   const utterance = event.payload['utterance'] as Utterance | undefined;
 
-  let type: SimEventType = event.type;
+  let role: EventRoleSchema | undefined;
   let subjects: number[];
   let origin: MemoryRecord['origin'] = 'experience';
   let deltas = needDeltas;
-  let toldBy: number | undefined;
-  let causedBy: number | undefined;
 
   if (isActor) {
+    role = schema?.roles?.actor;
     subjects = event.targetIds.filter((id) => id !== selfId);
   } else if (isTarget) {
+    role = schema?.roles?.target;
     subjects = [event.actorId];
     deltas = targetNeedDeltas;
-    switch (event.type) {
-      case 'AttackedAgent':
-        type = 'WasAttacked';
-        break;
-      case 'GaveItem':
-        type = 'ReceivedItem';
-        break;
-      case 'UtteranceSpoken':
-        toldBy = event.actorId;
-        break;
-      default:
-        break;
-    }
   } else {
     // Bystander. Watching others is real input for the miners — this is
     // the demonstration/observation channel of knowledge transfer.
+    role = schema?.roles?.bystander;
     origin = 'observation';
     subjects = [event.actorId, ...event.targetIds].filter((id) => id !== selfId && id > 0);
     // You can roughly SEE the actor's outcome — they eat and look relieved, or
@@ -71,27 +67,17 @@ export function memoryFromEvent(
       for (const [k, v] of Object.entries(actorDeltas) as [keyof Needs, number][]) seen[k] = v * 0.5;
       deltas = seen;
     }
-    switch (event.type) {
-      case 'AgentDied': {
-        type = 'WitnessedDeath';
-        // The memory is ABOUT the one who died (already the subject). The hand
-        // behind it rides separately, and only when a person's blow did it —
-        // a starvation, an exposure or a beast names nobody, and a killer does
-        // not witness itself into fearing itself.
-        const killerId = event.payload['killerId'];
-        if (typeof killerId === 'number' && killerId !== selfId) causedBy = killerId;
-        break;
-      }
-      case 'UtteranceSpoken': {
-        // Eavesdropping: an overheard utterance is testimony too.
-        toldBy = event.actorId;
-        break;
-      }
-      case 'IntentRejected':
-        return undefined; // Other people's failed intents are invisible.
-      default:
-        break;
-    }
+  }
+
+  if (role?.ignores) return undefined;
+
+  const type: SimEventType = role?.recordsAs ?? event.type;
+  const toldBy = role?.heard ? event.actorId : undefined;
+  let causedBy: number | undefined;
+  if (role?.causedByFrom !== undefined) {
+    const dealtBy = event.payload[role.causedByFrom];
+    // A killer does not witness itself into fearing itself.
+    if (typeof dealtBy === 'number' && dealtBy !== selfId) causedBy = dealtBy;
   }
 
   return {
@@ -102,16 +88,11 @@ export function memoryFromEvent(
     craftInputs,
     context,
     needDeltas: deltas,
-    outcome:
-      event.type === 'GatherFailed' || event.type === 'IntentRejected'
-        ? 'failure'
-        : event.type.endsWith('Succeeded')
-          ? 'success'
-          : 'neutral',
+    outcome: schema?.outcome ?? 'neutral',
     x: event.x,
     y: event.y,
     summaryText: describeEpisode(type, subjects, objectKind, causedBy),
-    importance: importanceOf(type, deltas),
+    importance: importanceOf(world, type, deltas),
     origin,
     toldBy,
     causedBy,

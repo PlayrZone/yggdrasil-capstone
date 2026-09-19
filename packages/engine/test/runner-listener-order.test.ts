@@ -4,6 +4,7 @@ import { PerceptionSystem } from '../src/body/PerceptionSystem.js';
 import { createGahallianBody } from '../src/body/GahallianBody.js';
 import type { GahallianBody } from '../src/body/GahallianBody.js';
 import { AgentMind } from '../src/agent/AgentMind.js';
+import { foragerAdapter } from '../src/worlds/forager/adapter.js';
 import { RuleIntern } from '../src/knowledge/KnowledgeStore.js';
 import { identityAt } from '../src/body/identities.js';
 import type { SimEvent } from '../src/contract/types.js';
@@ -66,7 +67,7 @@ function rig(withRecorder: boolean): Rig {
     const body = createGahallianBody('', TRAITS, 0);
     const e = world.createEntity({ Transform2D: { x, y }, GahallianBody: body });
     bodies.set(e.id, body);
-    minds.set(e.id, new AgentMind(e.id));
+    minds.set(e.id, new AgentMind(e.id, foragerAdapter));
     return e.id;
   };
   spawn(50, 50);
@@ -89,6 +90,7 @@ function rig(withRecorder: boolean): Rig {
     agentBody: (id: number): GahallianBody | undefined => bodies.get(id),
   };
   installEventPipeline(host, {
+    world: foragerAdapter,
     narrator,
     leadership: true,
     tombstoneRules: new RuleIntern(),

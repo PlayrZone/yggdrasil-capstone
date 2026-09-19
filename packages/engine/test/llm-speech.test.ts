@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AgentMind, LlmMind, MockMindBackend, ReflexMind, buildThinkPrompt, narrativeRefOf } from '../src/index.js';
+import { AgentMind, LlmMind, MockMindBackend, ReflexMind, buildThinkPrompt, foragerAdapter, narrativeRefOf } from '../src/index.js';
 import type { IMind, KnowledgeRule, MindOutput, ThinkInput, Utterance } from '../src/index.js';
 import { CTX, mem, resetIds } from './helpers.js';
 
@@ -44,7 +44,7 @@ class ScriptedMind implements IMind {
 
 /** A speaker who genuinely holds one belief and carries one story. */
 function speakerMind(mind?: IMind): AgentMind {
-  const agent = new AgentMind(SPEAKER, mind ? { mind } : {});
+  const agent = new AgentMind(SPEAKER, foragerAdapter, mind ? { mind } : {});
   agent.knowledge.applyEvidence(
     { rule: BERRY_NEAR_WATER, confidence: 0.8, evidenceCount: 6, contradictionCount: 0, sourceMemoryIds: [] },
     10,
@@ -94,7 +94,7 @@ describe('LLM speech resolution', () => {
   it('teaches and retells through the whole mock-LLM path', async () => {
     resetIds();
     const speaker = speakerMind();
-    const listener = new AgentMind(LISTENER);
+    const listener = new AgentMind(LISTENER, foragerAdapter);
     const spoken = await speakThroughLlm(speaker, [
       { targetId: LISTENER, speechAct: 'share-knowledge', ruleRef: 1, text: 'Berries grow by the water.' },
       { targetId: LISTENER, speechAct: 'share-episode', narrativeRef: STORY_REF, text: 'Let me tell you of Nine.' },
@@ -130,7 +130,7 @@ describe('LLM speech resolution', () => {
       10,
     );
     const recipe = speaker.knowledge.held().find((k) => k.rule.kind === 'craft-recipe')!;
-    const [first, second] = [new AgentMind(LISTENER), new AgentMind(3)];
+    const [first, second] = [new AgentMind(LISTENER, foragerAdapter), new AgentMind(3, foragerAdapter)];
     const spoken = await speakThroughLlm(speaker, [
       { speechAct: 'share-knowledge', ruleRef: recipe.id, text: 'A point on a shaft.' },
     ]);
@@ -166,7 +166,7 @@ describe('LLM speech resolution', () => {
   it('never transmits a rule or a story the model invented', async () => {
     resetIds();
     const speaker = speakerMind();
-    const listener = new AgentMind(LISTENER);
+    const listener = new AgentMind(LISTENER, foragerAdapter);
     const spoken = await speakThroughLlm(speaker, [
       { targetId: LISTENER, speechAct: 'share-knowledge', rule: FABRICATED, ruleConfidence: 1, text: 'Water kills bears.' },
       { targetId: LISTENER, speechAct: 'share-episode', narrativeId: 'invented:tale', narrativeText: 'I once flew.' },
@@ -217,7 +217,7 @@ describe('LLM speech resolution', () => {
   it('refuses a raw narrative id as a reference — only the opaque handle resolves', async () => {
     resetIds();
     const speaker = speakerMind();
-    const listener = new AgentMind(LISTENER);
+    const listener = new AgentMind(LISTENER, foragerAdapter);
     // A model that guessed (or was somehow told) the engine's own id gets nothing.
     const spoken = await speakThroughLlm(speaker, [
       { targetId: LISTENER, speechAct: 'share-episode', narrativeRef: STORY_ID, text: 'A tale of Nine.' },
@@ -233,7 +233,7 @@ describe('speech from minds that attach their own rules', () => {
   it('still teaches on the reflex path — its rules come from the same store', () => {
     resetIds();
     const speaker = speakerMind(new ReflexMind());
-    const listener = new AgentMind(LISTENER);
+    const listener = new AgentMind(LISTENER, foragerAdapter);
     const input = thinkInput(speaker);
     const out = speaker.think(input.snapshot, input.worldView, 'periodic');
     const shared = out.utterances.find((u) => u.speechAct === 'share-knowledge');

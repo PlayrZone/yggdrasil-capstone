@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Experiment } from '../src/runner/Experiment.js';
 import { AgentMind } from '../src/agent/AgentMind.js';
+import { foragerAdapter } from '../src/worlds/forager/adapter.js';
 import { RuleIntern } from '../src/knowledge/KnowledgeStore.js';
 import { mem } from './helpers.js';
 import { ProvenanceSample, snapshotOf } from '../src/learning/ILearner.js';
@@ -18,7 +19,7 @@ import type { EvidenceSnapshot } from '../src/contract/types.js';
 
 /** A mind whose hot set is tiny, so eviction happens within a few appends. */
 function tinyMind(id = 1): AgentMind {
-  return new AgentMind(id, { memoryHotCapacity: 8 });
+  return new AgentMind(id, foragerAdapter, { memoryHotCapacity: 8 });
 }
 
 const WET = { nearWater: true, night: false, inShelter: false, elevationBand: 0 };
@@ -186,8 +187,8 @@ describe('tombstones share what a rule determines', () => {
     const report = (rule: typeof vague | typeof learned) => ({
       rule, confidence: 0.9, evidenceCount: 6, contradictionCount: 0, sourceMemoryIds: [],
     });
-    const a = new AgentMind(10);
-    const b = new AgentMind(11);
+    const a = new AgentMind(10, foragerAdapter);
+    const b = new AgentMind(11, foragerAdapter);
     a.knowledge.applyEvidence(report(vague), 100);
     b.knowledge.applyEvidence(report(learned), 100);
     expect(a.knowledge.all()[0]!.ruleKey).toBe(b.knowledge.all()[0]!.ruleKey); // same key…

@@ -1,3 +1,4 @@
+import type { WorldAdapter } from '../contract/adapter.js';
 import type { EvidenceSnapshot, MemoryRecord, SimEventType } from '../contract/types.js';
 import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample, snapshotOf } from './ILearner.js';
@@ -18,13 +19,11 @@ export interface SuccessionMinerOptions {
   windowTicks?: number;
   /** When both memories carry coords, they must be this close. */
   radius?: number;
-  /** Event types never considered (too frequent, no causal signal). */
+  /** Overrides the world's own list of events that carry no causal signal. */
   exclude?: SimEventType[];
   /** How much evidence each mined rule keeps about itself. */
   provenance?: ProvenanceLevel;
 }
-
-const DEFAULT_EXCLUDE: SimEventType[] = ['SawAgent', 'UtteranceSpoken', 'IntentRejected'];
 
 /**
  * Mines temporal succession: cause-event followed by effect-event within a
@@ -46,10 +45,12 @@ export class SuccessionMiner implements ILearner {
   private provenance = new Map<string, ProvenanceSample>();
   private keyParts = new Map<string, { type: SimEventType; objectKind?: MemoryRecord['objectKind'] }>();
 
-  constructor(options: SuccessionMinerOptions = {}) {
+  constructor(world: WorldAdapter, options: SuccessionMinerOptions = {}) {
     this.window = options.windowTicks ?? 600;
     this.radius = options.radius ?? 8;
-    this.exclude = new Set(options.exclude ?? DEFAULT_EXCLUDE);
+    this.exclude = new Set(
+      options.exclude ?? world.events.filter((e) => e.causal === false).map((e) => e.id),
+    );
     this.provenanceLevel = options.provenance ?? 'compact';
   }
 

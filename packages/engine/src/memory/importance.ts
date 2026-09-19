@@ -1,45 +1,21 @@
+import type { WorldAdapter } from '../contract/adapter.js';
 import type { SimEventType, Needs } from '../contract/types.js';
 
 /**
- * Deterministic importance heuristic. Event-type base in [0, 1] scaled by
- * the magnitude of the need change it caused. Witnessing a death matters
- * more than seeing a tree; nothing here ever consults a model (V2: the LLM
- * does not touch the memory store).
+ * Deterministic importance heuristic. The world's declared salience for the
+ * event, scaled by the magnitude of the need change it caused. Witnessing a
+ * death matters more than seeing a tree — but WHICH events those are is the
+ * world's to say, not this function's; nothing here ever consults a model
+ * (V2: the LLM does not touch the memory store).
+ *
+ * An event the world does not declare has no salience at all.
  */
-const BASE: Record<SimEventType, number> = {
-  GatherSucceeded: 0.25,
-  GatherFailed: 0.3,
-  AteFood: 0.25,
-  DrankWater: 0.15,
-  BecameSick: 0.85,
-  RecoveredFromSickness: 0.5,
-  SleptSafely: 0.15,
-  SleptExposed: 0.35,
-  SufferedExposure: 0.5,
-  ReceivedItem: 0.6,
-  GaveItem: 0.45,
-  WasAttacked: 0.9,
-  AttackedAgent: 0.7,
-  AttackedByPredator: 0.92,
-  FoughtPredator: 0.8,
-  KilledPredator: 0.88,
-  Crafted: 0.78,
-  ChildBorn: 0.9,
-  AgentDied: 0.95,
-  WitnessedDeath: 0.9,
-  SeedDeposited: 0.2,
-  PlantSprouted: 0.55,
-  BuiltStructure: 0.5,
-  DepositedItem: 0.2,
-  WithdrewItem: 0.25,
-  UtteranceSpoken: 0.35,
-  IntentRejected: 0.3,
-  SawAgent: 0.1,
-  FoundResource: 0.3,
-};
-
-export function importanceOf(type: SimEventType, needDeltas: Partial<Needs>): number {
-  const base = BASE[type];
+export function importanceOf(
+  world: WorldAdapter,
+  type: SimEventType,
+  needDeltas: Partial<Needs>,
+): number {
+  const base = world.eventById.get(type)?.salience ?? 0;
   let magnitude = 0;
   for (const delta of Object.values(needDeltas)) {
     magnitude = Math.max(magnitude, Math.abs(delta) / 100);

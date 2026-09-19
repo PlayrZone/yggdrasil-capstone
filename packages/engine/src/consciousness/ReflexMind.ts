@@ -1,3 +1,4 @@
+import type { DriveSchema, WorldAdapter } from '../contract/adapter.js';
 import type {
   Goal,
   Intent,
@@ -8,6 +9,7 @@ import type {
   ObservedResource,
   ThinkInput,
 } from '../contract/types.js';
+import { foragerAdapter } from '../worlds/forager/adapter.js';
 import type { IMind } from './IMind.js';
 
 // Things an agent might TRY to eat (nutritious + poisonous). The reflex only
@@ -30,9 +32,18 @@ const POISON_NODE_YIELD: Partial<Record<string, ObjectKind>> = {
  * Y2 "discovery without consciousness" demo in miniature.
  */
 export class ReflexMind implements IMind {
+  /**
+   * Principle 3 of the W1-B brief: this policy is already WORLD side — it is
+   * the forager continent's hand-written survival instinct, nouns and all, and
+   * B3 moves the whole file to `worlds/forager/reflexPolicy.ts`. So the default
+   * is the world it belongs to, and a host that asks for "the reflex mind"
+   * without naming a world still gets exactly what it always got.
+   */
+  constructor(private readonly world: WorldAdapter = foragerAdapter) {}
+
   think(input: ThinkInput): MindOutput {
     const { snapshot, worldView, knowledge } = input;
-    const need = mostPressingNeed(input);
+    const need = mostPressingNeed(input, this.world.drives);
     // When no need presses, a being who holds a craft-recipe practises it.
     const craftSteps = need === undefined ? craftPlan(input, heldRecipe(knowledge)) : undefined;
     const goals: Goal[] = [];
@@ -169,23 +180,17 @@ function goal(input: ThinkInput, description: string, need: NeedKey | undefined)
   return { id: input.worldView.tick, description, need, createdTick: input.worldView.tick };
 }
 
-// Per-need urgency thresholds (instinct priorities, not "ideas"): hunger is
-// sought EARLY so foraging has runway before starvation; rest/social don't
-// dominate the agent into sleeping/socialising through hunger.
-const NEED_THRESHOLD: Record<NeedKey, number> = {
-  hunger: 48,
-  rest: 70,
-  safety: 60,
-  socialConnection: 74,
-};
-
-function mostPressingNeed(input: ThinkInput): NeedKey | undefined {
+// Instinct priorities, not "ideas": the world's `drives[].actsAt` says how
+// early each drive is served (hunger early, so foraging has runway before
+// starvation; rest/social late, so they don't dominate through hunger). Scanned
+// in the world's declared order — a tie goes to the later drive.
+function mostPressingNeed(input: ThinkInput, drives: readonly DriveSchema[]): NeedKey | undefined {
   let best: NeedKey | undefined;
   let bestMargin = 0;
-  for (const key of ['hunger', 'rest', 'safety', 'socialConnection'] as NeedKey[]) {
-    const margin = input.snapshot.needs[key] - NEED_THRESHOLD[key];
+  for (const drive of drives) {
+    const margin = input.snapshot.needs[drive.id] - drive.actsAt;
     if (margin >= 0 && margin >= bestMargin) {
-      best = key;
+      best = drive.id;
       bestMargin = margin;
     }
   }

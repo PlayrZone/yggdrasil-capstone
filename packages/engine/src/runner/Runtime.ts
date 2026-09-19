@@ -8,9 +8,6 @@ import {
   WorldRegularitiesSystem,
   WildlifeSystem,
   YggdrasilSystem,
-  TICKS_PER_DAY,
-  TICKS_PER_YEAR,
-  seasonAt,
 } from '../body/index.js';
 import { AgentMind } from '../agent/AgentMind.js';
 import { CognitionLog } from '../scheduler/CognitionLog.js';
@@ -19,6 +16,8 @@ import { LlmMind } from '../consciousness/LlmMind.js';
 import { RuleIntern } from '../knowledge/KnowledgeStore.js';
 import type { CognitionRecorder } from '../record/CognitionRecorder.js';
 import { ScaffoldLedger } from '../record/ScaffoldLedger.js';
+import { traitCurveValue } from '../contract/adapter.js';
+import type { CognitionDefaults, WorldAdapter } from '../contract/adapter.js';
 import type { Intent, MindOutput, SimEvent, Traits } from '../contract/types.js';
 import { runFlagsFrom } from './options.js';
 import type { ExperimentOptions, RunFlags } from './options.js';
@@ -32,12 +31,13 @@ import { CoPresenceSystem } from './society/CoPresence.js';
 import { ReproductionSystem } from './society/Reproduction.js';
 import type { NarrativeAuthor, SocietyHost, SocietySystem } from './society/SocietySystem.js';
 
-/** Cognition parameters derived from a being's personality (inherited by kids). */
-function mindOptions(tr: Traits): { thinkInterval: number; consolidateInterval: number; memoryHotCapacity: number } {
+/** Cognition parameters from a being's temperament (inherited by kids) — the
+ *  world declares the curves, the host reads them. */
+function mindOptions(d: CognitionDefaults, tr: Traits): { thinkInterval: number; consolidateInterval: number; memoryHotCapacity: number } {
   return {
-    thinkInterval: Math.round(180 - tr.curiosity * 1.1), // 70 (curious) … 180 (incurious)
-    consolidateInterval: Math.round(420 - (tr.curiosity * 0.6 + tr.ambition * 0.4) * 2.2),
-    memoryHotCapacity: Math.round(256 + ((tr.curiosity + tr.ambition) / 2) * 5),
+    thinkInterval: traitCurveValue(d.thinkInterval, tr),
+    consolidateInterval: traitCurveValue(d.consolidateInterval, tr),
+    memoryHotCapacity: traitCurveValue(d.memoryHotCapacity, tr),
   };
 }
 
@@ -57,6 +57,9 @@ function mindOptions(tr: Traits): { thinkInterval: number; consolidateInterval: 
  */
 export class SimRuntime implements RuntimeView, SocietyHost {
   readonly seed: string;
+  /** What kind of place this is, as data — read by every mind it creates, by
+   *  the event pipeline, by the recorder and by the clock. Never mutated. */
+  readonly adapter: WorldAdapter;
   readonly world = new World();
   readonly bus = new SimEventBus();
   readonly perception: PerceptionSystem;
@@ -96,6 +99,7 @@ export class SimRuntime implements RuntimeView, SocietyHost {
   constructor(options: ExperimentOptions, scenario: Scenario) {
     const { seed, agentCount = 100, mindBackend } = options;
     this.seed = seed;
+    this.adapter = scenario.adapter;
     this.flags = runFlagsFrom(options);
     const recording = options.recording;
     // Terrain elevation feeds the `highland` context feature so mountains read
@@ -156,6 +160,7 @@ export class SimRuntime implements RuntimeView, SocietyHost {
       modelId: mindBackend?.modelId ?? 'reflex',
     });
     installEventPipeline(this, {
+      world: this.adapter,
       narrator: this.narrator,
       leadership: this.flags.leadership,
       tombstoneRules: this.tombstoneRules,
@@ -263,8 +268,8 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     this.agentIds.push(agentId);
     this.minds.set(
       agentId,
-      new AgentMind(agentId, {
-        ...mindOptions(traits),
+      new AgentMind(agentId, this.adapter, {
+        ...mindOptions(this.adapter.cognitionDefaults, traits),
         mythBehavior: this.flags.mythBehavior,
         craftLearning: this.flags.craftLearning,
         provenance: this.flags.provenance,
@@ -338,22 +343,22 @@ export class SimRuntime implements RuntimeView, SocietyHost {
   }
 
   day(): number {
-    return Math.floor(this.tick / TICKS_PER_DAY) + 1;
+    return Math.floor(this.tick / this.adapter.time.ticksPerDay) + 1;
   }
 
   /** Year of the sim, 1-based — the unit cultural phenomena actually live at. */
   year(): number {
-    return Math.floor(this.tick / TICKS_PER_YEAR) + 1;
+    return Math.floor(this.tick / this.adapter.time.ticksPerYear) + 1;
   }
 
   /** Current season name (winter is the real challenge). */
   season(): string {
-    return seasonAt(this.tick);
+    return this.adapter.time.seasonAt(this.tick);
   }
 
   /** Fractional years elapsed — for year-scale checkpoints and reporting. */
   yearsElapsed(): number {
-    return this.tick / TICKS_PER_YEAR;
+    return this.tick / this.adapter.time.ticksPerYear;
   }
 
   // ─── Cognition lifecycle ──────────────────────────────────────────────────

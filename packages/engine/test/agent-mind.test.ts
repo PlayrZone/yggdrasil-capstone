@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AgentMind, ReflexMind } from '../src/index.js';
+import { AgentMind, ReflexMind, foragerAdapter } from '../src/index.js';
 import type { KnowledgeRule, ThinkInput } from '../src/index.js';
 import { CTX, mem, resetIds } from './helpers.js';
 
@@ -7,7 +7,7 @@ describe('AgentMind', () => {
   it('turns repeated mushroom sickness into held knowledge, deterministically', () => {
     const run = () => {
       resetIds();
-      const mind = new AgentMind(1, { consolidateInterval: 100 });
+      const mind = new AgentMind(1, foragerAdapter, { consolidateInterval: 100 });
       for (let i = 0; i < 5; i++) {
         const tick = i * 1000;
         mind.observe(mem(tick, 'AteFood', { objectKind: 'mushroomRed', x: 5, y: 5, needDeltas: { hunger: -40 } }));
@@ -27,7 +27,7 @@ describe('AgentMind', () => {
 
   it('intakes share-knowledge utterances as trust-discounted testimony', () => {
     resetIds();
-    const mind = new AgentMind(1);
+    const mind = new AgentMind(1, foragerAdapter);
     const rule: KnowledgeRule = {
       kind: 'context-association',
       event: 'GatherSucceeded',
@@ -52,7 +52,7 @@ describe('AgentMind', () => {
 
   it('moves relationship scalars on first-hand events only', () => {
     resetIds();
-    const mind = new AgentMind(1);
+    const mind = new AgentMind(1, foragerAdapter);
     mind.observe(mem(10, 'ReceivedItem', { subjects: [2], objectKind: 'berry' }));
     mind.observe(mem(20, 'AttackedAgent', { subjects: [3, 9], origin: 'observation' }));
     expect(mind.relationships.get(2)!.trust).toBeGreaterThan(50);

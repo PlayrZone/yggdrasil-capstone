@@ -1,9 +1,11 @@
 import type { World } from '../core/World.js';
 import type { Entity } from '../core/Entity.js';
+import type { WorldAdapter } from '../contract/adapter.js';
 import type { ResourceNodeKind } from '../contract/types.js';
 import type { TerrainField } from '../body/PerceptionSystem.js';
 import { WildlifeSystem, createResourceNode, spawnGahallians, TICKS_PER_SEASON } from '../body/index.js';
 import { mulberry32, hashSeed } from '../body/prng.js';
+import { foragerAdapter } from '../worlds/forager/adapter.js';
 import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS, isDeepWater } from '../world/regions.js';
 import type { Region } from '../world/regions.js';
 import { ForagerNarrator } from './society/Narration.js';
@@ -24,6 +26,12 @@ import type { NarrativeAuthor } from './society/SocietySystem.js';
 export interface Scenario {
   /** Recorded on every cognition row so a held-out-world split has a key. */
   readonly worldId: string;
+  /**
+   * What this world IS, as data a mind can read: its drives, events, context
+   * features, clock and cognition curves. W1-B1 — the scenario furnishes the
+   * world AND declares it; by B6 the two are one thing.
+   */
+  readonly adapter: WorldAdapter;
   /** Elevation provider for the `highland` context feature. */
   readonly terrain: TerrainField;
   /** Life-cycle numbers the society processes run on. */
@@ -54,11 +62,10 @@ export interface ScenarioWorld {
   readonly wildlife: WildlifeSystem;
 }
 
-const ADULT_AGE = TICKS_PER_SEASON; // ~4 days to mature
 const REPRO_COOLDOWN = TICKS_PER_SEASON; // a season between births
 
 const FORAGER_DEMOGRAPHY: Demography = {
-  adultAge: ADULT_AGE,
+  adultAge: foragerAdapter.time.adultAge,
   reproCooldown: REPRO_COOLDOWN,
   reproInterval: 300,
   reproRange: 14,
@@ -73,6 +80,7 @@ const FORAGER_DEMOGRAPHY: Demography = {
  * migration, competition, and exploration. Nothing is labelled or social.
  */
 export class ForagerScenario implements Scenario {
+  readonly adapter = foragerAdapter;
   readonly terrain: TerrainField = { elevationBand };
   readonly demography = FORAGER_DEMOGRAPHY;
 
@@ -172,7 +180,7 @@ export class ForagerScenario implements Scenario {
       this.agentCount,
       this.seed,
       { x: WORLD * 0.14, y: WORLD * 0.2, width: WORLD * 0.5, height: WORLD * 0.6 },
-      -ADULT_AGE, // the founders are already adults (able to reproduce)
+      -this.adapter.time.adultAge, // the founders are already adults (able to reproduce)
       isDeepWater, // never born in the sea or a lake
     );
 

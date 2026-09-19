@@ -4,6 +4,7 @@ import type { GahallianBody } from '../body/GahallianBody.js';
 import type { AgentMind } from '../agent/AgentMind.js';
 import type { RuleIntern } from '../knowledge/KnowledgeStore.js';
 import { memoryFromEvent } from '../memory/memoryFromEvent.js';
+import type { WorldAdapter } from '../contract/adapter.js';
 import type { SimEvent } from '../contract/types.js';
 import type { RunCounters } from './RunCounters.js';
 import type { NarrativeAuthor } from './society/SocietySystem.js';
@@ -24,6 +25,8 @@ export interface EventPipelineHost {
 }
 
 export interface EventPipelineOptions {
+  /** What kind of place this is: what events mean, and what they move. */
+  readonly world: WorldAdapter;
   /** Whose tale an event becomes, if any. */
   readonly narrator: NarrativeAuthor;
   /** Cycle 13 A/B: does respect grow from witnessed competence? (prestige) */
@@ -67,6 +70,7 @@ export function installEventPipeline(host: EventPipelineHost, opts: EventPipelin
   host.bus.on((event) => {
     host.counters.observe(event);
 
+    const schema = opts.world.eventById.get(event.type);
     const story = opts.narrator.storyFor(event);
     for (const witnessId of host.perception.witnessesOf(host.world, event)) {
       const mind = host.minds.get(witnessId);
@@ -75,17 +79,19 @@ export function installEventPipeline(host: EventPipelineHost, opts: EventPipelin
       if (!witness) continue;
       const t = witness.components['Transform2D'] as { x: number; y: number };
       const context = host.perception.contextAt(host.world, t.x, t.y, event.tick);
-      const memory = memoryFromEvent(event, witnessId, context);
+      const memory = memoryFromEvent(opts.world, event, witnessId, context);
       if (memory) mind.observe(memory);
       // A memorable event becomes a STORY the witness carries.
       if (story) mind.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
-      // PRESTIGE (Cycle 13): seeing a being do something competent — slay a
-      // predator, raise a shelter — earns it respect. Nothing assigns a leader;
-      // respect simply accrues to the visibly capable, and (via the social pull)
-      // others come to orbit them. Respect decays, so prestige must be re-earned.
-      if (opts.leadership && witnessId !== event.actorId) {
-        if (event.type === 'KilledPredator') mind.relationships.gainRespect(event.actorId, 5, event.tick);
-        else if (event.type === 'BuiltStructure' && event.payload['buildKind'] === 'shelter') mind.relationships.gainRespect(event.actorId, 3, event.tick);
+      // PRESTIGE (Cycle 13): seeing a being do something the WORLD counts as
+      // competence earns it respect. Nothing assigns a leader; respect simply
+      // accrues to the visibly capable, and (via the social pull) others come
+      // to orbit them. Respect decays, so prestige must be re-earned.
+      if (opts.leadership && schema?.prestige && witnessId !== event.actorId) {
+        const { respect, whenPayload } = schema.prestige;
+        if (!whenPayload || event.payload[whenPayload.key] === whenPayload.equals) {
+          mind.relationships.gainRespect(event.actorId, respect, event.tick);
+        }
       }
     }
     if (story) host.minds.get(event.actorId)?.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
@@ -94,7 +100,7 @@ export function installEventPipeline(host: EventPipelineHost, opts: EventPipelin
   if (opts.recorder) host.bus.on(opts.recorder.observeAfter);
 
   host.bus.on((event) => {
-    if (event.type !== 'AgentDied') return;
+    if (!opts.world.eventById.get(event.type)?.endsLife) return;
     // The BODY decides, not the event. `authorEvent` lets a driver stage a
     // death that nothing in the world performed; entombing on the event alone
     // would leave that being alive, amnesiac and — with its miners gone —

@@ -1,3 +1,5 @@
+import { featureActive } from '../contract/adapter.js';
+import type { ContextSchema, WorldAdapter } from '../contract/adapter.js';
 import type { ContextFeatureKey, MemoryRecord } from '../contract/types.js';
 import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
@@ -10,17 +12,10 @@ interface EventCell {
   provenance: Map<ContextFeatureKey, ProvenanceSample>;
 }
 
-const FEATURES: ContextFeatureKey[] = ['nearWater', 'night', 'inShelter', 'highland'];
-
 const MIN_JOINT = 3;
 const MIN_LIFT_POSITIVE = 1.5;
 const MAX_LIFT_NEGATIVE = 0.5;
 const MIN_EVENT_FOR_NEGATIVE = 6;
-
-function featureActive(m: MemoryRecord, f: ContextFeatureKey): boolean {
-  if (f === 'highland') return m.context.elevationBand === 2;
-  return m.context[f];
-}
 
 /**
  * Mines event ⇆ context-feature associations by lift:
@@ -28,10 +23,19 @@ function featureActive(m: MemoryRecord, f: ContextFeatureKey): boolean {
  * → "Gathering berries succeeds mostly near water."
  *
  * Pure counting — no truth oracle, no model. A coincidental correlation
- * that clears the thresholds becomes knowledge; that is by design.
+ * that clears the thresholds becomes knowledge; that is by design. WHICH
+ * features exist is the world's to declare, and the order it declares them
+ * in is the order evidence comes out in.
  */
 export class ContextMiner implements ILearner {
-  constructor(private readonly provenance: ProvenanceLevel = 'compact') {}
+  private readonly features: readonly ContextSchema[];
+
+  constructor(
+    world: WorldAdapter,
+    private readonly provenance: ProvenanceLevel = 'compact',
+  ) {
+    this.features = world.context;
+  }
 
   private totalMemories = 0;
   private featureTotals = new Map<ContextFeatureKey, number>();
@@ -40,7 +44,7 @@ export class ContextMiner implements ILearner {
 
   observe(memory: MemoryRecord): void {
     this.totalMemories++;
-    const active = FEATURES.filter((f) => featureActive(memory, f));
+    const active = this.features.filter((f) => featureActive(memory.context, f)).map((f) => f.id);
     for (const f of active) {
       this.featureTotals.set(f, (this.featureTotals.get(f) ?? 0) + 1);
     }
@@ -70,7 +74,7 @@ export class ContextMiner implements ILearner {
 
     for (const [key, cell] of this.events) {
       const parts = this.keyParts.get(key)!;
-      for (const feature of FEATURES) {
+      for (const { id: feature } of this.features) {
         const joint = cell.withFeature.get(feature) ?? 0;
         const featureTotal = this.featureTotals.get(feature) ?? 0;
         if (featureTotal === 0) continue;
