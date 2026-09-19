@@ -36,6 +36,16 @@ const FEED_CAP = 50;
  * array anyway would re-render the card, the disambiguation list and the key
  * binding on every one of those — for a list that has not changed.
  */
+/**
+ * How long a shelter's card survives the pointer leaving the chip.
+ *
+ * Long enough for a hand to travel the eighteen pixels from the number to the
+ * list of names under it, and no longer. The card is the only way to reach the
+ * people that chip is speaking for; a card that closes on the way to it is a
+ * dead end with a list in it.
+ */
+const CHIP_CARD_GRACE_MS = 320;
+
 function sameIds(a: readonly PickCandidate[], b: readonly PickCandidate[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i]!.id !== b[i]!.id) return false;
@@ -363,6 +373,15 @@ export function App(): React.ReactElement {
   const [candidates, setCandidates] = useState<PickCandidate[]>([]);
   const [pointerAt, setPointerAt] = useState({ x: 0, y: 0 });
   const [card, setCard] = useState<HoverCardData | null>(null);
+  /**
+   * Where the frame's other offered beings are, so an open card can miss them.
+   *
+   * Taken once, when the card opens, rather than per frame: the card is only up
+   * while the pointer is still, and re-measuring the whole offered set sixty
+   * times a second to place one tooltip would be the most expensive thing in
+   * the frame.
+   */
+  const [offeredPoints, setOfferedPoints] = useState<{ x: number; y: number }[]>([]);
   const [rosterOpen, setRosterOpen] = useState(true);
   const [chip, setChip] = useState<{ cluster: number; x: number; y: number } | null>(null);
   const [chipSum, setChipSum] = useState<ReturnType<World3D['chipSummary']>>(null);
@@ -375,6 +394,8 @@ export function App(): React.ReactElement {
   const brushRef = useRef(brush);
   const candRef = useRef(candidates);
   const chipRef = useRef<number | null>(null);
+  /** The pending close of a chip's card — see `onChip`. */
+  const chipClose = useRef<number | null>(null);
 
   const analysis = usePolled(client, tab === 'analysis', 'analysis', 2500);
   const society = usePolled(client, tab === 'society', 'society', 3000);
@@ -423,14 +444,33 @@ export function App(): React.ReactElement {
             // can never disagree.
             onHover: (cands, x, y) => {
               setCandidates((prev) => (sameIds(prev, cands) ? prev : cands));
-              if (cands.length > 0) setPointerAt({ x, y });
+              if (cands.length > 0) {
+                setPointerAt({ x, y });
+                // `aimPoints`, not `visibleIds`: the latter is defined by the
+                // picker and costs a raycast per candidate, and asking it on
+                // every pointer move stalled the whole view. See `aimPoints`.
+                const under = new Set(cands.map((c) => c.id));
+                setOfferedPoints((world3dRef.current?.aimPoints() ?? []).filter((p) => !under.has(p.id)));
+              }
               setBrush((b) => brushReduce(b, { kind: 'world-hover', id: cands[0]?.id ?? null }));
             },
-            onChip: (cluster, x, y) => setChip(cluster === null ? null : { cluster, x, y }),
+            // A shelter's chip is the ONLY route to the people it is speaking
+            // for — they are not offered under the pointer at all — so the card
+            // it opens has to survive the pointer travelling to it. Closing on
+            // the chip's own `pointerleave` made the names unreachable: the
+            // list unmounted between the reader seeing a name and pressing it,
+            // measured as a click that selected nobody. The close is deferred,
+            // and the card cancels it by taking the pointer.
+            onChip: (cluster, x, y) => {
+              if (chipClose.current !== null) { clearTimeout(chipClose.current); chipClose.current = null; }
+              if (cluster === null) chipClose.current = window.setTimeout(() => setChip(null), CHIP_CARD_GRACE_MS);
+              else setChip({ cluster, x, y });
+            },
             onChipClick: (cluster) => world3dRef.current?.zoomToCluster(cluster),
           },
         );
         world3dRef.current = world;
+        world.setRunning(runningRef.current);
         // A read-only handle for drivers and reviewers: what the view drew, so a
         // screenshot can be scored against the ground truth behind it.
         window.__ygg = {
@@ -438,6 +478,10 @@ export function App(): React.ReactElement {
           // A shader that never compiled shipped for four rounds because the
           // three ways a WebGL view breaks are all silent to `pageerror`.
           health: () => world.healthReport(),
+          // Which instanced meshes three may still drop on a stale bounding
+          // sphere — the round-five defect, asked directly. See `cullAudit`.
+          cullAudit: () => world.cullAudit(),
+          aimPoints: () => world.aimPoints(),
           drawnIds: () => world.drawnIds(),
           visibleIds: () => world.visibleIds(),
           visibilityOf: (id) => world.visibilityOf(id),
@@ -739,7 +783,12 @@ export function App(): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [llm.hasKey, llm.model]);
 
-  useEffect(() => { client.setRunning(running); }, [client, running]);
+  useEffect(() => {
+    client.setRunning(running);
+    // The view animates only while the WORLD does — a paused instrument is a
+    // frozen frame. See `World3D.setRunning`.
+    world3dRef.current?.setRunning(running);
+  }, [client, running]);
   useEffect(() => { client.setSpeed(SPEED_PRESETS[speedIdx]!.mult); }, [client, speedIdx]);
   useEffect(() => {
     tabRef.current = tab;
@@ -876,12 +925,24 @@ export function App(): React.ReactElement {
               }))}
               at={pointerAt}
               onPick={(id) => setBrush({ id, source: 'roster' })}
+              offeredPoints={offeredPoints}
             />
           )}
           {chip && chipSum && (
             <ChipCard
               summary={{ ...chipSum, filtering: matched !== null }}
               at={{ x: chip.x, y: chip.y }}
+              // The occupants of a shelter are reached through their chip and
+              // nowhere else — see `offeredUnderPointer`. This is that route.
+              onPick={(id) => {
+                if (chipClose.current !== null) { clearTimeout(chipClose.current); chipClose.current = null; }
+                world3dRef.current?.choose(id);
+                setChip(null);
+              }}
+              onHold={(held) => {
+                if (chipClose.current !== null) { clearTimeout(chipClose.current); chipClose.current = null; }
+                if (!held) chipClose.current = window.setTimeout(() => setChip(null), CHIP_CARD_GRACE_MS);
+              }}
             />
           )}
 
@@ -925,6 +986,8 @@ export function App(): React.ReactElement {
           onPick={pickRow}
           open={rosterOpen}
           onOpen={setRosterOpen}
+          speedMult={preset.mult}
+          running={running}
         />
         </div>
 

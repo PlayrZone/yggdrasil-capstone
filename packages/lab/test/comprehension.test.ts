@@ -37,19 +37,34 @@ import {
   cycleCandidate,
   groupByActivity,
   offerAudit,
+  offeredUnderPointer,
+  OFFER_MARGIN_PX,
   orderCandidates,
   PICK_BODY,
   PICK_FIGURE,
   PICK_HIDDEN,
   PICK_MARK,
   pickLayerOf,
+  steadyWinner,
   suppressOverlaps,
   type MarkPoint,
   type PickCandidate,
 } from '../src/renderer/crowd.js';
-import { CROWD_NOTE, LEGEND_EXTRA, legendFor } from '../src/renderer/beings.js';
+import {
+  CROWD_NOTE,
+  figurePose,
+  figureSpread,
+  LEGEND_EXTRA,
+  legendFor,
+  nameClaimFor,
+  poseLean,
+  stageForm,
+} from '../src/renderer/beings.js';
 import {
   ACT_COUNT,
+  ACT_DANGER,
+  ACT_DRINKING,
+  ACT_EATING,
   ACT_IDLE,
   ACT_RESTING,
   ACT_SOCIAL,
@@ -659,10 +674,79 @@ describe('the table holds still while a hand is on it', () => {
       .toEqual([1, 2, 3]);
   });
 
-  it('still drops a being that has died — the one row that may leave', () => {
+  it('drops a dead being only when nothing is remembering it', () => {
     const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3, 4] });
     const alive = four.filter((r) => r.id !== 2);
     expect(applyOrder(alive, sealed, alive).map((r) => r.id)).toEqual([1, 3, 4]);
+  });
+
+  /**
+   * Round five's LOW defect, and it is the same 24 px as the HIGH one.
+   *
+   * The reviewer rested the pointer on the table at 2400× for twelve seconds
+   * and the rendered rows changed. Nothing stale was ever listed and the order
+   * released correctly when he left — the dangerous half was handled — but
+   * "stands still for as long as the pointer is on it" was not what he
+   * measured, because at that speed beings die while a reader is aiming and
+   * every death compacts the list upward under their hand.
+   */
+  it('marks a being that dies IN PLACE rather than closing the gap under a hand', () => {
+    const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3, 4] });
+    const memory = new Map<number, RosterRow>();
+    // The first pass is what fills the memory: these are the rows on screen.
+    expect(applyOrder(four, sealed, four, memory).map((r) => r.id)).toEqual([1, 2, 3, 4]);
+    const alive = four.filter((r) => r.id !== 2);
+    const held = applyOrder(alive, sealed, alive, memory);
+    expect(held.map((r) => r.id)).toEqual([1, 2, 3, 4]);
+    expect(indexOfRow(held, 4)).toBe(3);
+    expect(held[1]!.gone).toBe(true);
+    expect(held[0]!.gone).toBeUndefined();
+    // And the marked row keeps its identity across renders, so React does not
+    // remount the row the pointer is resting on.
+    expect(applyOrder(alive, sealed, alive, memory)[1]).toBe(held[1]);
+  });
+
+  it('keeps updating the VALUES in the rows that are still there', () => {
+    const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3, 4] });
+    const memory = new Map<number, RosterRow>();
+    applyOrder(four, sealed, four, memory);
+    const moved = four.map((r) => (r.id === 3 ? row({ id: 3, distance: 999 }) : r));
+    const held = applyOrder(moved, sealed, moved, memory);
+    expect(held.map((r) => r.id)).toEqual([1, 2, 3, 4]);
+    expect(held[2]!.distance).toBe(999);
+  });
+
+  /**
+   * The 32-of-33, as arithmetic.
+   *
+   * The reviewer read `c-name|Wreniash` with `elementFromPoint`, pressed, and
+   * got Fenush — both at index 4. The table re-sorted in the ~60 ms between
+   * aiming and pressing, at 2400×, right after a pick had re-centred the
+   * camera. The seal existed and it engaged a frame too late, in an effect.
+   * `sealing` is that effect brought forward into the handler the press runs.
+   */
+  it('seals synchronously on a pick made with the pointer on the table', () => {
+    const thawed = orderReduce(FREE_ORDER, { kind: 'sort' });
+    expect(thawed.sealed).toBe(false);
+    const sealed = orderReduce(thawed, { kind: 'pick', id: 7, order: [5, 6, 7, 8], sealing: true });
+    expect(sealed.sealed).toBe(true);
+    expect(sealed.frozen).toEqual([5, 6, 7, 8]);
+    expect(sealed.anchor).toBe(7);
+  });
+
+  it('re-snapshots the order the PRESS saw, not the one a stale freeze held', () => {
+    const stale = orderReduce(FREE_ORDER, { kind: 'pick', id: 1, order: [1, 2, 3, 4] });
+    // The reader sorted by name; the table on screen is now a different order.
+    const onScreen = [4, 3, 2, 1];
+    const sealed = orderReduce(stale, { kind: 'pick', id: 3, order: onScreen, sealing: true });
+    expect(sealed.frozen).toEqual(onScreen);
+    expect(applyOrder(four, sealed, four).map((r) => r.id)).toEqual(onScreen);
+  });
+
+  it('leaves a pick made from the WORLD unsealed — the pointer is on the canvas', () => {
+    const state = orderReduce(FREE_ORDER, { kind: 'pick', id: 3, order: [1, 2, 3, 4] });
+    expect(state.sealed).toBe(false);
+    expect(state.frozen).toEqual([1, 2, 3, 4]);
   });
 
   it('picking inside a seal keeps the seal, so the next click is on a still table', () => {
@@ -823,3 +907,119 @@ describe('a being is offered exactly when the picker returns it', () => {
 });
 
 // ── A being standing behind a being is not in the picture ────────────────────
+
+// ── An offer has to hold for the length of a press ───────────────────────────
+
+/**
+ * Round five: 389 offered beings, 2 mispicks, and both of them hut occupants.
+ *
+ * The reviewer's own diagnosis, from `truth/f-claim1.json`: `visibleIds()`
+ * offered id 2338 at (976, 603), and by the time the mouse arrived
+ * `visibilityOf` said `coveredBy: 2359, reason: "behind another being"` — in a
+ * PAUSED world with a settled camera. The probe and the picker agreed at every
+ * instant. What moved was the idle animation.
+ *
+ * Three rules answer it, and they are tested here as the pure statements they
+ * are: nothing animates while the world is paused (`figurePose` is read at a
+ * frozen clock), the picker's box is built on the widest pose rather than the
+ * drawn one, and an offer needs a margin.
+ */
+describe('the offered set holds still', () => {
+  const ACTS = [ACT_IDLE, ACT_WALKING, ACT_WORKING, ACT_RESTING, ACT_SOCIAL, ACT_EATING, ACT_DRINKING, ACT_DANGER];
+
+  it('bounds every pose the animation can reach, for every act and every stage', () => {
+    for (const act of ACTS) {
+      for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
+        const stoop = stageForm(stage).stoop;
+        const lying = act === ACT_RESTING;
+        const box = figureSpread(poseLean(act, stoop), lying);
+        for (let k = 0; k < 400; k++) {
+          const phase = (k / 400) * 40;
+          const drawn = figureSpread(figurePose(act, stoop, 1.75, phase).lean, lying);
+          // A box narrower than the silhouette is a box the picker's ray
+          // reaches outside of. It may be wider; it may never be narrower.
+          expect(drawn).toBeLessThanOrEqual(box + 1e-9);
+        }
+      }
+    }
+  });
+
+  it('is a CONSTANT for an act, so the box does not breathe while a reader aims', () => {
+    for (const act of ACTS) {
+      const a = poseLean(act, 0.62);
+      const b = poseLean(act, 0.62);
+      expect(a).toBe(b);
+    }
+    // And the swinging act, which is the one with a real amplitude, really is
+    // bounded at the top of its swing rather than at its mean.
+    const swinging = poseLean(ACT_WORKING, 0);
+    expect(swinging).toBeGreaterThan(0.5);
+    expect(swinging).toBeCloseTo(0.52, 2);
+  });
+
+  it('freezes the pose when the clock does not move', () => {
+    const still = figurePose(ACT_WORKING, 0, 1.75, 12.5);
+    expect(figurePose(ACT_WORKING, 0, 1.75, 12.5)).toEqual(still);
+  });
+
+  it('refuses an offer whose winner changes within a couple of pixels', () => {
+    expect(steadyWinner([2338, 2338, 2338, 2338, 2338])).toBe(2338);
+    // The reviewer's own case: itself at the exact point, the neighbour two
+    // pixels away. Not offered at all, rather than offered and then wrong.
+    expect(steadyWinner([2338, 2338, 2359, 2338, 2338])).toBeNull();
+    expect(steadyWinner([2338, null, 2338, 2338, 2338])).toBeNull();
+    expect(steadyWinner([null, null, null, null, null])).toBeNull();
+    expect(steadyWinner([])).toBeNull();
+  });
+
+  it('measures the margin in pixels a hand actually moves', () => {
+    expect(OFFER_MARGIN_PX).toBeGreaterThanOrEqual(2);
+  });
+
+  /**
+   * The occupants of a shelter have had their rings, badges, arrows and names
+   * taken off so the hut is not a scribble, and one number on the roof stands
+   * for all of them. Offering them under the pointer as well is two
+   * contradictory promises at once — and both of round five's mispicks were
+   * beings the chip was already speaking for.
+   */
+  it('offers a shelter s occupants through their chip and not under the pointer', () => {
+    expect(offeredUnderPointer(null)).toBe(true);
+    expect(offeredUnderPointer(0)).toBe(false);
+    expect(offeredUnderPointer(7)).toBe(false);
+  });
+});
+
+// ── The unwell are not withheld in silence ───────────────────────────────────
+
+/**
+ * Round five, the blind reading: four fresh frames, seven unwell beings among
+ * them, and the reviewer wrote "everyone is well" on all four. Some of those
+ * seven were inside shelters, which the view is entitled to withhold — but
+ * nothing in the frame said which, and a frame that withholds in silence has
+ * told the reader something false.
+ *
+ * The naming rule already prints its own exception out loud. This is the same
+ * sentence, for the same reason.
+ */
+describe('the strip counts the unwell it is withholding', () => {
+  it('says how many of the people on their huts are not well', () => {
+    const claim = nameClaimFor('near', 12.34, 5, 55, 7);
+    expect(claim).toContain('55 more counted on their huts');
+    expect(claim).toContain('7 unwell counted on their huts');
+  });
+
+  it('says nothing when there is nothing to say', () => {
+    expect(nameClaimFor('near', 12.34, 5, 55, 0)).not.toContain('unwell');
+    expect(nameClaimFor('near', 12.34, 5, 0, 0)).toBe('5 named · nearest first · out to 12.34 m');
+  });
+
+  it('prints it at MID too, where most of a settlement is on a chip', () => {
+    expect(nameClaimFor('mid', 200, 10, 55, 4)).toContain('4 unwell counted on their huts');
+  });
+
+  it('keeps the clause even when nobody is named at all', () => {
+    expect(nameClaimFor('near', 0, 0, 12, 2))
+      .toBe('0 named · nearest first · 12 more counted on their huts · 2 unwell counted on their huts');
+  });
+});

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ACTIVITY_OPTIONS,
   CONDITION_OPTIONS,
@@ -29,6 +29,8 @@ import {
   type Sort,
   type SortKey,
 } from './roster.js';
+import { activityWord } from './beings.js';
+import { ACT_DRINKING, ACT_SOCIAL } from './sim/protocol.js';
 
 /**
  * The roster — every being as a row, docked under the world.
@@ -47,6 +49,11 @@ import {
 
 /** Row height in pixels — the one number the windowing maths and the CSS share. */
 const ROW_H = 24;
+
+/** Activities that are over before a reader can point at them. */
+const FLEETING_ACTS = [ACT_SOCIAL, ACT_DRINKING];
+/** Above this multiplier one of those states is gone inside a single frame. */
+const FLEETING_SPEED = 30;
 
 const COLUMNS: { key: SortKey; label: string; className: string }[] = [
   { key: 'name', label: 'name', className: 'c-name' },
@@ -90,6 +97,8 @@ export function RosterDock({
   onPick,
   open,
   onOpen,
+  speedMult,
+  running,
 }: {
   rows: RosterRow[];
   filter: FilterState;
@@ -104,6 +113,9 @@ export function RosterDock({
   onPick: (id: number) => void;
   open: boolean;
   onOpen: (next: boolean) => void;
+  /** How fast the world is running, for the transient-state hint below. */
+  speedMult: number;
+  running: boolean;
 }): React.ReactElement {
   const [sort, setSort] = useState<Sort>({ key: 'distance', dir: 1 });
   const [inFrameOnly, setInFrameOnly] = useState(true);
@@ -119,16 +131,29 @@ export function RosterDock({
   const scoped = useMemo(() => (inFrameOnly ? rows.filter((r) => r.inFrame) : rows), [rows, inFrameOnly]);
   const count = useMemo(() => countMatches(rows, filter), [rows, filter]);
   const sorted = useMemo(() => sortRows(filterRows(scoped, filter), sort), [scoped, filter, sort]);
+  /**
+   * The last row every sealed id had.
+   *
+   * A sealed table may not lose a row, and at 2400× beings die while a reader
+   * is aiming. Round five measured a "sealed" order whose rendered rows changed
+   * over twelve seconds with the pointer resting on the table; every change was
+   * a death compacting the list upward. The row stays, marked, with its last
+   * values — see `sealedRows`.
+   */
+  const held = useRef<Map<number, RosterRow>>(new Map());
   // `rows` — every being, not the scoped slice — is what a SEALED order looks
   // its frozen ids up in, so a being walking out of frame cannot pull the row
   // under the pointer up by twenty-four pixels mid-click. See `applyOrder`.
-  const shown = useMemo(() => applyOrder(sorted, order, rows), [sorted, order, rows]);
+  const shown = useMemo(() => applyOrder(sorted, order, rows, held.current), [sorted, order, rows]);
   const win = useMemo(
     () => windowFor(scrollTop, viewportH, ROW_H, shown.length),
     [scrollTop, viewportH, shown.length],
   );
+  // What is ON SCREEN, as of the last commit. A layout effect, not a passive
+  // one: `pick` reads this in the handler a press runs, and a mirror that is a
+  // paint behind is a mirror of the table the reader is no longer looking at.
   const shownRef = useRef(shown);
-  useEffect(() => { shownRef.current = shown; }, [shown]);
+  useLayoutEffect(() => { shownRef.current = shown; }, [shown]);
 
   // A new question is a new table: the freeze exists to stop a row moving under
   // the reader, not to outlive what they were reading.
@@ -142,30 +167,54 @@ export function RosterDock({
       : orderReduce(o, { kind: 'pick', id: selectedId, order: shownRef.current.map((r) => r.id) })));
   }, [selectedId]);
 
-  /** Pick a row, and hold the order it was picked in. */
+  // The pointer being over the table is what seals it. Sealing on ENTER rather
+  // than on the first press is deliberate: the press is already too late — the
+  // row has to have been standing still since before the reader aimed at it.
+  const [pointerIn, setPointerIn] = useState(false);
+  const pointerInRef = useRef(false);
+
+  /**
+   * Pick a row, and SEAL the order it was picked in — here, synchronously, in
+   * the handler the press runs.
+   *
+   * Round five re-sealed in an effect. A pick re-centres the camera, which
+   * drives every distance, and in the ~60 ms before the effect ran the table
+   * re-sorted under a reviewer's cursor: he read `c-name|Wreniash` at the press
+   * point and the press selected Fenush, both at index 4. A seal that engages a
+   * frame after the event it exists to prevent is not a seal.
+   */
   const pick = useCallback(
     (id: number) => {
-      setOrder((o) => orderReduce(o, { kind: 'pick', id, order: shownRef.current.map((r) => r.id) }));
+      setOrder((o) => orderReduce(o, {
+        kind: 'pick',
+        id,
+        order: shownRef.current.map((r) => r.id),
+        sealing: pointerInRef.current,
+      }));
       onPick(id);
     },
     [onPick],
   );
 
-  // The pointer being over the table is what seals it. Sealing on ENTER rather
-  // than on the first press is deliberate: the press is already too late — the
-  // row has to have been standing still since before the reader aimed at it.
-  const [pointerIn, setPointerIn] = useState(false);
-  const enter = useCallback(() => setPointerIn(true), []);
+  const enter = useCallback(() => {
+    pointerInRef.current = true;
+    setPointerIn(true);
+    // Synchronously, on the order the pointer arrived over — not a frame later.
+    setOrder((o) => orderReduce(o, { kind: 'enter', order: shownRef.current.map((r) => r.id) }));
+  }, []);
   const leave = useCallback(() => {
+    pointerInRef.current = false;
     setPointerIn(false);
     setOrder((o) => orderReduce(o, { kind: 'leave' }));
+    held.current.clear();
     onLeave();
   }, [onLeave]);
   // Re-sealed after anything the reader asked for — a header, a scroll, a new
   // question — thaws it, on whatever order that request produced. The table
   // re-sorts once, deliberately, and then stands still again for as long as the
-  // pointer is on it.
-  useEffect(() => {
+  // pointer is on it. A LAYOUT effect, so the thawed order never reaches the
+  // screen: the reader sees one deliberate re-sort and nothing else.
+  useLayoutEffect(() => {
     if (!pointerIn || order.sealed) return;
     setOrder((o) => orderReduce(o, { kind: 'enter', order: shownRef.current.map((r) => r.id) }));
   }, [pointerIn, order, shown]);
@@ -240,6 +289,15 @@ export function RosterDock({
   );
 
   const lit = chipCount(filter);
+  // A state that does not last long enough to be pointed at.
+  //
+  // "The elder who is speaking" is answerable in two interactions and then the
+  // elder stops speaking: an utterance is under a second of world time, and at
+  // 2400× that is a frame. A reader who does not know that reads a filter
+  // that keeps emptying as a broken filter. The view knows both halves — which
+  // activity was asked for and how fast the world is going — so it says so.
+  const fleetingAsked = FLEETING_ACTS.filter((a) => filter.activities.includes(a));
+  const fleeting = running && speedMult >= FLEETING_SPEED && fleetingAsked.length > 0;
 
   if (!open) {
     return (
@@ -282,6 +340,11 @@ export function RosterDock({
           onKeyDown={(e) => { if (e.key === 'Escape') onFilter(withText(filter, '')); }}
         />
         <span className={count.filtering && count.matched === 0 ? 'fcount none' : 'fcount'}>{describeCount(count)}</span>
+        {fleeting && (
+          <span className="fhint">
+            {fleetingAsked.map(activityWord).join(' and ')} lasts under a second at {speedMult}× — pause to hold it
+          </span>
+        )}
         {lit > 0 && (
           <button type="button" className="fclear" onClick={() => onFilter({ stages: [], conditions: [], activities: [], text: '' })}>
             Clear {lit}
@@ -341,7 +404,7 @@ export function RosterDock({
             <div style={{ height: win.padTop }} />
             {shown.slice(win.start, win.end).map((r, k) => {
               const at = win.start + k;
-              const cls = `rrow${r.id === selectedId ? ' sel' : ''}${r.id === brushId ? ' brush' : ''}${at === focus ? ' focus' : ''}`;
+              const cls = `rrow${r.id === selectedId ? ' sel' : ''}${r.id === brushId ? ' brush' : ''}${at === focus ? ' focus' : ''}${r.gone ? ' gone' : ''}`;
               return (
                 <div
                   key={r.id}
@@ -359,7 +422,7 @@ export function RosterDock({
                 >
                   <span className={`c-name${r.selfChosen ? ' named' : ''}`}>{r.name}</span>
                   <span className="c-stage">{r.stageWord}</span>
-                  <span className={`c-cond c-${r.condWord.replace(/\s+/g, '-')}`}>{r.condWord}</span>
+                  <span className={`c-cond c-${r.condWord.replace(/\s+/g, '-')}`}>{r.gone ? 'died' : r.condWord}</span>
                   <span className="c-act">{r.actWord}</span>
                   <span className="c-head">{r.headingWord}</span>
                   <span className="c-need"><Bar value={r.hunger} /></span>

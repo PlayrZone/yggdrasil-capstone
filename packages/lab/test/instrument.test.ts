@@ -6,7 +6,9 @@ import {
   LIT_ONLY_VERTEX_IDENTIFIERS,
   litOnlyIdentifiersIn,
 } from '../src/renderer/shading.js';
-import { createHealth, onConsoleError } from '../src/renderer/health.js';
+import { createHealth, onConsoleError, onWindowError } from '../src/renderer/health.js';
+import { readFileSync } from 'node:fs';
+import * as THREE from 'three';
 
 /**
  * The instrument's own health, and the one coordinate frame its probes answer
@@ -113,13 +115,13 @@ describe('a patch compiles against the material it is put into', () => {
 // ── Is this renderer well? ───────────────────────────────────────────────────
 
 describe('the renderer says whether it is well', () => {
-  it('starts at zero on all three counts', () => {
+  it('starts at zero on every count', () => {
     expect(createHealth().report()).toEqual({
-      shaderErrors: 0, consoleErrors: 0, webglContextLost: 0, notes: [],
+      shaderErrors: 0, consoleErrors: 0, webglContextLost: 0, windowErrors: 0, cullRisks: 0, notes: [],
     });
   });
 
-  it('counts the three ways a WebGL view breaks silently, separately', () => {
+  it('counts the ways a WebGL view breaks silently, separately', () => {
     const health = createHealth();
     health.noteShaderError('undeclared identifier');
     health.noteConsoleError('something else');
@@ -130,6 +132,45 @@ describe('the renderer says whether it is well', () => {
     expect(report.consoleErrors).toBe(2);
     expect(report.webglContextLost).toBe(1);
     expect(report.notes[0]).toContain('undeclared identifier');
+  });
+
+  /**
+   * The reviewer's own blind spot, named by him: a renderer `window.onerror` is
+   * not a `console.error`. He raised `ResizeObserver loop completed with
+   * undelivered notifications` on a live resize and every count stayed at zero.
+   */
+  it('counts the page s own faults, which no console tap sees', () => {
+    const health = createHealth();
+    const handlers = new Map<string, (e: unknown) => void>();
+    const source = {
+      addEventListener: (t: string, fn: (e: unknown) => void) => { handlers.set(t, fn); },
+      removeEventListener: (t: string) => { handlers.delete(t); },
+    };
+    const drop = onWindowError(source, (text) => health.noteWindowError(text));
+    handlers.get('error')!({ message: 'ResizeObserver loop completed with undelivered notifications' });
+    handlers.get('unhandledrejection')!({ reason: new Error('a promise nobody caught') });
+    const report = health.report();
+    expect(report.windowErrors).toBe(2);
+    expect(report.consoleErrors).toBe(0);
+    expect(report.notes[0]).toContain('ResizeObserver');
+    expect(report.notes[1]).toContain('a promise nobody caught');
+    drop();
+    expect(handlers.size).toBe(0);
+  });
+
+  /**
+   * The round-five defect, made countable. It is a STATE of the scene, not an
+   * event, so it is replaced rather than accumulated: a mesh that is fixed must
+   * be able to stop being reported.
+   */
+  it('reports the meshes three may drop, by name, and lets them be fixed', () => {
+    const health = createHealth();
+    health.setCullRisks(['lit windows']);
+    expect(health.report().cullRisks).toBe(1);
+    expect(health.report().notes.join(' ')).toContain('lit windows');
+    health.setCullRisks([]);
+    expect(health.report().cullRisks).toBe(0);
+    expect(health.report().notes).toEqual([]);
   });
 
   it('keeps the messages but never becomes a log sink', () => {
@@ -223,6 +264,127 @@ describe('the renderer says whether it is well', () => {
     // And the tap really is gone, rather than a layer deep.
     sink.error('b');
     expect(seen).toEqual(['a']);
+  });
+});
+
+// ── A mesh three is allowed to drop ──────────────────────────────────────────
+
+/**
+ * The round-five defect, reproduced in three itself and then closed.
+ *
+ * `this.windows` was the only `InstancedMesh` in `World3D` that did not turn
+ * frustum culling off. It was created with `count = 0` — as every mesh here is,
+ * because the count is written per frame — so on its FIRST frustum test three
+ * computed a bounding sphere from zero instances, cached it, and never looked
+ * again. Measured here rather than assumed: that sphere is centred on the WORLD
+ * ORIGIN with radius −1, which three's own `intersectsSphere` reads as "inside"
+ * wherever the origin happens to be in view. On a two-kilometre continent, a
+ * camera standing at a hut is never looking at the origin, so the panes were
+ * drawn in exactly the frames nobody was photographing.
+ *
+ * Every health count stayed at zero: the program linked, `updateLight` set the
+ * opacity, the matrices were written and uploaded, and no hut was lit at
+ * midnight for the life of the view. Only a photograph could see it, and the
+ * round that claimed the picture did not take one.
+ */
+describe('an instanced mesh built empty is drawn by where the ORIGIN is', () => {
+  /** Looking at a hut, out where a settlement actually stands. */
+  const HUT = { x: 300, y: 0, z: -220 };
+  const frustumAtHut = (): THREE.Frustum => {
+    const camera = new THREE.PerspectiveCamera(45, 1.6, 0.25, 500);
+    camera.position.set(HUT.x, 3, HUT.z + 12);
+    camera.lookAt(HUT.x, 1.4, HUT.z);
+    camera.updateMatrixWorld();
+    camera.updateProjectionMatrix();
+    return new THREE.Frustum().setFromProjectionMatrix(
+      new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+    );
+  };
+
+  /** A pane on the hut's side wall, exactly as `rebuildStructures` writes it. */
+  const paneOnTheHut = (mesh: THREE.InstancedMesh): void => {
+    mesh.setMatrixAt(0, new THREE.Matrix4().makeTranslation(HUT.x, 1.4, HUT.z));
+    mesh.count = 1;
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+
+  const emptyMesh = (): THREE.InstancedMesh => {
+    const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.8, 0.7), new THREE.MeshBasicMaterial(), 64);
+    mesh.count = 0;
+    return mesh;
+  };
+
+  it('caches an empty sphere on the origin the first time it is tested', () => {
+    const mesh = emptyMesh();
+    mesh.computeBoundingSphere();
+    expect(mesh.boundingSphere!.radius).toBe(-1);
+    expect(mesh.boundingSphere!.center.lengthSq()).toBe(0);
+  });
+
+  it('reproduces the defect: the pane is in front of the camera and not drawn', () => {
+    const mesh = emptyMesh();
+    const frustum = frustumAtHut();
+    // The first frustum test, with nothing in it — the frame that poisons it.
+    frustum.intersectsObject(mesh);
+    paneOnTheHut(mesh);
+    // Square in front of the camera, matrix written and uploaded, and three
+    // still says no, because the sphere it kept is the empty one at the origin.
+    expect(frustum.intersectsObject(mesh)).toBe(false);
+  });
+
+  it('is closed by turning culling off, which is what the factory does', () => {
+    const mesh = emptyMesh();
+    mesh.frustumCulled = false;
+    frustumAtHut().intersectsObject(mesh);
+    paneOnTheHut(mesh);
+    // The renderer never asks the frustum about a mesh with culling off, so
+    // the stale sphere cannot decide anything.
+    expect(mesh.frustumCulled).toBe(false);
+  });
+
+  it('is also closed by dropping the cached sphere when the count changes', () => {
+    const mesh = emptyMesh();
+    const frustum = frustumAtHut();
+    frustum.intersectsObject(mesh);
+    paneOnTheHut(mesh);
+    mesh.boundingSphere = null; // what `writeMarkers` does for the bodies
+    expect(frustum.intersectsObject(mesh)).toBe(true);
+  });
+});
+
+/**
+ * The generic guard, held against the file itself.
+ *
+ * `cullAudit` catches it at runtime and `health().cullRisks` reports it, but a
+ * runtime guard only fires in a session somebody runs. This one fires in CI, on
+ * the next mesh somebody adds without reading any of the above: every
+ * `InstancedMesh` this view creates must come out of the one factory that makes
+ * it undroppable, and the two exceptions are the factory itself and `regrow`,
+ * which copies the property across.
+ */
+describe('every instanced mesh the view creates goes through the guard', () => {
+  it('leaves no bare construction in World3D', () => {
+    const src = readFileSync(new URL('../src/renderer/World3D.ts', import.meta.url), 'utf8');
+    const lines = src.split('\n');
+    const bare: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (!line.includes('new THREE.InstancedMesh(')) continue;
+      // The factory (`instanced`) and `regrow` are the two places allowed to
+      // call the constructor; both set the property on what they hand back.
+      const before = lines.slice(Math.max(0, i - 14), i).join('\n');
+      const inFactory = /private instanced\(|function regrow\(/.test(before);
+      if (!inFactory) bare.push(`${i + 1}: ${line.trim()}`);
+    }
+    expect(bare).toEqual([]);
+  });
+
+  it('names every mesh, so a non-zero cullRisks says which one', () => {
+    const src = readFileSync(new URL('../src/renderer/World3D.ts', import.meta.url), 'utf8');
+    for (const call of src.matchAll(/this\.instanced\(\s*([^,]+),/g)) {
+      const name = call[1]!.trim();
+      expect(name.startsWith("'") || name.startsWith('`')).toBe(true);
+    }
   });
 });
 

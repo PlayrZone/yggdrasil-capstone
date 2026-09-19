@@ -68,6 +68,27 @@ export const READABLE_MARK_PX = 9;
  */
 export const XRAY_MIN_BODY_PX = 9;
 
+/**
+ * And how tall a body has to stand before it is given a dark keyline.
+ *
+ * Lower than the x-ray's floor on purpose: the keyline is what separates one
+ * pale figure from the next, and a crowd at DEFAULT is exactly where that
+ * separation is scarcest. Below this a body is a few pixels of bone and an
+ * outline round it would be a dark speck rather than an edge.
+ */
+export const OUTLINE_MIN_BODY_PX = 6;
+
+/**
+ * The smallest an unwell being's flag is ever drawn, in CSS pixels of height.
+ *
+ * It is a FLOOR, not a size: the flag scales with its being like everything
+ * else and then refuses to go under this, because the whole job of the mark is
+ * to be findable in a frame a reader is scanning rather than studying. At
+ * DEFAULT a being is fourteen pixels and two sick in a hundred and twenty-three
+ * is what a reviewer missed four times running.
+ */
+export const FLAG_MIN_PX = 13;
+
 // ── The subjects the scenery has to step aside for ───────────────────────────
 
 /**

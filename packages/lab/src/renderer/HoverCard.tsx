@@ -54,6 +54,13 @@ export function placeCard(
   at: { x: number; y: number },
   h: number,
   avoid?: { x: number; y: number; r: number } | null,
+  /**
+   * The other beings this frame is offering, as the points a reader would aim
+   * at. A card that covers them has taken them off the screen for as long as it
+   * is open — in one measured MID frame it sat on 6 of 13 — and the mouse
+   * cannot reach them without moving away first, which closes the card.
+   */
+  others?: readonly { x: number; y: number }[],
 ): React.CSSProperties {
   const w = typeof window === 'undefined' ? 1600 : window.innerWidth;
   const vh = typeof window === 'undefined' ? 900 : window.innerHeight;
@@ -65,21 +72,41 @@ export function placeCard(
     { left: at.x - CARD_W / 2, top: at.y - 24 - h },
     { left: at.x - CARD_W / 2, top: at.y + 24 },
   ];
-  let fallback: { left: number; top: number } | null = null;
-  for (const slot of slots) {
-    const inside = slot.left >= 8 && slot.left + CARD_W <= w - 8 && slot.top >= 8 && slot.top + h <= vh - 8;
-    if (!inside) continue;
-    if (!fallback) fallback = slot;
-    if (!avoid) break;
+  const clearsSubject = (slot: { left: number; top: number }): boolean => {
+    if (!avoid) return true;
     const nearestX = Math.max(slot.left, Math.min(avoid.x, slot.left + CARD_W));
     const nearestY = Math.max(slot.top, Math.min(avoid.y, slot.top + h));
     const reach = avoid.r + 4;
-    if ((nearestX - avoid.x) ** 2 + (nearestY - avoid.y) ** 2 > reach * reach) {
-      fallback = slot;
-      break;
+    return (nearestX - avoid.x) ** 2 + (nearestY - avoid.y) ** 2 > reach * reach;
+  };
+  const covers = (slot: { left: number; top: number }): number => {
+    if (!others) return 0;
+    let n = 0;
+    for (const p of others) {
+      if (p.x >= slot.left && p.x <= slot.left + CARD_W && p.y >= slot.top && p.y <= slot.top + h) n++;
+    }
+    return n;
+  };
+  // The subject's own clearance is not negotiable — a card over the being it
+  // describes makes "which one is it?" unanswerable exactly when it is asked.
+  // Among the slots that clear it, the one that buries the fewest of its
+  // neighbours wins; ties keep the order above, which is the reader's habit.
+  let best: { left: number; top: number } | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  let anyInside: { left: number; top: number } | null = null;
+  for (const slot of slots) {
+    const inside = slot.left >= 8 && slot.left + CARD_W <= w - 8 && slot.top >= 8 && slot.top + h <= vh - 8;
+    if (!inside) continue;
+    if (!anyInside) anyInside = slot;
+    if (!clearsSubject(slot)) continue;
+    const score = covers(slot);
+    if (score < bestScore) {
+      bestScore = score;
+      best = slot;
+      if (score === 0) break;
     }
   }
-  const chosen = fallback ?? {
+  const chosen = best ?? anyInside ?? {
     left: Math.max(8, Math.min(w - 8 - CARD_W, at.x + 18)),
     top: Math.max(8, Math.min(vh - 8 - h, at.y + 16)),
   };
@@ -121,18 +148,21 @@ export function HoverCard({
   others,
   at,
   onPick,
+  offeredPoints,
 }: {
   card: HoverCardData;
   /** Every being under the cursor, in offer order. One entry means no ambiguity. */
   others: { id: number; name: string; stage: string }[];
   at: { x: number; y: number };
   onPick: (id: number) => void;
+  /** Where the frame's other offered beings are, so the card can miss them. */
+  offeredPoints?: readonly { x: number; y: number }[];
 }): React.ReactElement {
   const many = others.length > 1;
   return (
     <div
       className="hovercard"
-      style={placeCard(at, many ? 330 : 190, card.mark)}
+      style={placeCard(at, many ? 330 : 190, card.mark, offeredPoints)}
       role="tooltip"
       aria-live="polite"
     >
@@ -199,6 +229,8 @@ const CHIP_NAMES_MAX = 24;
 export function ChipCard({
   summary,
   at,
+  onPick,
+  onHold,
 }: {
   summary: {
     count: number;
@@ -209,9 +241,19 @@ export function ChipCard({
     mix: { word: string; count: number; color: string }[];
     activities: { word: string; count: number }[];
     /** Who they are — listed only for a shelter, whose occupants have no names drawn. */
-    names?: { id: number; name: string }[];
+    names?: { id: number; name: string; condition?: string }[];
   };
   at: { x: number; y: number };
+  /**
+   * Selecting one of the people in here.
+   *
+   * The occupants of a shelter are not offered under the pointer — the chip is
+   * what stands for them, and a chip that stands for somebody has to be the way
+   * to reach them. This list is that way.
+   */
+  onPick?: (id: number) => void;
+  /** The pointer is on the card: hold it open, whatever the chip says. */
+  onHold?: (held: boolean) => void;
 }): React.ReactElement {
   const names = summary.inside ? (summary.names ?? []).slice(0, CHIP_NAMES_MAX) : [];
   const more = summary.inside ? (summary.names ?? []).length - names.length : 0;
@@ -236,15 +278,30 @@ export function ChipCard({
         ))}
       </ul>
       {names.length > 0 && (
-        <div className="hwho">
-          <label>who is in here</label>
+        <div
+          className="hwho"
+          onPointerEnter={() => onHold?.(true)}
+          onPointerLeave={() => onHold?.(false)}
+        >
+          <label>who is in here — click a name to select</label>
           <ul>
-            {names.map((n) => <li key={n.id}>{n.name}</li>)}
+            {names.map((n) => (
+              <li key={n.id}>
+                <button
+                  type="button"
+                  className={n.condition && n.condition !== 'well' ? `c-${n.condition.replace(/\s+/g, '-')}` : ''}
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onPick?.(n.id); }}
+                >
+                  {n.name}
+                  {n.condition && n.condition !== 'well' && <em>{n.condition}</em>}
+                </button>
+              </li>
+            ))}
             {more > 0 && <li className="hmore">+{more} more</li>}
           </ul>
         </div>
       )}
-      <div className="hfoot"><span>click to frame them</span></div>
+      <div className="hfoot"><span>click the number to frame them</span></div>
     </div>
   );
 }

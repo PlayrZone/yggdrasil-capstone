@@ -114,6 +114,27 @@ body {
 .chipcard .hwho ul { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; margin: 0; padding: 0; list-style: none; }
 .chipcard .hwho li { font-size: 10.5px; line-height: 15px; color: #d6e1e8; white-space: nowrap; }
 .chipcard .hwho li.hmore { color: #8c9aa4; }
+/* Each name is the way IN to that being: the occupants of a shelter are not
+   offered under the pointer at all, so this list is their only route. */
+/* The card itself takes no pointer events — it must never stand between a
+   reader and the world behind it — so the one part that IS a control turns
+   them back on for itself. */
+.chipcard .hwho { pointer-events: auto; }
+.chipcard .hwho li button {
+  background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit;
+  cursor: pointer; text-align: left; width: 100%;
+}
+.chipcard .hwho li button:hover { color: var(--found); text-decoration: underline; }
+.chipcard .hwho li button em { font-style: normal; margin-left: 5px; font-size: 9.5px; }
+/* How many of a crowd are NOT well, in the worst condition's own colour.
+   A reviewer read four frames holding seven unwell beings as "everybody is
+   well": the 30 x 4 px mix bar under the number is not a thing anybody
+   notices. A number the size of the count beside it is. Absent when the whole
+   crowd is fine, so its presence alone is the signal. */
+.wcount .will {
+  font-style: normal; font-weight: 700; font-variant-numeric: tabular-nums;
+  margin-left: 5px; padding-left: 5px; border-left: 1px solid rgba(160, 176, 188, 0.4);
+}
 /* How many of this crowd answer the current question. Only ever present while
    something is being asked. */
 .wcount .wmatch {
@@ -377,6 +398,8 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 .worldcol > .stage { min-height: 0; }
 .worldcol > .stage .legend { flex: 0 0 auto; }
 
+.world3d { min-height: 220px; }
+
 /* The table supports the picture; it does not compete with it. A third of a
    short window is the most it may take, and on a tall one it stops at the
    nine rows a reader actually scans. */
@@ -419,6 +442,11 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 .fsearch:focus { outline: none; border-color: var(--accent); }
 .fcount { color: #9fb0ba; font-size: 11.5px; font-variant-numeric: tabular-nums; margin-left: auto; }
 .fcount.none { color: #e09a3a; }
+/* A state that is over before it can be pointed at. "The elder who is speaking"
+   is answerable in two interactions and then the elder stops speaking; at 2400x
+   an utterance is a frame. A reader who is not told reads that as a broken
+   filter. */
+.fhint { color: #e09a3a; font-size: 11px; }
 .fclear {
   background: transparent; border: 1px solid #2a353e; color: #b7c4cc;
   font-size: 11px; padding: 4px 8px 5px; border-radius: 3px; cursor: pointer;
@@ -469,6 +497,13 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 .rrow .c-head { font-variant-numeric: tabular-nums; }
 .rrow .c-dist { text-align: right; color: #8d9ca6; font-variant-numeric: tabular-nums; }
 .rrow .c-need { display: flex; justify-content: flex-end; }
+/* A being that died while the table was held still for a reader. The row keeps
+   its place — everything under a departure slides up by twenty-four pixels and
+   the row somebody is aiming at stops being the row they press — and says so
+   instead of vanishing. */
+.rrow.gone { opacity: 0.45; cursor: default; }
+.rrow.gone .c-name { text-decoration: line-through; }
+.rrow.gone .c-cond { color: #8d9ca6; }
 .c-well { color: var(--c-well); }
 .c-starving { color: var(--c-starving); }
 .c-sick { color: var(--c-sick); }
@@ -533,3 +568,32 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 .hmix li i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .hmix li b, .hacts li b { margin-left: auto; color: #e7eef2; font-weight: 600; font-variant-numeric: tabular-nums; }
 .hacts { border-top: 1px solid #1d262d; margin-top: 6px; padding-top: 5px; color: #8d9ca6; }
+
+/* ── A short window keeps the PICTURE, and sheds the chrome ──────────────────
+   These come last on purpose: they are overrides, and a media block placed
+   above the rule it means to override loses to it at equal specificity — which
+   is how the first cut of this shipped with a roster that ignored it.
+
+   Forced to 900 x 620, under the app's own declared minimum of 1024 x 680, the
+   canvas fell to 497 x 62 CSS while the legend held ~330 px and the roster's
+   filter chips ~200. The coordinate frame survived that, which is what was
+   being tested; the layout did not. A world view is the last thing a small
+   window sacrifices, not the first. */
+@media (max-height: 780px) {
+  .worldcol > .stage { padding: 10px; gap: 6px; }
+  /* The legend's prose is the explanation, not the key: it goes first. */
+  .legend .lprose { max-height: 56px; }
+  .roster { flex: 0 0 min(168px, 26vh); }
+}
+@media (max-height: 680px) {
+  .worldcol > .stage { padding: 6px; gap: 4px; }
+  .legend .lprose { display: none; }
+  /* Two rows of the key, scrollable, rather than eight rows of a wrapped one. */
+  .legend { max-height: 34px; overflow-y: auto; }
+  .roster { flex: 0 0 min(124px, 21vh); }
+  /* The filter bar scrolls sideways rather than wrapping into four rows and
+     pushing the table, and the picture, off the bottom. */
+  .roster .rbar-top { flex-wrap: nowrap; overflow-x: auto; padding: 4px 8px; }
+  .roster .fgroup.wrap { flex-wrap: nowrap; }
+  .roster .rbody { min-height: 0; }
+}

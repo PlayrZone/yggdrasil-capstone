@@ -720,14 +720,91 @@ export function stageForm(stage: number): StageForm {
  * third of that body outside itself. Round seven's two residual "offered but
  * the picker returns somebody else" beings were both in that gap.
  *
- * `lean` is the pitch `writeMarkers` actually wrote this frame, so there is no
- * table here to drift out of step with the drawing.
+ * `lean` is the pitch `figurePose` writes, so there is no table here to drift
+ * out of step with the drawing.
  */
 export const FIGURE_HALF_W = 0.21;
 
 export function figureSpread(lean: number, lying: boolean): number {
   if (lying) return 0.52;
   return FIGURE_HALF_W + Math.abs(Math.sin(lean)) * 0.62;
+}
+
+// ── How a body is posed, and the box that always bounds it ───────────────────
+
+/**
+ * The pose a body is DRAWN in: the pitch, the bob and the roll, for one act at
+ * one instant of its cycle.
+ *
+ * It lives here rather than inside the draw loop because a second thing needs
+ * it — the box the picker uses — and the two must be one function. Round five
+ * had them as two: the box read `beingLean`, which the draw loop wrote from an
+ * animated `sin`, so in a PAUSED world with a settled camera the boxes of people
+ * packed into a shelter still breathed, and the depth order at one pixel flipped
+ * between a reviewer reading the offer and pressing the mouse on it. Two beings
+ * in 389 handed back somebody else.
+ */
+export interface FigurePose {
+  /** Pitch forward, radians. */
+  lean: number;
+  /** Vertical offset, in metres — the caller has already scaled by height. */
+  bob: number;
+  /** Roll about the facing axis, radians. */
+  roll: number;
+}
+
+export function figurePose(act: number, stoop: number, height: number, phase: number): FigurePose {
+  let bob = 0;
+  let lean = stoop * 0.12;
+  let roll = 0;
+  if (act === ACT_RESTING) {
+    lean = Math.PI * 0.46; // laid out on the ground
+    bob = -height * 0.06;
+  } else if (act === ACT_DANGER) {
+    bob = Math.abs(Math.sin(phase * 2.2)) * height * 0.13;
+    lean = 0.24;
+    roll = Math.sin(phase * 3.4) * 0.13;
+  } else if (act === ACT_WALKING) {
+    bob = Math.abs(Math.sin(phase)) * height * 0.055;
+    lean += 0.07;
+  } else if (act === ACT_WORKING) {
+    lean += 0.30 + Math.sin(phase * 0.9) * 0.22; // swinging at something
+  } else if (act === ACT_EATING || act === ACT_DRINKING) {
+    lean += act === ACT_DRINKING ? 0.42 : 0.24; // stooped over it
+    bob = -height * 0.07;
+  } else if (act === ACT_SOCIAL) {
+    roll = Math.sin(phase * 0.7) * 0.05; // turned toward whoever is listening
+  }
+  return { lean, bob, roll };
+}
+
+/** The slowest cycle in `figurePose`, and how finely `poseLean` walks it. */
+const POSE_PERIOD = (Math.PI * 2) / 0.7;
+const POSE_SAMPLES = 256;
+const POSE_WIDEST = new Map<number, number>();
+
+/**
+ * The widest pitch this act can reach — the UN-animated silhouette.
+ *
+ * `figureSpread` grows with `|sin(lean)|`, so a box built on the widest lean of
+ * the cycle contains the drawn figure at every instant and never changes with
+ * time. That is the whole property the picker needs: the offered set may not
+ * move while a reader aims at it.
+ *
+ * Measured off `figurePose` itself, by walking its own slowest cycle, so it
+ * cannot drift from the pose it is meant to bound.
+ */
+export function poseLean(act: number, stoop: number): number {
+  const key = act * 8 + Math.round(stoop * 100);
+  const held = POSE_WIDEST.get(key);
+  if (held !== undefined) return held;
+  let widest = 0;
+  for (let k = 0; k < POSE_SAMPLES; k++) {
+    const lean = Math.abs(figurePose(act, stoop, 1, (k / POSE_SAMPLES) * POSE_PERIOD).lean);
+    if (lean > widest) widest = lean;
+  }
+  POSE_WIDEST.set(key, widest);
+  return widest;
 }
 
 /**
@@ -1475,11 +1552,17 @@ function chipCoverage(
  * thing, and a reviewer called it — correctly — three statements that cannot
  * all be true.
  */
-export function nameClaimFor(band: ZoomBand, withinM: number, shown: number, carried = 0): string {
+export function nameClaimFor(band: ZoomBand, withinM: number, shown: number, carried = 0, unwell = 0): string {
   // The people a BUILDING's chip is speaking for are named on the chip and
   // nowhere else, and that is the one exception to "nearest first". An
   // exception a reader cannot see is a lie, so the strip counts them out loud.
-  const housed = carried > 0 ? ` · ${carried} more counted on their huts` : '';
+  //
+  // And it counts the UNWELL among them separately. A reviewer read four frames
+  // that held seven unwell beings as "everybody is well" — some of those seven
+  // were inside shelters, which the view is entitled to withhold, but a frame
+  // that withholds them without saying so has told a reader something false.
+  const housed = (carried > 0 ? ` · ${carried} more counted on their huts` : '')
+    + (unwell > 0 ? ` · ${unwell} unwell counted on their huts` : '');
   if (band === 'near') {
     return shown === 0
       ? `0 named · nearest first${housed}`

@@ -46,6 +46,21 @@ export interface WorldProbe {
    * here is a measurement of a broken instrument.
    */
   health(): HealthReport;
+  /**
+   * Which instanced meshes three may still drop on a stale bounding sphere —
+   * empty, or the round-five defect is back.
+   *
+   * `this.windows` was created with `count = 0`, three cached an EMPTY sphere
+   * on its first frustum test, and no hut was ever lit again — with every
+   * health count at zero, because the program linked perfectly and drew
+   * nothing. Named rather than counted, so a non-zero answer says which.
+   */
+  cullAudit(): string[];
+  /**
+   * Where a reader could aim — the DRAWN points, in client coordinates, without
+   * asking the picker. A superset of `visibleIds`, and the cheap one.
+   */
+  aimPoints(): { id: number; x: number; y: number }[];
   drawnIds(): number[];
   /**
    * The beings a reader could actually FIND in this frame — and "find" is

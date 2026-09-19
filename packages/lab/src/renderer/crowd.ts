@@ -216,6 +216,47 @@ export function offerAudit(answers: readonly OfferAnswer[]): OfferAudit {
   return { offered, coveredBy };
 }
 
+/**
+ * How far either side of a being's own point the picker must still name it
+ * before the view will OFFER that being, in CSS pixels.
+ *
+ * A press is not a point, it is a small neighbourhood: a hand moves a pixel or
+ * two between reading a card and pressing the button, and in a shelter packed
+ * with bodies the depth order at one pixel is decided by fractions of a metre.
+ * An offer that only holds at one exact pixel is not an offer a reader can take.
+ */
+export const OFFER_MARGIN_PX = 2;
+
+/**
+ * The winner a point offers — only if every sample around it agrees.
+ *
+ * Any disagreement means this being is not offered at all rather than offered
+ * unreliably: the view would rather say "too tightly packed to point at" than
+ * hand a reader somebody else's card.
+ */
+export function steadyWinner(samples: readonly (number | null)[]): number | null {
+  const first = samples[0] ?? null;
+  if (first === null) return null;
+  for (const s of samples) if (s !== first) return null;
+  return first;
+}
+
+/**
+ * Whether a being is offered under the POINTER at all, or only through the chip
+ * that is already speaking for it.
+ *
+ * The occupants of a shelter have had their rings, badges, arrows and names
+ * taken off them so the hut is not a scribble, and one number on the roof
+ * stands for all of them. A view that then also hands them back individually
+ * under the mouse is running two contradictory promises at once: two of round
+ * five's 389 offers were hut occupants, 13–28 px from the being the picker
+ * actually returned. They are reachable, and the route is the chip — its card
+ * lists every occupant by name and a click on a name selects that being.
+ */
+export function offeredUnderPointer(carriedBy: number | null): boolean {
+  return carriedBy === null;
+}
+
 /** Step through a disambiguation list, wrapping — the arrow keys' whole behaviour. */
 export function cycleCandidate(count: number, at: number, delta: number): number {
   if (count <= 0) return 0;

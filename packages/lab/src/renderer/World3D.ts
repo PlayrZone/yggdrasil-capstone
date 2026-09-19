@@ -24,7 +24,10 @@ import {
 import {
   conditionMix,
   groupByActivity,
+  offeredUnderPointer,
+  OFFER_MARGIN_PX,
   orderCandidates,
+  steadyWinner,
   suppressOverlaps,
   type BodyBox,
   PICK_BODY,
@@ -57,7 +60,9 @@ import {
   conditionWord,
   describeState,
   displayName,
+  figurePose,
   figureSpread,
+  poseLean,
   focusShiftPx,
   headingOctant,
   HUE_WELL,
@@ -119,11 +124,13 @@ import {
   SUBJECT_R,
   SUBJECT_SLOTS,
   XRAY_MIN_BODY_PX,
+  OUTLINE_MIN_BODY_PX,
+  FLAG_MIN_PX,
   type Subject,
 } from './legibility.js';
 import { buildGlyphAtlas, PICTO_STUB_AT } from './glyphs.js';
 import { ghostCommonChunk, ghostFragmentChunk, ghostVertexChunk } from './shading.js';
-import { createHealth, onConsoleError, type Health, type HealthReport } from './health.js';
+import { createHealth, onConsoleError, onWindowError, type Health, type HealthReport } from './health.js';
 
 // ── The world's own scale ────────────────────────────────────────────────────
 
@@ -296,7 +303,28 @@ const DOT_R = 0.30;
 const RENDER_SCENERY = 0;
 const RENDER_FOOT = 3;
 const RENDER_XRAY = 4;
+/** The dark keyline around a figure, immediately under the figure itself. */
+const RENDER_OUTLINE = 5;
 const RENDER_BODY = 6;
+/**
+ * Rule three, and it is what turns a crowded shelter back into people.
+ *
+ * A hut is GLASS: the ghost rule opens it precisely so the reader can see who
+ * is inside. Painted before the bodies — which is where it sat for five rounds,
+ * at `RENDER_SCENERY` — its walls still wrote DEPTH, so every occupant failed
+ * the depth test, no body was drawn at all, and what the reader saw was the
+ * x-ray pass: fifteen to thirty-seven flat near-white silhouettes at 0.52 alpha
+ * painted over each other until the alpha saturated. A reviewer photographed it
+ * and said a stranger would call the renderer broken, and he was right about the
+ * renderer: those were not people fusing, they were not people.
+ *
+ * Painted AFTER them, a wall does what glass does — it tints what is behind it
+ * and hides nothing — while an un-ghosted hut, still at full alpha, covers its
+ * occupants exactly as a wall should.
+ */
+const RENDER_STRUCTURE = 7;
+/** The lit pane, over its own wall. */
+const RENDER_WINDOW = 8;
 const RENDER_TRAIL = 10;
 /** Under the ring, so a match's halo frames the mark rather than covering it. */
 const RENDER_HALO = 11;
@@ -1054,6 +1082,150 @@ function xrayMaterial(): THREE.ShaderMaterial {
 }
 
 /**
+ * The dark keyline around every figure — an inverted hull, and the cheapest
+ * honest answer to "how many people are in there".
+ *
+ * Bodies are pale by design: the condition palette is chosen on LIGHTNESS, so
+ * four bone-to-amber figures overlapping at a metre's spacing have no edge
+ * between them. Fifteen of them in a shelter were one shape, and a reviewer
+ * counting from the picture resolved seven. A one-pixel dark line does what no
+ * amount of shading does: it gives every silhouette a boundary that survives
+ * overlap, at any light, in any condition, without touching the encoding.
+ *
+ * Back faces only, drawn opaque just before the bodies, with every vertex
+ * pushed radially away from the figure's own middle IN THE SCREEN PLANE by a
+ * fixed number of pixels. Radially and not along the normal: these bodies are
+ * merged BOXES, and a box face square to the camera has a normal with no screen
+ * component at all, so a normal-expanded hull leaves exactly the faces a reader
+ * is looking straight at without a line. Photographed and confirmed — the first
+ * cut drew a clean halo on the ground beside a figure and nothing between two
+ * overlapping ones, which is the only place it is needed.
+ *
+ * Because it writes depth at the silhouette, the figure in front keeps its line
+ * against the figure behind; because the hull's back faces sit behind the body's
+ * front faces, the body always wins its own interior. Anything drawn too small
+ * to be a picture is pushed off-screen instead — a keyline round a four-pixel
+ * speck is a dark speck.
+ */
+function outlineMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: true,
+    depthTest: true,
+    uniforms: {
+      uGrowPx: { value: 2.1 },
+      uMinPx: { value: OUTLINE_MIN_BODY_PX },
+      uWorldPerPx: { value: 0.002 },
+      uInk: { value: new THREE.Color(0x090c11) },
+    },
+    vertexShader: `
+      uniform float uGrowPx;
+      uniform float uMinPx;
+      uniform float uWorldPerPx;
+      void main() {
+        vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        float depth = max(0.001, -mv.z);
+        float tall = length(instanceMatrix[0].xyz);
+        if (tall / (depth * uWorldPerPx) < uMinPx) {
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          return;
+        }
+        // The figure's own middle, not the instance origin — which is at the
+        // FEET, and would have fattened a head upward and nothing sideways.
+        vec4 mid = modelViewMatrix * instanceMatrix * vec4(0.0, 0.5, 0.0, 1.0);
+        vec2 away = mv.xy - mid.xy;
+        float len = max(1e-4, length(away));
+        mv.xy += (away / len) * (uGrowPx * depth * uWorldPerPx);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform vec3 uInk;
+      void main() {
+        gl_FragColor = vec4(uInk, 1.0);
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+
+/**
+ * A pennant on a short mast: the flag an unwell being flies.
+ *
+ * Built by hand, in two layers — a dark keyline first and the coloured shape
+ * over it, distinguished by `aInk` — because the mark has to hold against
+ * sunlit grass, snow and midnight without carrying a second colour of its own.
+ * The keyline layer is written into the buffer first and the material does not
+ * depth-test, so the fill lands on top of it in one draw call.
+ */
+function flagGeometry(): THREE.BufferGeometry {
+  const shape = [
+    [-0.05, 0], [0.05, 0], [0.05, 1],
+    [-0.05, 0], [0.05, 1], [-0.05, 1],
+    [0.05, 1.0], [0.80, 0.74], [0.05, 0.46],
+  ] as const;
+  const pos: number[] = [];
+  const ink: number[] = [];
+  for (const layer of [1, 0]) {
+    for (const [x, y] of shape) {
+      const grow = layer === 1 ? 0.085 : 0;
+      pos.push(x + (x >= 0 ? grow : -grow), y + (y > 0.5 ? grow : -grow), 0);
+      ink.push(layer);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  geo.setAttribute('aInk', new THREE.BufferAttribute(new Float32Array(ink), 1));
+  return geo;
+}
+
+/**
+ * The mark that finds an unwell being COLD.
+ *
+ * Condition already has three channels — the ring's shape, the ring's hue and
+ * the body's tint — and a reviewer shown four fresh frames holding seven unwell
+ * beings wrote "everybody is well" on all four. Two sick in a hundred and
+ * twenty-three, at sixty-two pixels each, is a needle in a field of bone: every
+ * one of those channels asks the reader to compare this being against its
+ * neighbours, and nobody compares a hundred and twenty-three of anything.
+ *
+ * So the unwell get something no well being has at all. It is drawn only for
+ * them — two to seven marks in a frame, never a wall of badges — through
+ * everything, at a floor of screen pixels so it does not shrink out of reach at
+ * DEFAULT, in the condition's own colour on a dark keyline so it holds against
+ * grass, snow and night alike.
+ */
+function flagMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+    uniforms: { uOpacity: { value: 1 } },
+    vertexShader: `
+      attribute float aInk;
+      varying vec3 vTint;
+      void main() {
+        vec4 anchor = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        float s = length(instanceMatrix[0].xyz);
+        vec4 mv = modelViewMatrix * anchor;
+        // A billboard in view space: the flag never turns away from the reader,
+        // and its size is the instance's own scale, which writeMarkers has
+        // already floored in screen pixels.
+        mv.xy += position.xy * s;
+        gl_Position = projectionMatrix * mv;
+        vTint = mix(instanceColor, vec3(0.02, 0.024, 0.030), aInk);
+      }`,
+    fragmentShader: `
+      uniform float uOpacity;
+      varying vec3 vTint;
+      void main() {
+        gl_FragColor = vec4(vTint, uOpacity);
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+
+/**
  * A view of the same continent the sim runs on, with the beings drawn as the
  * subject rather than as scatter.
  *
@@ -1136,6 +1308,16 @@ export class World3D {
   private beingInside = new Uint8Array(0);
   /** The forward pitch `writeMarkers` actually drew this being at, in radians. */
   private beingLean = new Float32Array(0);
+  /**
+   * The widest pitch this being's act can reach — the UN-animated silhouette,
+   * and the only pitch the picker's box is allowed to read. See `poseLean`.
+   */
+  private beingPose = new Float32Array(0);
+  /**
+   * How deep into its shelter this being stands, 0 at the near wall and 1 at
+   * the far one — the depth cue that separates a packed room into people.
+   */
+  private insideShade = new Float32Array(0);
   /** How many beings in frame drew a mark of their own — the countable term. */
   private pinsDrawn = 0;
   private instanceCount = 0;
@@ -1241,6 +1423,24 @@ export class World3D {
   /** The pale outline a hidden being keeps — one per life stage. */
   private xrays: THREE.InstancedMesh[] = [];
   private xrayMat: THREE.ShaderMaterial | null = null;
+  /** The dark keyline every figure carries — one per life stage. */
+  private outlines: THREE.InstancedMesh[] = [];
+  private outlineMat: THREE.ShaderMaterial | null = null;
+  /** The pennant only an unwell being flies. */
+  private flags: THREE.InstancedMesh | null = null;
+  /**
+   * Whether the WORLD is advancing.
+   *
+   * A paused instrument is a frozen frame. Round five paused the sim, settled
+   * the camera, and the idle lean kept breathing — which moved the body boxes,
+   * which flipped the depth order at a pixel between a reviewer reading an
+   * offer and pressing on it. Nothing here animates while this is false; the
+   * camera is allowed to finish coming to rest, because that is the reader's
+   * own hand and not the world.
+   */
+  private simRunning = false;
+  /** The animation clock, held still while the world is paused. */
+  private animT = 0;
   /** Where a ghosted building stood, so the village still reads as a village. */
   private footprints: THREE.InstancedMesh | null = null;
   /** Per structure: scene x, z and the ground under it, for the footprint ring. */
@@ -1271,6 +1471,14 @@ export class World3D {
   private namesOutOfOrder = 0;
   /** Readable beings a building's chip is the label for. */
   private namesCarried = 0;
+  /**
+   * How many of those are NOT well.
+   *
+   * The count the strip has to print out loud. A frame that withholds an unwell
+   * being inside a shelter is behaving correctly; a frame that withholds one
+   * silently has told the reader everybody is fine.
+   */
+  private namesCarriedUnwell = 0;
   /** Reused: whose name went up this frame, for the audit above. */
   private readonly placedIds = new Set<number>();
   /** Reused: the frame's beings as the naming rule sees them. */
@@ -1305,7 +1513,7 @@ export class World3D {
   private readonly hullNodes: HTMLElement[] = [];
   private readonly countNodes: HTMLElement[] = [];
   /** The parts inside one chip: the number, the match badge, the mix bar. */
-  private readonly countParts: { num: HTMLElement; badge: HTMLElement; mix: HTMLElement; seg: HTMLElement[] }[] = [];
+  private readonly countParts: { num: HTMLElement; ill: HTMLElement; badge: HTMLElement; mix: HTMLElement; seg: HTMLElement[] }[] = [];
   private readonly screenPoints: ScreenPoint[] = [];
   /** `screenPoints[k]` is being `screenIndex[k]` in the per-frame arrays. */
   private readonly screenIndex: number[] = [];
@@ -1390,6 +1598,8 @@ export class World3D {
   /** Shader compiles, console errors and lost contexts — see `health.ts`. */
   private readonly health: Health = createHealth();
   private readonly dropHealthTap: () => void;
+  /** The page's own faults — see `onWindowError`, and `HealthReport.windowErrors`. */
+  private readonly dropWindowTap: () => void;
   private readonly onContextLost: (e: Event) => void;
   /**
    * The canvas rectangle, read once a frame.
@@ -1459,6 +1669,11 @@ export class World3D {
       console.error('THREE.WebGLProgram: shader error (see __ygg.health())');
     };
     this.dropHealthTap = onConsoleError(console, (text) => this.health.noteConsoleError(text));
+    // The fourth door. A reviewer raised `ResizeObserver loop completed with
+    // undelivered notifications` on a live resize and every count stayed at
+    // zero, because a `window.onerror` is not a `console.error` and nobody was
+    // listening at that door at all.
+    this.dropWindowTap = onWindowError(window, (text) => this.health.noteWindowError(text));
     this.onContextLost = (e: Event): void => {
       e.preventDefault();
       this.health.noteContextLost('webglcontextlost');
@@ -1528,30 +1743,29 @@ export class World3D {
     // as starving beings, and #ffc46b is very nearly the starving colour.
     const windowMat = new THREE.MeshBasicMaterial({ color: 0xf2dcae, transparent: true, opacity: 0, depthWrite: false });
     applyGhostFade(windowMat, this.foliageFades, this.subjects, 3.5, 11, 0.25, 0.05, 3.1, 2.3, 0.8);
-    this.windows = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.8, 0.7), windowMat, 64);
-    this.windows.count = 0;
-    this.windows.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.windows = this.instanced('lit windows', new THREE.PlaneGeometry(0.8, 0.7), windowMat, 64);
+    this.windows.renderOrder = RENDER_WINDOW;
     this.scene.add(this.windows);
 
     // A low cairn of stones, not a bright marker. Seen from above a pale cone
     // is a sheet of white paper, and at two hundred deaths a day the map filled
     // with litter; a dark rounded heap reads as something left behind.
-    this.deaths = new THREE.InstancedMesh(
+    this.deaths = this.instanced(
+      'death cairns',
       new THREE.SphereGeometry(0.55, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.62, 1),
       new THREE.MeshStandardMaterial({ color: 0x6d6459, roughness: 1, flatShading: true }),
       DEATH_SLOTS,
     );
     this.deaths.count = DEATH_SLOTS;
-    this.deaths.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.scene.add(this.deaths);
 
-    this.ripples = new THREE.InstancedMesh(
+    this.ripples = this.instanced(
+      'speech ripples',
       new THREE.RingGeometry(0.84, 1, 28).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.9, toneMapped: false }),
       SPEECH_SLOTS,
     );
     this.ripples.count = SPEECH_SLOTS;
-    this.ripples.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.scene.add(this.ripples);
 
     this.threadPos = new Float32Array(SPEECH_SLOTS * ARC_SEGMENTS * 6);
@@ -1969,8 +2183,12 @@ export class World3D {
     // both then ghost together — see `applyGhostFade`.
     applyGhostFade(trunkMat, this.foliageFades, this.subjects, 3.5, 12, 0, 0.18, 3.3, 4.6, 3.8);
     applyGhostFade(foliageMat, this.foliageFades, this.subjects, 3.5, 12, 0, 0.18, 3.3, 4.6, -1.0);
-    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.42, 4.4, 5), trunkMat, places.length);
-    const foliage = new THREE.InstancedMesh(new THREE.ConeGeometry(3.3, 9, 6), foliageMat, places.length);
+    const trunks = this.instanced('tree trunks', new THREE.CylinderGeometry(0.22, 0.42, 4.4, 5), trunkMat, places.length);
+    const foliage = this.instanced('tree crowns', new THREE.ConeGeometry(3.3, 9, 6), foliageMat, places.length);
+    trunks.count = places.length;
+    foliage.count = places.length;
+    trunks.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    foliage.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     places.forEach((pl, k) => {
       const base = this.surfaceAt(pl.x, pl.y);
       const px = pl.x - HALF;
@@ -2005,7 +2223,9 @@ export class World3D {
     // Close to the stone they sit on. Round one's near-black boulders read as a
     // field of dark markers across the whole mountain range — the strongest
     // thing in the frame, and about nothing.
-    const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(2, 0), new THREE.MeshStandardMaterial({ color: 0x7d7b80, roughness: 1, flatShading: true }), Math.max(1, places.length));
+    const rocks = this.instanced('boulders', new THREE.IcosahedronGeometry(2, 0), new THREE.MeshStandardMaterial({ color: 0x7d7b80, roughness: 1, flatShading: true }), Math.max(1, places.length));
+    rocks.count = places.length;
+    rocks.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     places.forEach((pl, k) => {
       this.dummy.scale.set(pl.s, pl.s * 0.8, pl.s);
       this.dummy.rotation.set(hash2(k, 1), hash2(k, 2) * Math.PI, hash2(k, 3));
@@ -2034,34 +2254,83 @@ export class World3D {
     return lane;
   }
 
+  /**
+   * Every instanced mesh this view creates goes through here, and here is where
+   * it is made undroppable.
+   *
+   * Three caches an `InstancedMesh`'s bounding sphere on its first frustum test
+   * and recomputes it only when something sets `boundingSphere = null`. A mesh
+   * built with `count = 0` — which every mesh here is, because the count is
+   * written per frame — caches an EMPTY sphere, and an empty sphere intersects
+   * no frustum, ever. That is not a subtle failure mode: it is invisible from
+   * every direction a test can look from. `shaderErrors` 0, `consoleErrors` 0,
+   * `pageerror` 0, the program links, `updateLight` sets the opacity, the
+   * matrices are written and uploaded — and the object is never drawn again for
+   * the life of the view. It shipped for a round exactly that way: the lit
+   * windows, `this.windows`, the one mesh in this file that did not turn
+   * culling off.
+   *
+   * So culling is off by construction rather than by remembering, the mesh
+   * carries a name, and `cullAudit` walks the scene for anything that got in
+   * another way. See `HealthReport.cullRisks`.
+   */
+  private instanced(
+    name: string,
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material,
+    capacity: number,
+  ): THREE.InstancedMesh {
+    const mesh = new THREE.InstancedMesh(geometry, material, capacity);
+    mesh.name = name;
+    mesh.count = 0;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    return mesh;
+  }
+
+  /**
+   * Which instanced meshes in the scene three may still drop on a stale sphere.
+   *
+   * The scene, not a registry of what this file remembers creating: the guard
+   * has to catch the mesh somebody adds in a year's time without reading this
+   * comment. A mesh is safe when culling is off, or when its bounds are null —
+   * which is how `writeMarkers` keeps the raycast honest — and nothing else
+   * counts as safe.
+   */
+  cullAudit(): string[] {
+    const risks: string[] = [];
+    this.scene.traverse((o) => {
+      const mesh = o as THREE.InstancedMesh;
+      if (!mesh.isInstancedMesh || !mesh.frustumCulled) return;
+      if (mesh.boundingSphere === null) return;
+      risks.push(mesh.name || 'an unnamed instanced mesh');
+    });
+    return risks;
+  }
+
   private buildFigures(): void {
     const ringMat = ringMaterial(this.ringFade);
     // Four conditions × adult or elder × whether this mark is allowed to claim
     // a facing. Sixteen draw calls buy three whole encodings that need no
     // colour and no badge, and the ability to say nothing about a third.
     for (let bucket = 0; bucket < RING_BUCKETS; bucket++) {
-      const mesh = new THREE.InstancedMesh(
+      const mesh = this.instanced(
+        `condition rings ${bucket}`,
         ringGeometry(bucket >> 2, ((bucket >> 1) & 1) === 1, (bucket & 1) === 1),
         ringMat,
         64,
       );
-      mesh.count = 0;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       // The shader reads `instanceColor`, and three only declares that
       // attribute for a mesh that already has one.
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3).fill(1), 3);
-      mesh.frustumCulled = false;
       mesh.renderOrder = RENDER_RING;
       this.ringMeshes[bucket] = mesh;
       this.ringDim[bucket] = World3D.dimLane(mesh.geometry, 64);
       this.scene.add(mesh);
     }
 
-    const trails = new THREE.InstancedMesh(trailGeometry(), trailMaterial(this.trailFade), 64);
-    trails.count = 0;
-    trails.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const trails = this.instanced('walk trails', trailGeometry(), trailMaterial(this.trailFade), 64);
     trails.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3).fill(1), 3);
-    trails.frustumCulled = false;
     trails.renderOrder = RENDER_TRAIL;
     this.trails = trails;
     this.scene.add(trails);
@@ -2072,7 +2341,8 @@ export class World3D {
     // side of a hill is still a match you can see. It carries no hue of its
     // own: "found" is not a condition, and giving it a colour would put a
     // fifth swatch into a palette chosen on lightness for four.
-    const halos = new THREE.InstancedMesh(
+    const halos = this.instanced(
+      'filter halos',
       new THREE.RingGeometry(1.30, 1.92, 40).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({
         color: 0xf6efdc, transparent: true, opacity: 0.72, depthWrite: false, depthTest: false,
@@ -2080,18 +2350,12 @@ export class World3D {
       }),
       64,
     );
-    halos.count = 0;
-    halos.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    halos.frustumCulled = false;
     halos.renderOrder = RENDER_HALO;
     this.halos = halos;
     this.scene.add(halos);
 
-    const dots = new THREE.InstancedMesh(dotGeometry(), ringMat, 64);
-    dots.count = 0;
-    dots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const dots = this.instanced('presence dots', dotGeometry(), ringMat, 64);
     dots.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3).fill(1), 3);
-    dots.frustumCulled = false;
     dots.renderOrder = RENDER_RING;
     dots.visible = false;
     this.dots = dots;
@@ -2099,11 +2363,9 @@ export class World3D {
     this.scene.add(dots);
 
     this.xrayMat = xrayMaterial();
+    this.outlineMat = outlineMaterial();
     for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
-      const mesh = new THREE.InstancedMesh(figureGeometry(stage), this.figureMaterial(), 64);
-      mesh.count = 0;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.frustumCulled = false;
+      const mesh = this.instanced(`bodies ${stage}`, figureGeometry(stage), this.figureMaterial(), 64);
       mesh.renderOrder = RENDER_BODY;
       // A body needs a colour before three will declare `instanceColor`, and
       // the silhouette that shares this buffer reads it.
@@ -2111,12 +2373,15 @@ export class World3D {
       this.figures[stage] = mesh;
       this.scene.add(mesh);
 
-      const ghost = new THREE.InstancedMesh(mesh.geometry, this.xrayMat, 64);
-      ghost.count = 0;
-      ghost.frustumCulled = false;
+      const ghost = this.instanced(`x-ray ${stage}`, mesh.geometry, this.xrayMat, 64);
       ghost.renderOrder = RENDER_XRAY;
       this.xrays[stage] = ghost;
       this.scene.add(ghost);
+
+      const edge = this.instanced(`outlines ${stage}`, mesh.geometry, this.outlineMat, 64);
+      edge.renderOrder = RENDER_OUTLINE;
+      this.outlines[stage] = edge;
+      this.scene.add(edge);
     }
     this.linkXrays();
     this.growBeingCapacity(64);
@@ -2124,7 +2389,8 @@ export class World3D {
     // The outline a ghosted building leaves behind. Flat on the ground, drawn
     // through whatever is over it, and exactly the size of the thing that
     // stood there — a village of ghosts still has to read as a village.
-    const foot = new THREE.InstancedMesh(
+    const foot = this.instanced(
+      'building footprints',
       new THREE.RingGeometry(0.88, 1, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({
         color: 0xbfc9cf, transparent: true, opacity: 0.5, depthWrite: false, depthTest: false,
@@ -2132,9 +2398,6 @@ export class World3D {
       }),
       64,
     );
-    foot.count = 0;
-    foot.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    foot.frustumCulled = false;
     foot.renderOrder = RENDER_FOOT;
     foot.visible = false;
     this.footprints = foot;
@@ -2150,15 +2413,22 @@ export class World3D {
     rim.setUsage(THREE.DynamicDrawUsage);
     pictoGeo.setAttribute('aRim', rim);
     this.pictoRim = rim;
-    this.pictos = new THREE.InstancedMesh(pictoGeo, World3D.pictoMaterial(atlas, this.pictoFade), 64);
+    this.pictos = this.instanced('activity badges', pictoGeo, World3D.pictoMaterial(atlas, this.pictoFade), 64);
     // The pictogram shader reads `instanceColor`, and three only declares that
     // attribute for a mesh that already has one.
     this.pictos.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3).fill(1), 3);
-    this.pictos.count = 0;
-    this.pictos.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.pictos.frustumCulled = false;
     this.pictos.renderOrder = RENDER_PICTO;
     this.scene.add(this.pictos);
+
+    // The unwell flag. See `flagMaterial`: the one mark in this view that is
+    // about a CONDITION rather than an activity, drawn only for the few beings
+    // who are not well, over everything, at a size that does not shrink out of
+    // reach.
+    const flags = this.instanced('unwell flags', flagGeometry(), flagMaterial(), 64);
+    flags.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3).fill(1), 3);
+    flags.renderOrder = RENDER_PICTO;
+    this.flags = flags;
+    this.scene.add(flags);
   }
 
   /**
@@ -2170,11 +2440,12 @@ export class World3D {
   private linkXrays(): void {
     for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
       const body = this.figures[stage];
-      const ghost = this.xrays[stage];
-      if (!body || !ghost) continue;
-      ghost.geometry = body.geometry;
-      ghost.instanceMatrix = body.instanceMatrix;
-      if (body.instanceColor) ghost.instanceColor = body.instanceColor;
+      for (const rider of [this.xrays[stage], this.outlines[stage]]) {
+        if (!body || !rider) continue;
+        rider.geometry = body.geometry;
+        rider.instanceMatrix = body.instanceMatrix;
+        if (body.instanceColor) rider.instanceColor = body.instanceColor;
+      }
     }
   }
 
@@ -2335,7 +2606,16 @@ export class World3D {
         mix.appendChild(bar);
         seg.push(bar);
       }
-      count.append(num, badge, mix);
+      // How many of this crowd are NOT well, in the worst condition's own
+      // colour. The mix bar underneath is thirty pixels by four and a reviewer
+      // did not notice it at all — he read four frames holding seven unwell
+      // beings as "everybody is well". A number is not a bar: this one is the
+      // size of the count beside it and it is absent for a crowd that is fine,
+      // so its presence alone is the signal.
+      const ill = document.createElement('i');
+      ill.className = 'will';
+      ill.style.display = 'none';
+      count.append(num, ill, badge, mix);
       // Chips are the one thing in the annotation layer you can point at, so
       // they take the pointer back — `.wlabels` turns it off for everything.
       count.style.pointerEvents = 'auto';
@@ -2347,7 +2627,7 @@ export class World3D {
       count.addEventListener('click', () => this.onChipClick?.(cluster));
       layer.appendChild(count);
       this.countNodes.push(count);
-      this.countParts.push({ num, badge, mix, seg });
+      this.countParts.push({ num, ill, badge, mix, seg });
       // The number sits outside its own ring now, so it carries a line home:
       // without one, a chip pushed clear of a dense settlement is a number
       // floating over open ground.
@@ -2398,6 +2678,8 @@ export class World3D {
     this.beingPictoClear = new Uint8Array(cap);
     this.beingInside = new Uint8Array(cap);
     this.beingLean = new Float32Array(cap);
+    this.beingPose = new Float32Array(cap);
+    this.insideShade = new Float32Array(cap);
     this.stageIds = [new Int32Array(cap), new Int32Array(cap), new Int32Array(cap)];
     for (let bucket = 0; bucket < RING_BUCKETS; bucket++) {
       const mesh = this.ringMeshes[bucket];
@@ -2427,9 +2709,12 @@ export class World3D {
       this.pictos.geometry.setAttribute('aRim', rim);
       this.pictoRim = rim;
     }
+    if (this.flags) this.flags = regrow(this.scene, this.flags, cap);
     for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
       const ghost = this.xrays[stage];
       if (ghost) this.xrays[stage] = regrow(this.scene, ghost, cap);
+      const edge = this.outlines[stage];
+      if (edge) this.outlines[stage] = regrow(this.scene, edge, cap);
     }
     this.linkXrays();
   }
@@ -2501,7 +2786,8 @@ export class World3D {
     const written = new Map<Family, number>();
     const meshes = new Map<Family, THREE.InstancedMesh>();
     for (const [family, n] of counts) {
-      const mesh = new THREE.InstancedMesh(resourceGeometry(family), new THREE.MeshStandardMaterial({ color: FAMILY_RGB[family], roughness: 0.85, flatShading: true }), n);
+      const mesh = this.instanced(`resource ${family}`, resourceGeometry(family), new THREE.MeshStandardMaterial({ color: FAMILY_RGB[family], roughness: 0.85, flatShading: true }), n);
+      mesh.count = n;
       mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
       meshes.set(family, mesh);
       written.set(family, 0);
@@ -2939,13 +3225,17 @@ export class World3D {
     const dots = this.dots!;
     const halos = this.halos!;
     const dotDim = this.dotDim;
+    const flags = this.flags!;
     const filtering = this.highlight !== null;
+    // How much the shelters' own light adds after dark — see the `lift` below.
+    const hearth = 1 + (1 - this.daylight) * 0.62;
     this.figureCount = [0, 0, 0];
     this.ringCount.fill(0);
     let pictoAt = 0;
     let trailAt = 0;
     let dotAt = 0;
     let haloAt = 0;
+    let flagAt = 0;
     this.pinsDrawn = 0;
 
     for (let i = 0; i < this.instanceCount; i++) {
@@ -3061,33 +3351,14 @@ export class World3D {
       this.figureCount[stage] = at + 1;
       this.stageIds[stage]![at] = id;
       const phase = t * 6 + id * 0.7;
-      let bob = 0;
-      let lean = form.stoop * 0.12;
-      let roll = 0;
-      if (act === ACT_RESTING) {
-        lean = Math.PI * 0.46; // laid out on the ground
-        bob = -height * 0.06;
-      } else if (act === ACT_DANGER) {
-        bob = Math.abs(Math.sin(phase * 2.2)) * height * 0.13;
-        lean = 0.24;
-        roll = Math.sin(phase * 3.4) * 0.13;
-      } else if (act === ACT_WALKING) {
-        bob = Math.abs(Math.sin(phase)) * height * 0.055;
-        lean += 0.07;
-      } else if (act === ACT_WORKING) {
-        lean += 0.30 + Math.sin(phase * 0.9) * 0.22; // swinging at something
-      } else if (act === ACT_EATING || act === ACT_DRINKING) {
-        lean += act === ACT_DRINKING ? 0.42 : 0.24; // stooped over it
-        bob = -height * 0.07;
-      } else if (act === ACT_SOCIAL) {
-        roll = Math.sin(phase * 0.7) * 0.05; // turned toward whoever is listening
-      }
-      // The pitch as DRAWN, kept for the box that has to bound this silhouette
-      // — see `figureSpread`. A table of leans beside this one would drift out
-      // of step with it the first time an act was re-posed.
-      this.beingLean[i] = lean;
-      this.dummy.position.set(sx, surface + bob, sz);
-      this.dummy.rotation.set(lean, heading, roll);
+      const pose = figurePose(act, form.stoop, height, phase);
+      // The pitch as DRAWN, and the widest pitch this act can reach. The picker
+      // reads the second one and never the first: a box that breathes is a box
+      // whose answer changes between a reader looking and a reader pressing.
+      this.beingLean[i] = pose.lean;
+      this.beingPose[i] = poseLean(act, form.stoop);
+      this.dummy.position.set(sx, surface + pose.bob, sz);
+      this.dummy.rotation.set(pose.lean, heading, pose.roll);
       this.dummy.scale.setScalar(height);
       this.dummy.updateMatrix();
       mesh.setMatrixAt(at, this.dummy.matrix);
@@ -3099,11 +3370,31 @@ export class World3D {
       //
       // Except inside a shelter, where there IS no ring beside it — the chip on
       // the roof carries them all — so the lift has nothing to meet and only
-      // blows the figures out. Eighteen people in a hut, each at 1.45, fused
-      // into one white mass a reviewer read as one or two; at their own value
-      // they are shaded figures that overlap, which is what they are.
-      const lift = inside ? 1 : 1.45;
+      // blows the figures out.
+      //
+      // Inside, the body carries a DEPTH cue instead: the people at the near
+      // wall keep their value and the ones at the far wall are pulled down by
+      // half, which is what a room lit from one side looks like and what turns
+      // a stack of overlapping bone figures into a front row and a back row.
+      // And at night the shelter lights its own people — the pane outside is
+      // the same lamp — so the room does not go to a dark smudge the moment it
+      // becomes the only place anybody is.
+      const lift = inside ? (1.32 - 0.52 * this.insideShade[i]!) * hearth : 1.45;
       mesh.setColorAt(at, this.color.setHex(bodyTint(hue)).multiplyScalar(match ? lift : lift * DIM_BODY));
+
+      // The unwell flag. Drawn wherever this being is drawn at all — inside a
+      // shelter included, because "who in here is ill" is the question a chip's
+      // number cannot answer — and for nobody who is well. See `flagMaterial`.
+      if (flagAt < flags.instanceMatrix.count && conditionWord(cond, act) !== 'well') {
+        const size = Math.max(FLAG_MIN_PX * this.worldPerPx * this.distanceTo(i), height * 0.52);
+        this.dummy.position.set(sx, this.beingTop[i]! + size * 0.22, sz);
+        this.dummy.rotation.set(0, 0, 0);
+        this.dummy.scale.setScalar(size);
+        this.dummy.updateMatrix();
+        flags.setMatrixAt(flagAt, this.dummy.matrix);
+        flags.setColorAt(flagAt, this.color.setHex(hue).multiplyScalar(match ? 1 : DIM));
+        flagAt++;
+      }
 
       if (!detail || inside) continue;
       // In a crowd, no pictogram either — and for the same reason as the
@@ -3173,7 +3464,19 @@ export class World3D {
         ghost.count = detail ? mesh.count : 0;
         ghost.boundingSphere = null;
       }
+      // The keyline rides the same instances wherever a body is drawn at all —
+      // a crowd at DEFAULT needs separating quite as much as one in the street.
+      const edge = this.outlines[stage];
+      if (edge) {
+        edge.visible = bodies;
+        edge.count = mesh.count;
+        edge.boundingSphere = null;
+      }
     }
+    flags.count = flagAt;
+    flags.visible = flagAt > 0;
+    flags.instanceMatrix.needsUpdate = true;
+    if (flags.instanceColor) flags.instanceColor.needsUpdate = true;
     dots.visible = !bodies;
     dots.count = dotAt;
     dots.instanceMatrix.needsUpdate = true;
@@ -3325,9 +3628,7 @@ export class World3D {
       new THREE.BoxGeometry(0.62, 0.72, 1.55),
       new THREE.BoxGeometry(0.4, 0.4, 0.5).translate(0, 0.3, 0.9),
     ], false) ?? new THREE.BoxGeometry(0.62, 0.72, 1.55);
-    const mesh = new THREE.InstancedMesh(body, new THREE.MeshStandardMaterial({ roughness: 0.85 }), capacityFor(n));
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.count = 0;
+    const mesh = this.instanced('wildlife', body, new THREE.MeshStandardMaterial({ roughness: 0.85 }), capacityFor(n));
     this.scene.add(mesh);
     this.animalMesh = mesh;
     return mesh;
@@ -3369,7 +3670,11 @@ export class World3D {
         // building — see the rim term in `applyGhostFade`.
         const material = structureMaterial(kind);
         applyGhostFade(material, this.foliageFades, this.subjects, 3.5, 11, 0.25, 0.38, 3.1, 2.3, 2.2, 0.45);
-        const mesh = new THREE.InstancedMesh(structureGeometry(kind), material, capacityFor(n));
+        const mesh = this.instanced(`structures ${kind}`, structureGeometry(kind), material, capacityFor(n));
+        // After the bodies, not before them — see RENDER_STRUCTURE. This one
+        // line is the difference between a crowded shelter that reads as people
+        // and one that reads as a rendering fault.
+        mesh.renderOrder = RENDER_STRUCTURE;
         mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
         this.structureMeshes.set(kind, mesh);
         this.scene.add(mesh);
@@ -3380,7 +3685,8 @@ export class World3D {
       const mat = this.windows.material as THREE.Material;
       this.scene.remove(this.windows);
       this.windows.geometry.dispose();
-      const grown = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.8, 0.7), mat, capacityFor(shelters));
+      const grown = this.instanced('lit windows', new THREE.PlaneGeometry(0.8, 0.7), mat, capacityFor(shelters));
+      grown.renderOrder = RENDER_WINDOW;
       grown.instanceMatrix.setUsage(THREE.StaticDrawUsage);
       this.scene.add(grown);
       this.windows = grown;
@@ -3440,7 +3746,7 @@ export class World3D {
     this.deathAt[slot * 3] = x - HALF;
     this.deathAt[slot * 3 + 1] = this.surfaceAt(x, y);
     this.deathAt[slot * 3 + 2] = y - HALF;
-    this.deathBorn[slot] = this.clock.getElapsedTime();
+    this.deathBorn[slot] = this.animT;
   }
 
   private markSpeech(id: number, x: number, y: number, to: { x: number; y: number } | null): void {
@@ -3450,7 +3756,7 @@ export class World3D {
     this.rippleAt[slot * 3] = x - HALF;
     this.rippleAt[slot * 3 + 1] = this.surfaceAt(x, y) + 1;
     this.rippleAt[slot * 3 + 2] = y - HALF;
-    this.rippleBorn[slot] = this.clock.getElapsedTime();
+    this.rippleBorn[slot] = this.animT;
     this.threadHas[slot] = to ? 1 : 0;
     if (to) {
       this.threadTo[slot * 3] = to.x - HALF;
@@ -3826,6 +4132,13 @@ export class World3D {
         if (hit.instanceId === undefined) continue;
         const id = this.stageIds[stage]![hit.instanceId];
         if (id === undefined) continue;
+        // A shelter's occupants are reached through the CHIP that is already
+        // speaking for them — see `offeredUnderPointer`. Their rings, badges,
+        // arrows and names have been taken away and one number stands for all
+        // of them; handing one back under the pointer as well is the view
+        // running two contradictory promises at once, and it is where both of
+        // round five's mispicks came from.
+        if (!offeredUnderPointer(this.insideChipOf.get(id) ?? null)) continue;
         offer(id, PICK_BODY, 0, hit.distance);
       }
     }
@@ -3840,6 +4153,7 @@ export class World3D {
       const p = this.screenPoints[k]!;
       const i = this.screenIndex[k]!;
       if (this.isCollapsed(i)) continue; // nothing is drawn for it; it is in a chip's number
+      if (!offeredUnderPointer(this.insideChipOf.get(p.id) ?? null)) continue;
       const dx = p.x - px;
       const dy = p.y - py;
       const distPx = Math.hypot(dx, dy);
@@ -4300,6 +4614,7 @@ export class World3D {
   private planInside(): Cluster[] {
     this.insideCount = 0;
     this.beingInside.fill(0, 0, this.instanceCount);
+    this.insideShade.fill(0, 0, this.instanceCount);
     this.insideAny = false;
     // The close bands only. Out where a being is a pin, the crowd chips already
     // own this problem and a hut is a few pixels of roof.
@@ -4344,14 +4659,28 @@ export class World3D {
       let y0 = Infinity;
       let x1 = -Infinity;
       let y1 = -Infinity;
+      // How deep each occupant stands, normalised across THIS shelter — the
+      // depth cue the bodies are shaded by. Measured from the eye and scaled to
+      // the room rather than to the world, so a hut read from two metres and
+      // one read from twenty separate their people the same way.
+      let nearest = Infinity;
+      let farthest = -Infinity;
+      for (const m of members) {
+        const depth = this.distanceTo(this.screenIndex[m]!);
+        if (depth < nearest) nearest = depth;
+        if (depth > farthest) farthest = depth;
+      }
+      const span = Math.max(0.4, farthest - nearest);
       for (const m of members) {
         const p = this.screenPoints[m]!;
-        const r = this.markRadiusOf(this.screenIndex[m]!);
+        const i = this.screenIndex[m]!;
+        const r = this.markRadiusOf(i);
         x0 = Math.min(x0, p.x - r);
         y0 = Math.min(y0, p.y - r);
         x1 = Math.max(x1, p.x + r);
         y1 = Math.max(y1, p.y + r);
-        this.beingInside[this.screenIndex[m]!] = 1;
+        this.beingInside[i] = 1;
+        this.insideShade[i] = Math.min(1, (this.distanceTo(i) - nearest) / span);
       }
       // The ROOF APEX, exactly — not nine tenths of the way up it. Round eight
       // hung the number off the top of an ellipse drawn round the people's own
@@ -4529,7 +4858,7 @@ export class World3D {
    * about a hut, and a bar that is sometimes there and sometimes not is a
    * channel a reader cannot rely on at all.
    */
-  private paintChip(parts: { num: HTMLElement; badge: HTMLElement; mix: HTMLElement; seg: HTMLElement[] }, cl: Cluster, housed = false): void {
+  private paintChip(parts: { num: HTMLElement; ill: HTMLElement; badge: HTMLElement; mix: HTMLElement; seg: HTMLElement[] }, cl: Cluster, housed = false): void {
     const members: { cond: number; act: number }[] = [];
     let matched = 0;
     for (const m of cl.members) {
@@ -4552,6 +4881,21 @@ export class World3D {
       if (bar.style.background !== seg.color) bar.style.background = seg.color;
     }
     parts.mix.style.display = 'flex';
+    // The unwell count, in the worst condition's own colour. `conditionMix`
+    // already orders the segments by the legend, which puts `well` first, so
+    // everything after it is what this chip is withholding.
+    const unwell = mix.filter((m) => m.word !== 'well');
+    const ills = unwell.reduce((n, m) => n + m.count, 0);
+    if (ills === 0) {
+      if (parts.ill.style.display !== 'none') parts.ill.style.display = 'none';
+    } else {
+      parts.ill.style.display = 'inline';
+      const worst = unwell[unwell.length - 1]!;
+      const text = `${ills}`;
+      if (parts.ill.textContent !== text) parts.ill.textContent = text;
+      if (parts.ill.style.color !== worst.color) parts.ill.style.color = worst.color;
+      parts.ill.title = unwell.map((m) => `${m.count} ${m.word}`).join(' · ');
+    }
     const chip = parts.num.parentElement;
     if (this.highlight === null) {
       if (parts.badge.style.display !== 'none') parts.badge.style.display = 'none';
@@ -4819,10 +5163,14 @@ export class World3D {
   private auditNames(): void {
     this.namesExpected = this.placedIds.size;
     this.nameSubjects.length = 0;
+    this.namesCarriedUnwell = 0;
     for (let k = 0; k < this.screenPoints.length; k++) {
       const i = this.screenIndex[k]!;
       const id = this.ids[i]!;
       if (isSpecimenId(id)) continue;
+      if (this.nameCarried(i) && conditionWord(this.beingCond[i]!, this.beingAct[i]!) !== 'well') {
+        this.namesCarriedUnwell++;
+      }
       this.nameSubjects.push({
         // From the ground the camera is LOOKING at — the same metres the card
         // and the roster print, and the same ones `updateLabels` orders the
@@ -4847,7 +5195,7 @@ export class World3D {
    * different things.
    */
   private nameClaim(): string {
-    return nameClaimFor(this.band, this.namedWithin, this.labelShown.length, this.namesCarried);
+    return nameClaimFor(this.band, this.namedWithin, this.labelShown.length, this.namesCarried, this.namesCarriedUnwell);
   }
 
   /**
@@ -4862,7 +5210,7 @@ export class World3D {
    */
   labelAudit(): {
     claim: string; withinM: number; expected: number; shown: number; within: number;
-    violations: number; outOfOrder: number; carried: number;
+    violations: number; outOfOrder: number; carried: number; carriedUnwell: number;
   } {
     return {
       claim: this.nameClaim(),
@@ -4873,6 +5221,7 @@ export class World3D {
       violations: this.nameViolations,
       outOfOrder: this.namesOutOfOrder,
       carried: this.namesCarried,
+      carriedUnwell: this.namesCarriedUnwell,
     };
   }
 
@@ -5013,30 +5362,37 @@ export class World3D {
    * being the place where this instrument gives up.
    */
   chipSummary(cluster: number): {
-    cluster: number; count: number; matched: number; inside: boolean;
+    cluster: number; count: number; matched: number; inside: boolean; unwell: number;
     mix: MixSegment[]; activities: { word: string; count: number }[]; ids: number[];
-    names: { id: number; name: string }[];
+    names: { id: number; name: string; condition: string }[];
   } | null {
     const cl = this.clusters[cluster];
     if (!cl) return null;
     const members: { cond: number; act: number; actWord: string }[] = [];
     const ids: number[] = [];
-    const names: { id: number; name: string }[] = [];
+    const names: { id: number; name: string; condition: string }[] = [];
     let matched = 0;
+    let unwell = 0;
     for (const m of cl.members) {
       const i = this.screenIndex[m];
       if (i === undefined) continue;
       const act = this.beingAct[i]!;
       const id = this.ids[i]!;
+      const condition = conditionWord(this.beingCond[i]!, act);
       members.push({ cond: this.beingCond[i]!, act, actWord: activityWord(act) });
       ids.push(id);
-      names.push({ id, name: displayName(id, this.names.get(id)).text });
+      // With the condition beside it: the occupants of a shelter are not drawn
+      // with rings of their own, so this list is the only place a reader can
+      // find out WHICH of them is the one the chip's notch is counting.
+      names.push({ id, name: displayName(id, this.names.get(id)).text, condition });
+      if (condition !== 'well') unwell++;
       if (this.highlight?.has(id)) matched++;
     }
     return {
       cluster,
       count: cl.count,
       matched,
+      unwell,
       // Who they are, in the order the chip counts them — the occupants of a
       // shelter have no name drawn over them, so this is where their names are.
       names,
@@ -5179,6 +5535,10 @@ export class World3D {
     const markPx = this.markerPixelsOf(i);
     const bodyPx = this.bodyPixelsOf(i);
     const collapsed = this.isCollapsed(i);
+    // A shelter's occupant is not offered under the pointer at all — the chip
+    // on its roof is, and the chip's card names every one of them and selects
+    // the one a reader clicks. See `offeredUnderPointer`.
+    const chip = this.insideChipOf.get(id) ?? null;
     // In a band that promises stage, activity, condition and heading, the
     // channel is carried by the BODY. A pin holds its size on screen forever;
     // a body does not, and the far side of the valley is ten pixels of person
@@ -5192,10 +5552,11 @@ export class World3D {
     const carried = !bandShowsDetail(this.band) || bodyPx >= XRAY_MIN_BODY_PX;
     const drawnReason = !inFrame ? 'out of frame'
       : collapsed ? 'counted by a crowd chip'
-        : markPx < READABLE_MARK_PX ? 'drawn too small to read'
-          : tooSmallForDetail ? 'smaller than the band draws detail at'
-            : behindLand && !carried ? 'behind the land, too small to x-ray'
-              : null;
+        : chip !== null ? 'offered through its shelter’s chip'
+          : markPx < READABLE_MARK_PX ? 'drawn too small to read'
+            : tooSmallForDetail ? 'smaller than the band draws detail at'
+              : behindLand && !carried ? 'behind the land, too small to x-ray'
+                : null;
     // And then the picker, which is the last word. `null` here means it handed
     // back this being; a number means it handed back somebody else first; and a
     // being the picker finds nothing at is not offered either, whatever the
@@ -5211,12 +5572,11 @@ export class World3D {
       ?? (coveredBy !== null ? 'behind another being'
         : unpointable ? 'nothing is drawn where the view reports it'
           : 'visible');
-    // Pointable and NOT owed a name: a building's chip is this being's label,
-    // and the naming rule's "nearest first" is over the beings that are not on
-    // one. A reader checking that invariant has to be able to tell which those
-    // are, and the band strip prints how many there are.
-    const carriedBy = this.insideChipOf.get(id) ?? null;
-    return { visible: reason === 'visible', markPx, bodyPx, inFrame, collapsed, behindLand, coveredBy, carriedBy, reason };
+    // Not owed a name: a building's chip is this being's label, and the naming
+    // rule's "nearest first" is over the beings that are not on one. A reader
+    // checking that invariant has to be able to tell which those are, and the
+    // band strip prints how many there are.
+    return { visible: reason === 'visible', markPx, bodyPx, inFrame, collapsed, behindLand, coveredBy, carriedBy: chip, reason };
   }
 
   /**
@@ -5236,14 +5596,43 @@ export class World3D {
     if (this.offerFrame === this.rendered) return this.offerFirst;
     this.offerFrame = this.rendered;
     this.offerFirst.clear();
+    const boxes = this.bodyBoxes();
     for (let k = 0; k < this.screenPoints.length; k++) {
       const i = this.screenIndex[k]!;
       if (this.isCollapsed(i)) continue;
       if (this.markerPixelsOf(i) < READABLE_MARK_PX) continue;
       if (bandShowsDetail(this.band) && this.bodyPixelsOf(i) < DETAIL_MIN_PX) continue;
       const p = this.screenPoints[k]!;
+      if (!offeredUnderPointer(this.insideChipOf.get(p.id) ?? null)) continue;
       const at = this.toClient(p.x, p.y);
-      this.offerFirst.set(p.id, this.pickAt(at.x, at.y)[0]?.id ?? null);
+      const own = this.pickAt(at.x, at.y)[0]?.id ?? null;
+      // A press is a neighbourhood, not a pixel. Where somebody ELSE's drawn
+      // body reaches this point, the winner has to hold for a couple of pixels
+      // either side of it or this being is not offered at all: round five's two
+      // mispicks in 389 were both beings whose winner flipped between a reader
+      // reading the offer and pressing the mouse on it.
+      //
+      // Only where there is a competitor. In the open — which is most of every
+      // frame — one pick is the whole cost, and the margin is four more raycasts
+      // for the handful of beings standing in a pile.
+      let contested = false;
+      for (const box of boxes) {
+        if (box.id === p.id) continue;
+        if (p.x >= box.x0 - OFFER_MARGIN_PX && p.x <= box.x1 + OFFER_MARGIN_PX
+          && p.y >= box.y0 - OFFER_MARGIN_PX && p.y <= box.y1 + OFFER_MARGIN_PX) { contested = true; break; }
+      }
+      if (!contested || own === null) {
+        this.offerFirst.set(p.id, own);
+        continue;
+      }
+      const m = OFFER_MARGIN_PX;
+      this.offerFirst.set(p.id, steadyWinner([
+        own,
+        this.pickAt(at.x - m, at.y)[0]?.id ?? null,
+        this.pickAt(at.x + m, at.y)[0]?.id ?? null,
+        this.pickAt(at.x, at.y - m)[0]?.id ?? null,
+        this.pickAt(at.x, at.y + m)[0]?.id ?? null,
+      ]));
     }
     return this.offerFirst;
   }
@@ -5271,10 +5660,13 @@ export class World3D {
       // stands on, projected in the same pass as its mark.
       const feet = this.screenFootY[k]!;
       const lying = this.beingAct[i] === ACT_RESTING;
-      // The figure as DRAWN, lean and all — a box narrower than the silhouette
-      // is a box the picker's ray reaches outside of, which is how a being can
-      // be "visible" with somebody else painted over it.
-      const halfW = Math.max(3, bodyPx * figureSpread(this.beingLean[i]!, lying));
+      // The figure at the WIDEST its act can be posed — never the pitch drawn
+      // this instant. A box narrower than the silhouette is a box the picker's
+      // ray reaches outside of; a box that follows the animation is a box that
+      // moves while a reader aims at it, which is the round-five defect. The
+      // widest pose is both: it always contains the drawn figure, and it does
+      // not change until the being changes what it is doing. See `poseLean`.
+      const halfW = Math.max(3, bodyPx * figureSpread(this.beingPose[i]!, lying));
       const high = lying ? bodyPx * 0.34 : bodyPx;
       // Too small to be a figure: the mark is all there is of it, and the box
       // is empty so nothing claims a body was drawn here.
@@ -5358,6 +5750,35 @@ export class World3D {
 
   private isVisible(id: number): boolean {
     return this.visibilityOf(id)?.visible === true;
+  }
+
+  /**
+   * Where a reader could aim, this frame — the cheap answer, for the one caller
+   * that must not pay for the expensive one.
+   *
+   * `visibleIds` is DEFINED by the picker and costs a raycast per candidate.
+   * An open hover card wants to know which points it must not sit on, and it
+   * asks on every pointer move: calling the picker there turned fourteen
+   * hover-picks a second into fourteen full offer audits a second, and the view
+   * stopped responding to the mouse altogether — measured, in a session whose
+   * every reading after camera 27 was of a stranded app.
+   *
+   * So this is the drawn geometry and nothing else: every being with a mark of
+   * its own big enough to read, which is a superset of what is offered and
+   * exactly the right answer for "do not cover that".
+   */
+  aimPoints(): { id: number; x: number; y: number }[] {
+    const out: { id: number; x: number; y: number }[] = [];
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const i = this.screenIndex[k]!;
+      if (this.isCollapsed(i)) continue;
+      if (this.insideChipOf.has(this.ids[i]!)) continue;
+      if (this.markerPixelsOf(i) < READABLE_MARK_PX) continue;
+      const p = this.screenPoints[k]!;
+      const at = this.toClient(p.x, p.y);
+      out.push({ id: p.id, x: at.x, y: at.y });
+    }
+    return out;
   }
 
   /** What this being is doing and how it is, exactly as the view encoded it. */
@@ -6097,9 +6518,24 @@ export class World3D {
 
   private rendered = 0;
 
+  /**
+   * Whether the WORLD is advancing — not whether this view is drawing.
+   *
+   * A paused instrument is a frozen frame: the idle lean stops, the selection
+   * ring stops pulsing, the ripples and the cairns stop fading. The camera is
+   * still allowed to come to rest, because that is the reader's own hand.
+   */
+  setRunning(on: boolean): void {
+    this.simRunning = on;
+  }
+
   render(): void {
     this.rendered++;
-    const t = this.clock.getElapsedTime();
+    // Held still while the world is. Every animation in this view reads this
+    // and not the clock, so "paused" means the picture a reader measures is the
+    // picture they aimed at. See `setRunning`.
+    if (this.simRunning) this.animT = this.clock.getElapsedTime();
+    const t = this.animT;
     const now = performance.now();
     // Before anything is sized or clamped: the projection has to be about the
     // canvas this frame is going onto. See `syncProjection`.
@@ -6304,6 +6740,7 @@ export class World3D {
     // maximized one — which is exactly what round four found.
     this.controls.maxDistance = maxOrbitDistance(this.worldPerPx, WORLD * 1.35);
     if (this.xrayMat) this.xrayMat.uniforms['uWorldPerPx']!.value = this.worldPerPx;
+    if (this.outlineMat) this.outlineMat.uniforms['uWorldPerPx']!.value = this.worldPerPx;
   }
 
   /**
@@ -6311,10 +6748,16 @@ export class World3D {
    * before any other number here means anything. See `health.ts`.
    */
   healthReport(): HealthReport {
+    // Measured on demand, not cached from boot: a mesh can be replaced at any
+    // time — `regrow` does it whenever a world grows past its capacity — and a
+    // guard that only ran once would have nothing to say about the mesh that
+    // actually shipped.
+    this.health.setCullRisks(this.cullAudit());
     return this.health.report();
   }
 
   dispose(): void {
+    this.dropWindowTap();
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
@@ -6427,6 +6870,9 @@ function regrow(scene: THREE.Scene, mesh: THREE.InstancedMesh, cap: number): THR
   const grown = new THREE.InstancedMesh(mesh.geometry, mesh.material, cap);
   grown.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   grown.count = 0;
+  // Name, culling and order all carry over: a mesh that grows must not lose the
+  // property that keeps it on the screen. See `World3D.instanced`.
+  grown.name = mesh.name;
   grown.frustumCulled = mesh.frustumCulled;
   grown.renderOrder = mesh.renderOrder;
   if (mesh.instanceColor) grown.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);

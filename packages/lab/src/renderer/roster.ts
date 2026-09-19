@@ -45,6 +45,15 @@ export interface RosterRow extends Filterable {
   inFrame: boolean;
   /** Readable in the frame: in view, big enough, not folded into a crowd chip. */
   visible: boolean;
+  /**
+   * This being has died while the table was held still for a reader.
+   *
+   * A sealed table may not lose a row: everything under the departure slides up
+   * by twenty-four pixels and the row somebody is aiming at is no longer the row
+   * they press. So the row stays exactly where it was, marked, with the last
+   * values the world gave it, until the pointer leaves.
+   */
+  gone?: boolean;
 }
 
 export type SortKey = 'name' | 'stage' | 'condition' | 'activity' | 'heading' | 'hunger' | 'rest' | 'distance';
@@ -139,8 +148,19 @@ export interface OrderState {
 export const FREE_ORDER: OrderState = { frozen: null, anchor: null, sealed: false };
 
 export type OrderEvent =
-  /** A row was chosen — by click, by Enter, or by the world. `order` is what is on screen now. */
-  | { kind: 'pick'; id: number; order: readonly number[] }
+  /**
+   * A row was chosen — by click, by Enter, or by the world. `order` is what is
+   * on screen now.
+   *
+   * `sealing` is set when the pointer is inside the table, and it re-seals the
+   * order SYNCHRONOUSLY, on the order the press saw. Round five re-sealed in an
+   * effect: a pick re-centres the camera, which drives every distance, and in
+   * the ~60 ms before the effect ran the table re-sorted under a reviewer's
+   * cursor. He read `c-name|Wreniash` at the press point and the press selected
+   * Fenush. A seal that engages a frame after the event it protects against is
+   * not a seal.
+   */
+  | { kind: 'pick'; id: number; order: readonly number[]; sealing?: boolean }
   /** The pointer entered the table. `order` is what is on screen now. */
   | { kind: 'enter'; order: readonly number[] }
   /** The pointer left it. */
@@ -157,6 +177,9 @@ export type OrderEvent =
 export function orderReduce(state: OrderState, event: OrderEvent): OrderState {
   switch (event.kind) {
     case 'pick':
+      // The pointer is on the table: seal it here and now, on the order this
+      // press was aimed at, whatever state the table was in a moment ago.
+      if (event.sealing) return { frozen: [...event.order], anchor: event.id, sealed: true };
       // Re-picking inside an existing freeze keeps the order that is on screen;
       // re-snapshotting it would be harmless but pointless churn.
       if (state.frozen !== null) {
@@ -198,25 +221,21 @@ export function orderReduce(state: OrderState, event: OrderEvent): OrderState {
  *
  * SEALED is the stronger promise, and it is the one a mouse needs: the table is
  * exactly the frozen list, looked up in `all` — every being the view holds,
- * whatever the current scope and sort would do to it — so a row can only leave
- * by the being dying. Nothing appears, nothing departs, nothing moves.
+ * whatever the current scope and sort would do to it. Nothing appears, nothing
+ * departs, nothing moves. Not even a death moves a row: pass `memory` and a
+ * being that dies keeps its place, marked, with the last values it had. Round
+ * five measured a "sealed" table whose rendered rows changed over twelve
+ * seconds with the pointer resting on it, and every one of those changes was a
+ * departure at 2400×.
  */
 export function applyOrder(
   rows: readonly RosterRow[],
   state: OrderState,
   all: readonly RosterRow[] = rows,
+  memory?: Map<number, RosterRow>,
 ): RosterRow[] {
   if (state.frozen === null) return rows.slice();
-  if (state.sealed) {
-    const byId = new Map<number, RosterRow>();
-    for (const row of all) byId.set(row.id, row);
-    const out: RosterRow[] = [];
-    for (const id of state.frozen) {
-      const row = byId.get(id);
-      if (row) out.push(row);
-    }
-    return out;
-  }
+  if (state.sealed) return sealedRows(state.frozen, all, memory);
   const at = new Map<number, number>();
   for (let i = 0; i < state.frozen.length; i++) at.set(state.frozen[i]!, i);
   const held: RosterRow[] = [];
@@ -224,6 +243,38 @@ export function applyOrder(
   for (const row of rows) (at.has(row.id) ? held : fresh).push(row);
   held.sort((a, b) => at.get(a.id)! - at.get(b.id)!);
   return held.concat(fresh);
+}
+
+/**
+ * The sealed table: the frozen ids, in their frozen places.
+ *
+ * Live values where the being is still there, and — when a `memory` is handed
+ * in — the last row it had, marked `gone`, where it is not. The marked row is
+ * cached in the memory rather than rebuilt, so its object identity is stable
+ * and React does not remount the row under the pointer.
+ */
+export function sealedRows(
+  frozen: readonly number[],
+  all: readonly RosterRow[],
+  memory?: Map<number, RosterRow>,
+): RosterRow[] {
+  const byId = new Map<number, RosterRow>();
+  for (const row of all) byId.set(row.id, row);
+  const out: RosterRow[] = [];
+  for (const id of frozen) {
+    const live = byId.get(id);
+    if (live) {
+      memory?.set(id, live);
+      out.push(live);
+      continue;
+    }
+    const last = memory?.get(id);
+    if (!last) continue;
+    const marked = last.gone === true ? last : { ...last, gone: true, inFrame: false, visible: false };
+    memory?.set(id, marked);
+    out.push(marked);
+  }
+  return out;
 }
 
 // ── Virtualization ───────────────────────────────────────────────────────────

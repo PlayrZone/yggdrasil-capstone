@@ -26,6 +26,27 @@ export interface HealthReport {
   consoleErrors: number;
   /** How many times the WebGL context has been lost. */
   webglContextLost: number;
+  /**
+   * Uncaught errors and rejected promises raised by the PAGE.
+   *
+   * A reviewer's blind spot, and he named it: a renderer `window.onerror` is not
+   * a `console.error`, so a live `ResizeObserver loop completed with undelivered
+   * notifications` left every count at zero. Counted here so "health is zero"
+   * means all four ways this view can be broken, not three of them.
+   */
+  windowErrors: number;
+  /**
+   * Instanced meshes in the scene that three is allowed to frustum-cull and
+   * whose bounds nobody refreshes.
+   *
+   * This is the round-five defect, made countable. `this.windows` was created
+   * with `count = 0`, three cached an EMPTY bounding sphere on its first frustum
+   * test and never recomputed it after `setMatrixAt`, and every hut was dark at
+   * midnight for the life of the view — with `shaderErrors`, `consoleErrors` and
+   * `webglContextLost` all zero, because the program linked perfectly and drew
+   * nothing. A non-zero count here names the mesh in `notes`.
+   */
+  cullRisks: number;
   /** The first few messages behind those counts, for a session log. */
   notes: string[];
 }
@@ -35,6 +56,9 @@ export interface Health {
   noteShaderError(text: string): void;
   noteConsoleError(text: string): void;
   noteContextLost(text: string): void;
+  noteWindowError(text: string): void;
+  /** Replace the culling read-out — it is a state of the scene, not an event. */
+  setCullRisks(names: readonly string[]): void;
 }
 
 /** How many messages are kept — enough to name the fault, not a log sink. */
@@ -44,15 +68,26 @@ export function createHealth(cap = HEALTH_NOTE_CAP): Health {
   let shaderErrors = 0;
   let consoleErrors = 0;
   let webglContextLost = 0;
+  let windowErrors = 0;
+  let culled: string[] = [];
   const notes: string[] = [];
   const note = (text: string): void => {
     if (notes.length < cap) notes.push(text.length > 400 ? `${text.slice(0, 400)}…` : text);
   };
   return {
-    report: () => ({ shaderErrors, consoleErrors, webglContextLost, notes: [...notes] }),
+    report: () => ({
+      shaderErrors,
+      consoleErrors,
+      webglContextLost,
+      windowErrors,
+      cullRisks: culled.length,
+      notes: [...notes, ...culled.map((n) => `cull: ${n} may be culled on a stale bounding sphere`)],
+    }),
     noteShaderError: (text) => { shaderErrors++; note(`shader: ${text}`); },
     noteConsoleError: (text) => { consoleErrors++; note(`console: ${text}`); },
     noteContextLost: (text) => { webglContextLost++; note(`webgl: ${text}`); },
+    noteWindowError: (text) => { windowErrors++; note(`window: ${text}`); },
+    setCullRisks: (names) => { culled = [...names]; },
   };
 }
 
@@ -90,5 +125,36 @@ export function onConsoleError(sink: ErrorSink, listener: (text: string) => void
       sink.error = original as ErrorSink['error'];
       original = null;
     }
+  };
+}
+
+/**
+ * The page's own faults: an uncaught error and a rejected promise nobody
+ * handled.
+ *
+ * Separate from the console tap because they arrive by a different door and one
+ * does not imply the other. Typed against the bare `EventTarget` shape so this
+ * stays testable in node.
+ */
+export interface EventSource {
+  addEventListener(type: string, fn: (e: unknown) => void): void;
+  removeEventListener(type: string, fn: (e: unknown) => void): void;
+}
+
+export function onWindowError(source: EventSource, listener: (text: string) => void): () => void {
+  const onError = (e: unknown): void => {
+    const ev = e as { message?: unknown; error?: unknown } | null;
+    listener(String(ev?.message ?? ev?.error ?? e));
+  };
+  const onReject = (e: unknown): void => {
+    const ev = e as { reason?: unknown } | null;
+    const reason = ev?.reason;
+    listener(`unhandled rejection: ${reason instanceof Error ? reason.message : String(reason ?? e)}`);
+  };
+  source.addEventListener('error', onError);
+  source.addEventListener('unhandledrejection', onReject);
+  return () => {
+    source.removeEventListener('error', onError);
+    source.removeEventListener('unhandledrejection', onReject);
   };
 }
