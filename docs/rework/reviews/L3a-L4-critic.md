@@ -496,3 +496,123 @@ EVERYTHING IT IS DOING` is printed under it. Fixing the annotation was the easy 
 always the hard half, and they are unchanged. Add to that a shader that has never compiled, a roster
 you can only pick from once, and a probe that aims the mouse 113 pixels below the thing it describes,
 and this is not yet an instrument — it is an instrument with three loose wires and a lens cap on.
+
+---
+
+# Round 5 (L3a / L4) (`b4cd86f`) — **FAIL**
+
+Built and run from the permanent clean checkout `C:\dev\YggdrasilLab-critic`, clean before and after,
+re-pinned `git checkout --detach b4cd86f`; `pnpm install --frozen-lockfile --prefer-offline` (already up
+to date); `pnpm --filter @yggdrasil/lab build` exit 0; lab suite **473 / 473** (10 files, 2.25 s). The
+main tree was never built, tested or checked out; only this file was edited there. Eight Electron
+sessions, one at a time, isolated `YGG_HOME`, no key, round four's flags plus
+`setBackgroundThrottling(false)`, each proving it drew (12 frames / 1.2 s) before measuring: **A 236004**
+(night, the hut), **B 222988** (offers, world 1), **C 180396** (offers world 2, small window, the night
+windows), **D 221056** (NEAR naming), **G 239356** (the roster), **E 238496** (sweep, CVD, L4, the tap),
+**F 208444** (wheel, blind frames, offers clean), **H 231592** (quadrants, L4 positive). All verified
+gone by id; **0 `electron.exe` remain**. Maximised, canvas 2188 × 914.8 CSS, dpr 1.5, world paused before
+every scored frame. Shots and truth in `~/.yggdrasil-lab/rework/shots/L3a-r5-critic/`; blind readings
+written before `truth/` was opened; the engineer's `…/L3a-r5/` was read for his launch method and nothing
+else.
+
+**Health.** `health()` at boot, mid-run and before close in all eight sessions:
+`{shaderErrors: 0, consoleErrors: 0, webglContextLost: 0}` — **zero in 24 readings**, `pageerror` 0 in
+every session. The tap is honest: a deliberate `console.error` from the page took `consoleErrors` 0 → 1
+with the text kept in `notes`. One blind spot: a renderer `window.onerror` is not a `console.error` and
+is not counted (session C raised `ResizeObserver loop completed with undelivered notifications` on my own
+live resize; `health()` stayed at 0).
+
+## The round-5 claims
+
+| | claim | my measurement | |
+|---|---|---|---|
+| **0** | lit windows at night | The SHADER half is fixed, and properly: the rim term is a build-time choice in `shading.ts`, `litOnlyIdentifiersIn` is the check, `health().shaderErrors` is 0 in 24 readings. **But no lit window is ever drawn.** At `daylight() === 0.000`, camera square on the window wall of four shelters at 7 m and 16 m (`c5c-night-window-{0..3}-{7,16}m-near.png`), plus MID, NEAR and a 3 m close-up (`c5a-night-{mid,near,hutcloseup}.png`): no cream pane anywhere. `c5c-night-window-3-16m-near.png` is decisive — an un-ghosted hut filling the frame, flat dark wall, nothing where a 0.8 m pane would be ~45 px wide. | **FAIL** |
+| **1** | offers are the real picker, 0 mispicks | **389 offered beings**, 2 worlds, ~60 cameras, MID and NEAR, settlement crowds and hut occupants included; real mouse driven to `screenPositionOf`, hover card compared with the offer. **2 mispicks (0.51 %)** — B 1/124, C 0/80 (world 2), F 1/185. Round four was 4/148 (2.70 %): five times better, not zero. | **FAIL** |
+| **2** | NEAR naming | **11 settlement frames**, distances recomputed by me from `worldPositionOf` against the camera target. **0 violations, 11/11** — no readable, un-carried being nearer than the farthest named one. Strip contains `labelAudit().claim` 11/11; visible `.wlabel` pills == `labelsShown()` == `expected` == `shown` == `within` 11/11; the printed X equals the farthest named being's own distance to **≤ 0.02 m every time** (13.13 v 13.14, 21.51 v 21.55, 10.40 v 10.43, 9.48 v 9.49, 8.32 v 8.33, 4.92, 3.31 v 3.32, 1.76, 0.52, 0.50, 0.49). The hut exception is printed. Round four's defect 5 is properly fixed. | **PASS** |
+| **3** | the piled hut | Number, card, mix bar, framing all right; the bodies unchanged. See below. | **FAIL** |
+| **4** | roster, real-mouse clicks | **33 clicks** — paused, 30×, 120×, 2400×; 18 on a row clipped by the table's top or bottom edge; most straight after a pick had re-centred the camera. **32 right.** | **FAIL** |
+| **5** | one coordinate frame | Maximised, roster open (canvas origin 16, 112.8) and a forced 497 × 62 canvas: `chipsOnScreen` **14/14** land on their own `.wnum`/`.wcount` disc via `elementFromPoint`; `clustersShown` 8/8 and `countAudit().chips` 8/8 the same; every being point falls inside the canvas and `pickAtScreen` returns that being **128/128**; `hoverCardFor().mark` lands on the canvas; the real mouse at a chip's own point opened that chip's card every time. Round four's 113 px is gone. | **PASS** |
+| **6** | no regression | FAR by real wheel: **21 notches** from DEFAULT, maximised (13.98 → 0.560 figure px against `enterFarPx` 0.577), `c5f-far-by-wheel.png`. One point per being: `screenPositionOf` == `markScreenPositionOf` to **0.00 px** wherever a mark is drawn, `pickAtScreen` agrees **104/104** (the 34 px outlier is a hut occupant, documented as body-not-mark). Quadrants, **DEFAULT only** (MID/NEAR promise no count): **24 of 24 reconcile** over 6 frames, and frame-wide `pins + Σchips == beings` **6/6** (35, 9, 8, 14, 4, 35). Scale bar: `px == metres / metresPerPx` to **0.000 px in all four bands** (500 m/144.1, 20 m/157.8, 5 m/175.2, 2 m/179.6), drawn width within 0.4 px, labelled in metres. True scale: adult 1.75 < hut **4.400 (from the mesh)** < shortest tree 7.43 < tree 20.25; adult on screen +0.4 / +1.4 / +4.7 % of the bar at DEFAULT / MID / NEAR. Perf, 272 beings at 2400× with the roster open: **2401 frames / 40.0 s = 60.00 fps, 0 long tasks**. Limiter: running focused **60**, idle **10.0**, unfocused **10.0**, minimised **1.0** draws/s. **CVD re-measured by me** — Machado severity-1.0 matrices applied to the captured PNG in the main process, not by the page — on the 126-being specimen grid deuteranopia and protanopia both keep **4/4** conditions separable by ring shape *and* body lightness (`c5e-specimen-{deut,prot}.png`). L4: three filter tasks, 2 interactions each, `matchCount().matched == highlightedIds().length` 3/3, zero-state wording exact ("no match · 269 living" / "No being answers that. Drop a chip, or clear the filter."); the positive case "the elder who is speaking" resolved to **1 of 41 in 2 interactions**, but speaking lasts under a second at 2400× and the third interaction could not be landed — a reader must pause first, and nothing says so. | **PASS** |
+| **7** | blind stranger, 4 fresh frames | FAR **215 v 216 (−0.46 %)**, the fourteen chip numbers read exactly; DEFAULT **71 v 73 (−2.7 %)**, the ten chips exact. Both bands promise a count; both inside ±10 %. MID ≈110 v 123 and NEAR ≈70 v 84 — neither promises a count and both say so. **Condition: I wrote "everyone is well" for all four; the truth was 4 sick / 3 sick / 2 sick / 1 in danger + 1 starving — 0 of 7 unwell beings found blind**, against round three's 2/2 and round four's 3/3. | |
+
+## The piled hut, scored from the picture first
+
+The **number** is right, and it is what the contract stakes everything on: `c5a-hut-medium-mid-crop.png`
+prints **15** over a hut holding 15, `c5f-blind-near-night.png` prints **37**, `c5c-night-window-1-16m`
+prints **3**. The chip is hoverable at its own reported point and the card is complete and correct ("15
+inside this shelter · well 14 · in danger 1 · standing 15", then all fifteen names, then "click to frame
+them"); the click frames the hut without diving to street level (MID → MID); no occupant is individually
+named or leadered (`labelsShown()` ∩ occupants = ∅, and the strip prints "· 55 more counted on their
+huts"); and the `.wmix` bar **is** drawn, 30 × 4 px with its segments — round four's 0 × 0 is fixed. I did
+not reproduce a 50+ shelter: at population 256 the run I settled had collapsed to 83 alive by day 36, so
+the largest I framed were **37** and **33**.
+
+The **bodies** are unchanged, and they are why this fails. Asked how many are inside, from the PNG alone,
+I resolved **7 of 15** at MID; at 7 m at night (`c5c-night-window-0-7m-near-crop.png`) a shelter of
+twenty-odd is one blown-out white cloud with a few heads around its rim, and the 37-occupant hut at NEAR
+is a solid white lozenge. Nothing about condition is readable from a body at all. A stranger shown that
+crop cold would not say "a crowded shelter", they would say the renderer is broken. The fix is not more
+annotation: occupants are drawn at full white through the ghost with no shading and no depth cue, so they
+fuse. Light the interior — the lit-windows material already exists — or darken a body by depth inside a
+shelter, or give each figure a thin dark outline. Any one turns a cloud into people.
+
+## Defects, ranked
+
+1. **HIGH — the lit windows are still not on the screen; only the reason changed.** The shader compiles
+   (round four's defect 1 is genuinely fixed) and `updateLight` sets `opacity = night * 0.62`, so after
+   dark every hut should carry a 0.62-alpha cream pane — and none does, on four shelters at two distances
+   square on the window wall. Most likely cause, from the source: `this.windows` (`World3D.ts:1531`) is
+   the **only** InstancedMesh in the file that does not set `frustumCulled = false` (compare `:1515,
+   :1695, :1936, :2053, :2064, :2085, :2094, :2106, :2116, :2137, :2159`). It is created with `count = 0`
+   and capacity 64; three computes and **caches** its bounding sphere on the first frustum test — empty,
+   because `count` is 0 — and never recomputes it after `setMatrixAt`; with ≤ 64 shelters the mesh is
+   never re-created, so it is culled for the life of the view. `health() === 0` proved the program links,
+   not that anything was drawn with it. A round that claims a picture must photograph the picture.
+2. **HIGH — eighteen to thirty-seven people in a hut still read as one white mass.** Unchanged from round
+   four; the annotation around it is now good, which makes the object underneath look worse.
+3. **MED — two beings in 389 hand you somebody else, and the offered set is now unstable rather than
+   wrong.** Both are hut occupants (`carriedBy` non-null) 13–28 px from the being that won. In the one I
+   captured in full (`truth/f-claim1.json`, id 2338 at 976, 603) `visibleIds()` offered it and by the time
+   the mouse arrived `visibilityOf` said `visible: false, coveredBy: 2359, reason: "behind another being"`,
+   `stillOffered: false` — **in a paused world with a settled camera**. Probe and picker agree at every
+   instant; what moves is the idle animation, which drives `figureSpread` through `beingLean`, so the body
+   boxes of people packed in a shelter breathe and the depth order at one pixel flips between the read and
+   the press. Freeze the cover box for carried beings, or require a margin before offering one.
+4. **MED — the roster row under the cursor can change during the press.** 32 of 33. The miss:
+   `elementFromPoint` at the press point read `c-name|Wreniash`, the click selected **Fenush**, and the
+   selected row was index 4 in both — the table re-sorted in the ~60 ms between aiming and pressing, at
+   2400×, right after a pick re-centred the camera and thawed the order. That is exactly what the seal's
+   own comment says it exists to prevent. Re-seal synchronously on the pick, not in an effect.
+5. **MED — seven unwell beings in four frames, none findable in the picture.** I read all four blind
+   frames as "everybody is well". Some of those seven are inside shelters and the view is entitled to
+   withhold them — but nothing in the frame says which, and rounds three and four both found their unwell
+   beings cold. The honest form is a strip clause of the kind the naming rule already prints: "· 2 unwell
+   counted on their huts".
+6. **LOW — the sealed roster does not actually stand still.** Pointer genuinely on the table, 2400×, 12 s:
+   the rendered rows changed. No stale row survived (0 dead beings listed, before or after) and the order
+   released correctly when the pointer left, so the dangerous half is handled; "stands still for as long
+   as the pointer is on it" is not what I measured.
+7. **LOW — an open hover card blocks the beings around its own subject.** In one MID frame 6 of 13 offered
+   beings had the card's own `.hstack` buttons over their reported points (`truth/b-claim5.json`); the
+   mouse cannot reach them without moving away first. The card never covers its *own* subject.
+8. **LOW — below its own minimum the picture is the first thing squeezed out.** Forced to 900 × 620 (under
+   the app's declared 1024 × 680) the world canvas collapses to **497 × 62 CSS** while the legend keeps
+   ~330 px and the roster's filter chips ~200 px (`c5c-small-window.png`). The coordinate frame still
+   holds there, which is what I was testing; the layout does not.
+
+## Craft
+
+Three things are better than round four and I would defend all three. The **NEAR naming rule** is a
+sentence a reader can check with a ruler, and I checked it with mine: eleven frames, zero violations, a
+radius matching the farthest name's true distance to two centimetres. **One coordinate frame** is done —
+chips, marks, beings, clusters and the count audit all answer in the frame a `PointerEvent` carries, on
+three window shapes, and the mouse goes where the probe says. And the **hut chip** is real instrument
+design: an exact number, a correct mix bar, every occupant named in the card, one click that frames them.
+
+What stops this being a pass is that the two things the round was named for are still not on the screen.
+The lit windows were re-engineered, tested, documented and health-instrumented — and a screenshot at
+midnight shows a dark wall, because the fix addressed the compile and nobody photographed the result. The
+crowd inside a shelter is the same white cloud it was in round four, with better labels around it. An
+instrument is judged on the picture, and in both cases the picture is the one thing that was not checked.
+Fix the culling, light the interior, and hold the offered set still for the length of a press, and I
+expect L3a to pass.
