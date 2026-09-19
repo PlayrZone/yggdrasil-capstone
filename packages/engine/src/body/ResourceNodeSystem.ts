@@ -72,12 +72,19 @@ const SEASONAL: ReadonlySet<ResourceNodeKind> = new Set<ResourceNodeKind>([
   'berryBush', 'foodPlant', 'mushroomPatch', 'tuberPlant', 'nightshadePlant', 'fiberPlant', 'tree',
 ]);
 
-export function createResourceNode(kind: ResourceNodeKind, stock: number): ResourceNode {
+/**
+ * `regrowEvery` is the WORLD's number, not the kind's: how fast a bush comes
+ * back is the difference between a valley that feeds two hundred people and
+ * one that feeds four thousand. The classic table is the default and every
+ * classic caller uses it; the continent passes its own (see
+ * `worlds/forager/continentScenario.ts`).
+ */
+export function createResourceNode(kind: ResourceNodeKind, stock: number, regrowEvery?: number): ResourceNode {
   return {
     kind,
     stock,
     maxStock: stock,
-    regrowEvery: DEFAULT_REGROW[kind],
+    regrowEvery: regrowEvery ?? DEFAULT_REGROW[kind],
     gatherCount: 0,
   };
 }

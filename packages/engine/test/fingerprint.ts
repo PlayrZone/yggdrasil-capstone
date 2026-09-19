@@ -7,6 +7,7 @@ import type { Structure } from '../src/body/PerceptionSystem.js';
 import type { Animal } from '../src/body/WildlifeSystem.js';
 import type { SeedInGround } from '../src/body/WorldRegularities.js';
 import type { Intent } from '../src/contract/types.js';
+import type { SettledView } from '../src/runner/RuntimeView.js';
 import type { ScenarioId } from '../src/worlds/forager/scale.js';
 
 /**
@@ -68,16 +69,17 @@ function intent(d: Digest, i: Intent): void {
   d.push(i.utterance?.speechAct ?? '~').num(i.utterance?.targetId).push(i.utterance?.text ?? '~');
 }
 
-function entity(d: Digest, e: Entity, animals: boolean): void {
+function entity(d: Digest, e: Entity, settled: SettledView): void {
   d.num(e.id);
   for (const key of Object.keys(e.components).sort()) d.push(key);
-  const isAnimal = e.components['Animal'] !== undefined;
   const t = e.components['Transform2D'] as Transform2D | undefined;
-  // An animal's POSITION is skipped when `animals` is off: a beast in a tile
-  // no living being is near has not been moved yet, which is the whole point
-  // of activity regions and is by construction unobservable. Everything else
-  // about it — its kind, health, what it is carrying — is still hashed.
-  if (t && !(isAnimal && !animals)) d.num(t.x).num(t.y).num(t.z);
+  // THE SETTLED POSITION, not the stored one: a beast in a tile no living
+  // being is near has not been stepped, and the digest must not depend on
+  // when it last was. Before that existed this function took an `animals`
+  // flag and simply dropped animal positions, which was the only way two runs
+  // at different activation radii could be compared at all.
+  const at = t ? settled.positionOf(e) : undefined;
+  if (at) d.num(at.x).num(at.y).num(t!.z);
 
   const body = e.components['GahallianBody'] as GahallianBody | undefined;
   if (body) {
@@ -93,12 +95,13 @@ function entity(d: Digest, e: Entity, animals: boolean): void {
   }
 
   const node = e.components['ResourceNode'] as ResourceNode | undefined;
-  if (node) d.push(node.kind).num(node.stock).num(node.maxStock).num(node.regrowEvery).num(node.gatherCount);
+  // …and the settled stock, for the same reason.
+  if (node) d.push(node.kind).num(settled.stockOf(e)).num(node.maxStock).num(node.regrowEvery).num(node.gatherCount);
 
   const s = e.components['Structure'] as Structure | undefined;
   if (s) d.push(s.kind).num(s.builtBy).num(s.builtTick).dict(s.inventory as Record<string, unknown>);
 
-  const a = animals ? (e.components['Animal'] as Animal | undefined) : undefined;
+  const a = e.components['Animal'] as Animal | undefined;
   if (a) {
     d.push(a.kind).num(a.heading).num(a.changeAt).num(a.targetId).num(a.lastAttack).num(a.health);
     // Only the continent's animals carry a home range, so nothing is pushed
@@ -161,14 +164,8 @@ function mind(d: Digest, exp: Experiment, agentId: number): void {
   for (const g of m.goals) d.num(g.id).push(g.description).push(g.need ?? '~').num(g.createdTick);
 }
 
-export interface FingerprintOptions {
-  /** Include animal positions and headings. Default true. */
-  readonly animals?: boolean;
-}
-
 /** The whole run's state, hashed. Identical input state ⇒ identical string. */
-export function fingerprintOf(exp: Experiment, options: FingerprintOptions = {}): string {
-  const animals = options.animals ?? true;
+export function fingerprintOf(exp: Experiment): string {
   const d = new Digest();
   d.push(exp.seed).num(exp.tick).num(exp.eventCount).num(exp.birthCount).num(exp.aliveCount());
   d.num(exp.exchangeCount).num(exp.conflictCount).num(exp.sicknessCount).num(exp.shareCount);
@@ -186,7 +183,7 @@ export function fingerprintOf(exp: Experiment, options: FingerprintOptions = {})
   exp.world.forEach((e) => entities.push(e));
   entities.sort((a, b) => a.id - b.id);
   d.num(entities.length);
-  for (const e of entities) entity(d, e, animals);
+  for (const e of entities) entity(d, e, exp.settled);
 
   for (const ev of exp.eventLog) {
     d.num(ev.tick).push(ev.type).num(ev.actorId).push(ev.targetIds.join(',')).num(ev.x).num(ev.y);
@@ -207,9 +204,16 @@ export interface GoldenRun {
   readonly scenario?: ScenarioId;
   /** Ticks to fingerprint at, when this run is not on the standard pair. */
   readonly checkpoints?: readonly number[];
+  /** Metres a tile stays live. Left out = the scenario's own default. */
+  readonly activityRadius?: number;
   /** Pre-run seeding, so the culture + craft-observation paths are locked too. */
   readonly setup?: (exp: Experiment) => void;
   readonly craftLearning?: boolean;
+}
+
+/** Run one config at an explicit activation radius — the radius-independence proof. */
+export function fingerprintsAtRadius(run: GoldenRun, activityRadius: number): string[] {
+  return fingerprintsFor({ ...run, activityRadius });
 }
 
 /** Three seeds × two population sizes, plus one seeded-culture/craft world. */
@@ -239,6 +243,7 @@ export function fingerprintsFor(run: GoldenRun): string[] {
     agentCount: run.agents,
     ...(run.craftLearning ? { craftLearning: true } : {}),
     ...(run.scenario ? { scenario: run.scenario } : {}),
+    ...(run.activityRadius !== undefined ? { activityRadius: run.activityRadius } : {}),
   });
   run.setup?.(exp);
   const out: string[] = [];

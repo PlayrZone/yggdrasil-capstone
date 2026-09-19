@@ -35,11 +35,11 @@ export const SICKNESS_TICKS = 300;
 export const NUTRITIOUS_FOODS: ReadonlySet<ObjectKind> = new Set<ObjectKind>(['berry', 'tuber', 'meat']);
 export const SICKENING_FOODS: ReadonlySet<ObjectKind> = new Set<ObjectKind>(['mushroomRed', 'nightshade']);
 
-/** Perception radius, day vs night (darkness narrows the world). Widened for
- *  the larger continent — at 56 a Gahallian was effectively blind in a 2000-
- *  wide world and starved before finding food. */
-export const PERCEPTION_RADIUS_DAY = 92;
-export const PERCEPTION_RADIUS_NIGHT = 38;
+// Perception radius used to live here as PERCEPTION_RADIUS_DAY/NIGHT. It is
+// world data, not a world REGULARITY, and since the scale audit it has lived
+// in `BodyScale` (CLASSIC_SCALE.perceptionDay / perceptionNight) where a second
+// world can hold its own. The constants here were dead — re-exported, and
+// pinned by one test that pinned them to themselves.
 
 /** Being out at night, unsheltered and awake, wears safety + health. */
 export const EXPOSURE_SAFETY_PER_TICK = 0.08;
@@ -68,10 +68,13 @@ export class WorldRegularitiesSystem {
       const x = t.x;
       const y = t.y;
       world.removeEntity(id);
-      const plant = world.createEntity({
-        Transform2D: { x, y } satisfies Transform2D,
-        ResourceNode: createResourceNode('foodPlant', SPROUTED_PLANT_STOCK),
-      });
+      const plant = world.createEntity(
+        {
+          Transform2D: { x, y } satisfies Transform2D,
+          ResourceNode: createResourceNode('foodPlant', SPROUTED_PLANT_STOCK),
+        },
+        { static: true },
+      );
       bus.emit({
         tick,
         type: 'PlantSprouted',

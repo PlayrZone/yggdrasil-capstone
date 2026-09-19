@@ -46,3 +46,55 @@ The suspicion is right. Classic at the same age (12 days, 150 founders): **173 b
 7. Test gaps: `bench/continent.bench.ts` has **zero assertions** (all five budgets are prose); `continent-activity.test.ts` compares animals once, at the end, against a hard-coded `92`, in two runs that are *both* partly dormant — there is **no never-dormant continent run** in the suite; its classic case has no anti-vacuity guard and at radius 300 nothing ever sleeps (measured 0/64 dormant), so it currently tests nothing; `MAX_DENSITY` is pinned to a remembered literal (2374) because `DENSITY` is unexported; `continent-placement.test.ts` carries an unexplained `(6200,5200)` with divisors `0.69`/`1.54`.
 
 **Verdict: PASS.** Mind diff empty; classic bit-identical on six unseen configs; no activity-region divergence perceivable by any being. Items 1, 2 and 6 are the real follow-up.
+
+---
+
+# Round 2 (M1b) — verifier: **PASS**, with a backlog
+
+Hostile verification of the uncommitted M1b work, base `5975770`. No game running → full battery. Scratch harness (`_verify_*` + a `git archive` copy of `5975770`'s `src`; no worktree, no junction, no install) deleted; 166 engine files hashed before/after — **identical**. No source edited. `tsc --noEmit` clean; engine **544/44 files**, mcp **13/3** green. Lab left alone (another engineer's).
+
+## A. Mind empty, classic byte-identical — HOLDS
+Mind diff `git diff --stat` is **empty vs `5975770` and vs `02f0c89`**. Byte-dump (entities, event log, minds, births, counters, 12 reports, per-agent detail/archetype; ~2.1–2.7k sections) old-vs-new in one process, **6 unseen configs × 3,000 ticks** + the 3 golden configs: **0 diverging sections** everywhere. One config was built to hit exactly what M1b touched in classic code — 33 structures, death-drop containers, host `relocate`, `grantItems` — and `staticDrift` stayed **0**. The walker clamp is provably inert in classic (stride 0.5 < arrive 1.0) and the dump confirms it.
+
+**The static/dynamic split, measured.** Supported path (`relocate` → `markMoved`): correct on the **next tick**, old cell cleared. A being moved by a raw write is still re-homed in **1 tick**. The unsupported path — a host writing `t.x` on a *static* entity with no `markMoved` — leaves the index wrong for **159 ticks** (bound 256) and is counted in `staticDrift` (1), not silent. Nothing in the engine takes that path; it is a host-contract risk, and `staticDrift` is a counter no runtime code reads.
+
+## B/C. Activity regions and the teleport invariant
+**Claim 1 verified, harder than claimed.** My own watcher (theirs checks the raw transform only; mine also checks `settled.positionOf`, the position the lab renders) over **202,553–421,388 watched animal-ticks** at radii 300/768/2000 and a second seed: worst in-sight single-tick move **1.2320 m — exactly the wolf's speed**, raw *and* settled, in every run. Round 1's 156.5 m in-sight wolf teleport is gone. Zero animals vanished in sight.
+
+**Ledger/id stability — HOLDS.** At 8 days, radii 300/768/2000 vs never-dormant: **20,139 entities and 947 animals, rosters identical to 6 dp**. Respawn is genuinely radius-independent.
+
+**THE CRACK: re-anchored predators are radius-dependent.** `reanchor` sets `px = θ − wx·tick` (`ContinentWildlife.ts:186`), so the phase depends on *which tick* the chase was observed to end — and a predator is only stepped while its tile is awake. `settled` cannot repair it, because the divergence is baked into `home`, which is state, not a closed form. Measured, 12 days, 80 agents, full state through `settled`, no exclusions: radius 300/768 each differ from a never-dormant control in **2 animal sections**; settled positions **14.0 m** and **33.8 m** apart, one run holding `targetId=19988` where the control holds `0`. Reproduced on a second seed at 6 days (default radius: 1 animal; 400: 2; 1536: 0). Nearest living being **752–1392 m** — so **nothing perceivable, not a FAIL** — but claim 7 as written is false.
+
+**And the golden's radius-independence is an artefact of its checkpoints.** At 1200/3000 the digest is identical at 400/768/1536/3000/**60000** — I added the never-dormant control the engineer omitted, and it agrees. At deeper checkpoints it does not: at **tick 16,800** the digest is `e5a6cbfd…` (r400) / `f7ef8d26…` (r768) / `e77e192b…` (r1536 **and** never-dormant); same split at 28,800. So "`CONTINENT_ACTIVITY_RADIUS` can be retuned without any of these values moving" is true to 1.25 days and false by day 7.
+
+## D. Ecology — real, reproducible, and the derivation is seed-specific
+`FOOD_PER_BEING_DAY` recomputes to **1.16160** items/day from the code's own constants, not the reported 1.153. **`6.29` is not a constant** — `solveSlowdown` re-runs the valley scatter per seed; across five seeds it is **5.83 / 5.97 / 6.02 / 6.10 / 6.46** (berry 1282–1421 ticks), and `placement` and `bench-valley` both give ≈5.83/6.02, so 6.29 is some other seed's value.
+
+Two unpublished seeds, 120 founders, 30 days — the pattern reproduces, it is not a lucky seed. Starvation first appears **day 14–16** (seed A: 12 by d16 → **100** by d30; seed B: 1 by d14 → 39 by d30). The population **overshoots and corrects**: A 134 → peak **463** (d28) → **398** (d30); B 136 → **318** → **295**. `maxPopulation 4000` is never approached. They spread, but not far: p90 627→1008 m, `>1 km` 0→43.
+
+**Starvation happens beside uneaten food.** At day 30, seed A: food nodes within 500 m of the valley hold **0 items across 228 nodes**, while 1–2 km out **1,240 nodes hold 5,793** and 2–4 km out **3,007 hold 14,285**. Seed B: 95 items inside 500 m against 14,287 at 2–4 km. The valley is stripped bare while ~26,000 items sit within an hour's walk. Carrying capacity is derived for the valley; the beings' 92 m sight and 22–48 m reflex stride cannot reach the rest.
+
+Against classic at the same age (12 d, 120 founders, same seeds): classic already kills by hunger (**19–20 starvation deaths**) where the continent still has **zero**. Per-capita births/day continent-vs-classic: 0.109 vs 0.067 (A), 0.090 vs 0.106 (B) — now comparable, where M1 was uniformly easier. M1's "no starvation ever" is fixed; onset is ~2 weeks late.
+
+## E. Rivers and parity — both fixed, independently confirmed
+All three mouths are **below sea level** (−4.43, −5.27, −4.13 m) with open sea **within 5 m**, and **zero dry samples** along each full course. Round 1's two rivers ending on dry land at 27.3 m and 18.5 m are gone. Caveat: on a 2 m walk the *carved height field* is not monotone — **136 / 56 / 74 uphill steps, worst +0.64 m**; the engineer's monotonicity test walks `riverBedHeight`, a running minimum that is monotone by construction, not the ground the world renders.
+
+Parity on **10 fresh seeds** against a pooled classic baseline (food 8.72 / wood 3.27 / water 1.46 per founder): food **0.85–1.04**, wood **0.72–0.83**, water **0.92–1.26** — all inside 0.65–1.35. Round 1's wood ×1.43 blowout is gone, though wood is now **one-sidedly low** (never above 0.83).
+
+## F. Performance — better than claimed
+At 300 beings, M1 → M1b: continent **0.788 → 0.580 ms/tick**, reconcile share **24.2 % → 1.2 %**; classic **0.883 → 0.774 ms**, reconcile **1.8 % → 0.3 %**; `staticDrift` 0 in both. The 256-tick audit costs 0.134 ms, **0.09 % amortised**. Bench re-run passes its 10 new assertions: classic 0.396, continent 0.300 ms/tick (budget 0.8), ratio 0.76 (budget 2.5), build 0.02/0.15 s (budget 10), 300 beings × 1 day 1.5 s (budget 90). The assertions are live — the same expression at a 10 %-tighter budget fails — but slack runs 1.9× to 500×.
+
+## G. A node born into a dormant tile — not reachable
+Every node is created full (`createResourceNode` sets `maxStock = stock`), so `stockOf`/`step` see `deficit ≤ 0` and the `lastStepped` fast-forward never applies; only a being can deplete one, and a being lights the tile. Measured over 8 days at radius 300 with **902/1024 tiles dormant**: **0 settled-stock disagreements** against a never-dormant control across 20,281 entities, 0 nodes over `maxStock`.
+
+## Backlog
+1. **A respawned animal materialises in plain sight.** The invariant test exempts it verbatim (`if (!was) continue; // born this tick`). I killed 23 animals inside the founders' eyesight; **18 of the 23 replacements appeared inside a being's 92 m sight, the closest 15.9 m away**. Placement is uniform in the dead animal's 256 m tile with no regard for who is standing there. Conservation is exact and radius-independent, so this is not a determinism bug — but "animals do not teleport" only covers animals that already exist. I did not treat this as the FAIL condition because the stated invariant is about movement; if the owner counts a materialisation, this is the item.
+2. **Re-anchor phase is tick-dependent** (B/C above) — the one thing `settled` cannot settle. Fix by deriving the phase from a quantity that does not depend on when the tile woke, or by re-anchoring on a schedule the dormant path can replay.
+3. **Golden-radius test needs a deeper checkpoint and a never-dormant arm** — as recorded it cannot see (2).
+4. **A sprouted plant bypasses the slowdown**: `WorldRegularities.ts:74` calls `createResourceNode('foodPlant', 4)` with no third argument, so on the continent it regrows every **220** ticks against every scattered food node's ~1,300 — ~6× faster. Unexercised in my runs (beings planted no seeds) but live in code, and outside `solveSlowdown`'s accounting.
+5. **`staticDrift` is measured and ignored** — nothing reads it at runtime, and a host that breaks the contract is wrong for up to **159 ticks** before the audit.
+6. **`reanchor`'s `if (smallest) return;` is unreachable** (the `smallest` branch always returns at `k = 0`).
+7. **The slowdown is seed-solved but documented as a constant**; no test pins it, and `continent-placement.test.ts` re-derives it with the same arithmetic over the same scatter, so it checks `solveSlowdown` against itself.
+8. Cheaper test gaps: the engineer's never-dormant arm runs **2,400 ticks** and 60,000 is a finite radius, not `everywhere()`; `continent-rivers.test.ts`'s "10 seeds" loop runs 10 identical iterations of unseeded module functions; `walkableAreaKm2` is pinned by the same probe that produced it; `MAX_DENSITY ≥ 2374` compares against a row *sum* while its comment reasons about a single kind.
+
+**Verdict: PASS.** Mind diff empty; classic byte-identical on nine configs including one built for the static-index change; no being-perceivable activity-region divergence; the in-sight teleport is gone at 1.2320 m over 400k+ watched animal-ticks. Items 1 and 2 are the real follow-up.

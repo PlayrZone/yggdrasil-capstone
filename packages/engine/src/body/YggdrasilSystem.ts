@@ -22,6 +22,9 @@ import type { BodyScale, WorldGeography } from '../world/geography.js';
 
 const ATTACK_DAMAGE = 15;
 
+/** A hut, a cache and a buried seed stay where they were put — see `World`. */
+const STATIC = { static: true } as const;
+
 const EAT_HUNGER_RELIEF = 55;
 const SICK_SAFETY_HIT = 15;
 
@@ -233,15 +236,18 @@ export class YggdrasilSystem {
     // A corpse drops its inventory where it falls — an open container,
     // like every container (no access control; "theft" is a judgment).
     if (Object.keys(body.inventory).length > 0) {
-      world.createEntity({
-        Transform2D: { x: t.x, y: t.y } satisfies Transform2D,
-        Structure: {
-          kind: 'container',
-          builtBy: entity.id,
-          builtTick: tick,
-          inventory: { ...body.inventory },
-        } satisfies Structure,
-      });
+      world.createEntity(
+        {
+          Transform2D: { x: t.x, y: t.y } satisfies Transform2D,
+          Structure: {
+            kind: 'container',
+            builtBy: entity.id,
+            builtTick: tick,
+            inventory: { ...body.inventory },
+          } satisfies Structure,
+        },
+        STATIC,
+      );
       body.inventory = {};
     }
     bus.emit({
@@ -453,10 +459,13 @@ export class YggdrasilSystem {
         removeItem(body.inventory, 'wood', cost);
         const x = intent.x ?? t.x;
         const y = intent.y ?? t.y;
-        const built = world.createEntity({
-          Transform2D: { x, y } satisfies Transform2D,
-          Structure: { kind, builtBy: entity.id, builtTick: tick, inventory: {} } satisfies Structure,
-        });
+        const built = world.createEntity(
+          {
+            Transform2D: { x, y } satisfies Transform2D,
+            Structure: { kind, builtBy: entity.id, builtTick: tick, inventory: {} } satisfies Structure,
+          },
+          STATIC,
+        );
         bus.emit({
           tick,
           type: 'BuiltStructure',
@@ -524,10 +533,13 @@ export class YggdrasilSystem {
           // Depositing on the ground. Seeds go into the soil.
           removeItem(body.inventory, kind, 1);
           if (kind === 'seed') {
-            world.createEntity({
-              Transform2D: { x: t.x, y: t.y } satisfies Transform2D,
-              SeedInGround: { plantedTick: tick },
-            });
+            world.createEntity(
+              {
+                Transform2D: { x: t.x, y: t.y } satisfies Transform2D,
+                SeedInGround: { plantedTick: tick },
+              },
+              STATIC,
+            );
             bus.emit({
               tick,
               type: 'SeedDeposited',
@@ -680,8 +692,14 @@ export class YggdrasilSystem {
     const dy = y - t.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d <= this.scale.arriveDistance) return true;
-    const nx = t.x + (dx / d) * this.scale.moveSpeed;
-    const ny = t.y + (dy / d) * this.scale.moveSpeed;
+    // Never walk PAST the destination. In the classic world a stride (0.5 m) is
+    // shorter than the arrival threshold (1 m), so this never binds and the
+    // goldens are untouched; at 1.4 m/tick it does, and without it a walker
+    // steps over its own threshold and has to come back — one wasted tick and
+    // 0.4 m of jitter every time it arrives.
+    const step = Math.min(this.scale.moveSpeed, d);
+    const nx = t.x + (dx / d) * step;
+    const ny = t.y + (dy / d) * step;
     // Deep water (sea, lakes) is impassable on foot — stop at the shoreline.
     if (this.geography.isDeepWater(nx, ny)) return true;
     t.x = nx;

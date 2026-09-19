@@ -80,7 +80,7 @@ export const SCALE_TABLE: readonly ScaleRow[] = Object.freeze([
     classic: CLASSIC_SCALE.arriveDistance,
     continent: CONTINENT_SCALE.arriveDistance,
     meaning: 'close enough to have arrived (m)',
-    why: `a pace. ${KEPT}`,
+    why: `a pace. ${KEPT} — and shorter than a continent stride (1.4 m), so the walker clamps its last step to the distance left rather than stepping over its own threshold (YggdrasilSystem.moveToward). In the classic world a stride is shorter than the threshold and the clamp never binds.`,
   },
   {
     constant: 'interactRange',
@@ -164,7 +164,7 @@ export const SCALE_TABLE: readonly ScaleRow[] = Object.freeze([
     classic: CLASSIC_SCALE.preyFear,
     continent: CONTINENT_SCALE.preyFear,
     meaning: 'prey bolt from a predator within this (m)',
-    why: 'value held equal but UNUSED on the continent: prey there hold closed-form home ranges so that a dormant tile cannot be told from a stepped one.',
+    why: "value held equal but DELIBERATELY UNUSED on the continent, and it stays that way: prey fleeing predators is an animal↔animal interaction, so it would happen — or not — depending on whether the tile was awake, which is exactly what activity regions may not let a being observe. The classic world's WildlifeSystem is the only reader.",
   },
   ...(['deer', 'hare', 'boar', 'fish', 'wolf', 'bear', 'crocodile'] as const).map((kind) => ({
     constant: `animalSpeed.${kind}`,
@@ -243,8 +243,8 @@ export const ADULT_HEIGHT_M = 1.7;
 
 /** Measured on a 16 m grid by `test/continent-relief.test.ts`. */
 const CONTINENT_PEAK_M = 899.2;
-const CONTINENT_LAND_SPAN_M = 6864;
-const CONTINENT_WALKABLE_KM2 = 41.6;
+const CONTINENT_LAND_SPAN_M = 6816;
+const CONTINENT_WALKABLE_KM2 = 41.06;
 /** Measured the same way over `world/regions.ts`. */
 const CLASSIC_PEAK_M = 20.01;
 const CLASSIC_WALKABLE_KM2 = 3.73;
@@ -301,7 +301,7 @@ export function scaleReport(scenario: ScenarioId): ScaleReport {
           x: FOUNDING_VALLEY.x,
           y: FOUNDING_VALLEY.y,
           widthM: FOUNDING_VALLEY.half * 2,
-          floorM: 20.5,
+          floorM: 12.4,
         }
       : null,
   };

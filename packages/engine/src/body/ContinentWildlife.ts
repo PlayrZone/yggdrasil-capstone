@@ -33,6 +33,23 @@ export const WILDLIFE_PER_KM2 = 30;
 /** Extra prey per km² on plains far from the founding valley: a reason to walk. */
 const FAR_GAME_PER_KM2 = 26;
 const FAR_GAME_FROM = 2500; // metres from the valley at which "far" begins
+/** Share of a far-game tile's stock that is the extra herd — see `respawn`. */
+const FAR_GAME_SHARE = FAR_GAME_PER_KM2 / (WILDLIFE_PER_KM2 + FAR_GAME_PER_KM2);
+
+/**
+ * Ticks before a killed animal is replaced, in the tile it was killed in.
+ * Three sim-days: long enough that hunting out the herd beside the camp is
+ * felt for days and shows in what a being can find, short enough that a
+ * century of predation cannot empty the continent.
+ */
+const RESPAWN_TICKS = 7200;
+/** Retry delay when the tile had no room for the replacement this time. */
+const RESPAWN_RETRY = 600;
+
+/** Smallest home range a re-anchored animal will accept, in metres. */
+const MIN_RANGE = 6;
+/** Phases tried when re-anchoring — eight points of the compass. */
+const PHASES = 8;
 
 /**
  * THE CONTINENT'S WILDLIFE — a home-range model, not a wandering one.
@@ -42,25 +59,50 @@ const FAR_GAME_FROM = 2500; // metres from the valley at which "far" begins
  * state off a shared RNG stream, so it cannot be fast-forwarded. Both are
  * fatal at 67 km². This replaces them with a stricter model:
  *
- *  · every animal keeps a FIXED home range and its position at any tick is a
+ *  · every animal keeps a home range and its position at any tick is a
  *    closed-form loop around it — no state, no RNG, no history. A tile nobody
  *    is near costs nothing and is exactly right the instant it wakes;
  *  · the only reactive behaviour left is a predator chasing a PERSON, which is
  *    driven by that person's trajectory, and can only start when the person is
- *    within `predatorDetect` — far inside any activation radius. A predator
- *    that is not chasing is on its loop, so a chase always begins from the same
- *    place whether or not the tile slept in between.
+ *    within `predatorDetect` — far inside any activation radius.
  *
- * WHAT IS DELIBERATELY LOST, and why: prey no longer flee predators (an
- * animal↔animal interaction could occur in a dormant tile, which would make
- * dormancy observable), and a killed animal does not respawn (the herd is
- * twelve times the classic one and reflex beings do not hunt, so attrition over
- * a run is negligible; a per-tile respawn ledger is the fix if it stops being).
+ * WHAT A CHASE COSTS, AND WHY IT IS NOT A TELEPORT. A predator that gives up
+ * is somewhere else: the first draft put it straight back on its loop, which
+ * measured as a 526 m jump, 156 m of it inside a being's own eyesight. A home
+ * range is not a leash — it is where the animal lives — so the range MOVES to
+ * where the chase ended (`reanchor`), with its phases solved so the loop runs
+ * through the animal's feet at that exact tick. Every step an animal takes,
+ * chasing or not, is then at most its own speed.
+ *
+ * WHAT IS DELIBERATELY LOST: prey no longer flee predators — an animal↔animal
+ * interaction could occur in a dormant tile, which would make dormancy
+ * observable. Killing, however, is now remembered: see the respawn ledger.
  */
 export class ContinentWildlife implements WildlifeRules {
   private readonly index: TiledEntities;
   private spawned = false;
   private readonly removals: number[] = [];
+  private readonly rehomed: number[] = [];
+  /** Tick reached by the last `step` — the clock a removal is dated by. */
+  private now = 0;
+
+  /**
+   * THE RESPAWN LEDGER. A killed animal books a replacement in its own tile,
+   * `RESPAWN_TICKS` later, drawn from that tile's own seeded stream by
+   * ordinal. Two properties make it honest at scale:
+   *
+   *  · it CONSERVES — one death, one replacement — so a hunted valley thins
+   *    and recovers while the continent's herds neither vanish nor multiply;
+   *  · it is run every tick for every due entry, dormant tile or not. That
+   *    costs nothing (the queue is almost always empty) and buys the thing
+   *    that matters: which entity exists, and with which id, does not depend
+   *    on when a tile happened to wake. The closed form is the queue itself —
+   *    a tile asleep for a season wakes with exactly the animals it would
+   *    have had.
+   */
+  private readonly due: { tick: number; tile: number }[] = [];
+  private readonly respawnCount: number[] = [];
+  private readonly farGame: boolean[] = [];
 
   constructor(
     private readonly seed: string,
@@ -70,16 +112,26 @@ export class ContinentWildlife implements WildlifeRules {
     private readonly scale: BodyScale,
     private readonly valley: { readonly x: number; readonly y: number },
   ) {
+    // Subscribed BEFORE the tile index, so a removal is seen while the index
+    // still knows which tile the animal belonged to.
+    world.events.on('entityRemoved', ({ id }) => this.onRemoved(id));
     this.index = new TiledEntities(world, tiles, (e: Entity) => e.components['Animal'] !== undefined);
+    for (let i = 0; i < tiles.count; i++) {
+      this.respawnCount.push(0);
+      this.farGame.push(false);
+    }
   }
 
   step(world: World, tick: number, bus: SimEventBus): void {
+    this.now = tick;
     if (!this.spawned) {
       this.stock(world, tick);
       this.spawned = true;
       return;
     }
+    this.respawn(world, tick);
     this.removals.length = 0;
+    this.rehomed.length = 0;
     for (const tile of this.tiles.activeTiles) {
       for (const id of this.index.in(tile)) {
         const entity = world.getEntity(id);
@@ -95,6 +147,8 @@ export class ContinentWildlife implements WildlifeRules {
         else this.stepPredator(world, id, animal, t, tick, bus);
       }
     }
+    // Deferred: both mutate lists the loop above is walking.
+    for (const id of this.rehomed) this.index.relocate(id);
     for (const id of this.removals) world.removeEntity(id);
   }
 
@@ -107,6 +161,38 @@ export class ContinentWildlife implements WildlifeRules {
     world.spatial.markMoved(id);
   }
 
+  /**
+   * A chase has ended. Move the home range to the ground the animal is
+   * standing on, phased so its loop passes through that point at `tick` — the
+   * animal does not move this tick, and every tick after is a loop step.
+   */
+  private reanchor(id: number, animal: Animal, t: Transform2D, tick: number): void {
+    const old = animal.home!;
+    const speed = this.scale.animalSpeed[animal.kind] ?? 0.3;
+    let rx = old.rx;
+    let ry = old.ry;
+    for (;;) {
+      const smallest = rx <= MIN_RANGE && ry <= MIN_RANGE;
+      for (let k = 0; k < PHASES; k++) {
+        const theta = (k / PHASES) * TAU;
+        const cx = t.x - rx * Math.cos(theta);
+        const cy = t.y - ry * Math.sin(theta);
+        // The smallest range is accepted unconditionally: the animal is
+        // standing on habitable ground, so a few metres of it are habitable,
+        // and there must always be an answer.
+        if (!smallest && !this.rangeFits(animal.kind, cx, cy, rx, ry)) continue;
+        const wx = speed / (rx * SQRT2);
+        const wy = speed / (ry * SQRT2);
+        animal.home = { x: cx, y: cy, rx, ry, wx, wy, px: theta - wx * tick, py: theta - wy * tick };
+        this.rehomed.push(id);
+        return;
+      }
+      if (smallest) return;
+      rx = Math.max(MIN_RANGE, rx / 2);
+      ry = Math.max(MIN_RANGE, ry / 2);
+    }
+  }
+
   private stepPredator(
     world: World,
     id: number,
@@ -115,6 +201,7 @@ export class ContinentWildlife implements WildlifeRules {
     tick: number,
     bus: SimEventBus,
   ): void {
+    const wasChasing = animal.targetId !== 0;
     if (tick % 16 === 0 || animal.targetId === 0) {
       let best = this.scale.predatorDetect * this.scale.predatorDetect;
       animal.targetId = 0;
@@ -132,17 +219,14 @@ export class ContinentWildlife implements WildlifeRules {
     const entity = animal.targetId ? world.getEntity(animal.targetId) : undefined;
     const body = entity?.components['GahallianBody'] as GahallianBody | undefined;
     const qt = entity?.components['Transform2D'] as Transform2D | undefined;
-    if (!entity || !body?.alive || !qt) {
+    const giveUp = (): void => {
       animal.targetId = 0;
-      this.settle(world, id, animal, t, tick);
-      return;
-    }
+      if (wasChasing) this.reanchor(id, animal, t, tick);
+      else this.settle(world, id, animal, t, tick);
+    };
+    if (!entity || !body?.alive || !qt) return giveUp();
     const dist = Math.hypot(qt.x - t.x, qt.y - t.y);
-    if (dist > this.scale.predatorGiveUp) {
-      animal.targetId = 0;
-      this.settle(world, id, animal, t, tick);
-      return;
-    }
+    if (dist > this.scale.predatorGiveUp) return giveUp();
     if (dist <= this.scale.predatorAttack + 2) {
       if (tick - animal.lastAttack >= ATTACK_COOLDOWN) {
         resolveStrike(world, bus, tick, id, animal, t, { id: entity.id, x: qt.x, y: qt.y, body });
@@ -157,11 +241,40 @@ export class ContinentWildlife implements WildlifeRules {
     t.y = ny;
     this.geography.clamp(t);
     world.spatial.markMoved(id);
+    this.rehomed.push(id);
   }
 
   private habitatOk(kind: AnimalKind, x: number, y: number): boolean {
     if (WATER_KIND.has(kind)) return this.geography.isWater(x, y);
     return !this.geography.isDeepWater(x, y) && this.geography.regionAt(x, y) !== 'mountain';
+  }
+
+  // ── The respawn ledger ───────────────────────────────────────────────────
+
+  private onRemoved(id: number): void {
+    const tile = this.index.tileFor(id);
+    if (tile === undefined) return;
+    this.book(tile, this.now + RESPAWN_TICKS);
+  }
+
+  /** Kept ascending by tick, then by tile: the order replacements are made. */
+  private book(tile: number, at: number): void {
+    let i = this.due.length;
+    while (i > 0 && (this.due[i - 1]!.tick > at || (this.due[i - 1]!.tick === at && this.due[i - 1]!.tile > tile))) i--;
+    this.due.splice(i, 0, { tick: at, tile });
+  }
+
+  private respawn(world: World, tick: number): void {
+    while (this.due.length > 0 && this.due[0]!.tick <= tick) {
+      const { tile } = this.due.shift()!;
+      const ordinal = this.respawnCount[tile]!++;
+      const rng = mulberry32(hashSeed(`${this.seed}:respawn:${tile}:${ordinal}`));
+      const size = this.tiles.tileSize;
+      const x0 = (tile % this.tiles.cols) * size;
+      const y0 = Math.floor(tile / this.tiles.cols) * size;
+      const preyOnly = this.farGame[tile] === true && rng() < FAR_GAME_SHARE;
+      if (!this.placeOne(world, rng, x0, y0, tick, preyOnly)) this.book(tile, tick + RESPAWN_RETRY);
+    }
   }
 
   // ── Stocking ─────────────────────────────────────────────────────────────
@@ -180,6 +293,7 @@ export class ContinentWildlife implements WildlifeRules {
         if (this.geography.isDeepWater(cx, cy)) continue;
         for (let i = 0; i < draw(rng, base); i++) this.placeOne(world, rng, x0, y0, tick, false);
         if (!this.isFarGameCountry(cx, cy)) continue;
+        this.farGame[ty * this.tiles.cols + tx] = true;
         for (let i = 0; i < draw(rng, extra); i++) this.placeOne(world, rng, x0, y0, tick, true);
       }
     }
@@ -191,7 +305,14 @@ export class ContinentWildlife implements WildlifeRules {
     return Math.hypot(x - this.valley.x, y - this.valley.y) > FAR_GAME_FROM;
   }
 
-  private placeOne(world: World, rng: () => number, x0: number, y0: number, tick: number, preyOnly: boolean): void {
+  private placeOne(
+    world: World,
+    rng: () => number,
+    x0: number,
+    y0: number,
+    tick: number,
+    preyOnly: boolean,
+  ): boolean {
     const kind = preyOnly ? pickPrey(rng()) : pickKind(rng());
     const water = WATER_KIND.has(kind);
     const size = this.tiles.tileSize;
@@ -228,8 +349,9 @@ export class ContinentWildlife implements WildlifeRules {
       };
       if (PREY.has(kind)) components['ResourceNode'] = createResourceNode('game', kind === 'fish' ? 2 : MEAT_PER_PREY);
       world.createEntity(components);
-      return;
+      return true;
     }
+    return false;
   }
 
   /** The whole loop must lie in habitat, so the animal never has to be clamped. */

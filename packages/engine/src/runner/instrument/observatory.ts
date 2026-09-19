@@ -42,25 +42,35 @@ export function agentInfos(view: RuntimeView): AgentInfo[] {
   return infos;
 }
 
-/** Wild animals currently roaming (moving — read every frame). */
+/**
+ * Wild animals currently roaming (moving — read every frame).
+ *
+ * Through `view.settled`, so a beast in a tile no being has visited for a
+ * season is shown where it WOULD be rather than where it was last stepped.
+ */
 export function animals(view: RuntimeView): { id: number; x: number; y: number; kind: string }[] {
   const out: { id: number; x: number; y: number; kind: string }[] = [];
   view.each('Animal', (e) => {
     const a = e.components['Animal'] as Animal;
-    const t = e.components['Transform2D'] as { x: number; y: number } | undefined;
-    if (t) out.push({ id: e.id, x: t.x, y: t.y, kind: a.kind });
+    const at = view.settled.positionOf(e);
+    if (at) out.push({ id: e.id, x: at.x, y: at.y, kind: a.kind });
   });
   return out;
 }
 
-/** Static resource nodes (food, water, ore, …) for the world view (read once). */
-export function resourceNodes(view: RuntimeView): { id: number; x: number; y: number; kind: string }[] {
-  const out: { id: number; x: number; y: number; kind: string }[] = [];
+/**
+ * Resource nodes (food, water, ore, …) for the world view. `stock` is the
+ * settled stock — what the node holds now, dormant tile or not.
+ */
+export function resourceNodes(
+  view: RuntimeView,
+): { id: number; x: number; y: number; kind: string; stock: number }[] {
+  const out: { id: number; x: number; y: number; kind: string; stock: number }[] = [];
   view.each('ResourceNode', (e) => {
     if (e.components['Animal']) return; // animals are rendered separately
     const n = e.components['ResourceNode'] as ResourceNode;
     const t = e.components['Transform2D'] as { x: number; y: number } | undefined;
-    if (t) out.push({ id: e.id, x: t.x, y: t.y, kind: n.kind });
+    if (t) out.push({ id: e.id, x: t.x, y: t.y, kind: n.kind, stock: view.settled.stockOf(e) });
   });
   return out;
 }

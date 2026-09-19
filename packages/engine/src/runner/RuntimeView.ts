@@ -28,6 +28,26 @@ export interface ObservedEntity {
 }
 
 /**
+ * THE ONE READ THAT IS ALLOWED TO CORRECT WHAT IT FINDS.
+ *
+ * A being never perceives a dormant tile's staleness — the activation radius
+ * is far wider than any sense. An instrument is not standing anywhere, so it
+ * does: it can read a bush on the far side of the continent. These two
+ * accessors present a node's stock and an animal's position as they WOULD be
+ * at the last tick simulated, by the same closed forms the tile applies when
+ * it wakes, activating nothing and writing nothing. Implementation and the
+ * reason it exists: `runner/settled.ts`.
+ */
+export interface SettledView {
+  /** The tick this view speaks for — the last one simulated. */
+  readonly tick: number;
+  /** Stock the node would hold now. Non-regrowing kinds read straight through. */
+  stockOf(entity: ObservedEntity): number;
+  /** Where the thing would be now. Only home-ranging animals ever differ. */
+  positionOf(entity: ObservedEntity): { x: number; y: number } | undefined;
+}
+
+/**
  * A body as a report may read it. A PROJECTION, not `GahallianBody`: the
  * fields the instrument actually uses, every one of them readonly, and none of
  * the plan/step/flag state the body writes as it lives.
@@ -115,6 +135,8 @@ export interface RuntimeView {
   readonly lastThought: ReadonlyMap<number, string>;
   /** The capped tail of emitted events. */
   readonly eventLog: readonly Readonly<SimEvent>[];
+  /** Nodes and animals as they would be now — see `SettledView`. */
+  readonly settled: SettledView;
 
   agentBody(id: number): BodyView | undefined;
   positionOf(id: number): Readonly<{ x: number; y: number }> | undefined;

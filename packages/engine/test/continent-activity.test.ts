@@ -8,6 +8,8 @@ import { growthFactor } from '../src/body/Climate.js';
 import type { ResourceNodeKind } from '../src/worlds/forager/types.js';
 import { World } from '../src/core/World.js';
 import { ActivityRegions, TiledEntities } from '../src/world/activity.js';
+import { CONTINENT_TILE } from '../src/world/continent.js';
+import { CONTINENT_SCALE } from '../src/worlds/forager/scale.js';
 import { createResourceNode } from '../src/body/ResourceNodeSystem.js';
 import { createGahallianBody } from '../src/body/GahallianBody.js';
 import { identityAt } from '../src/body/identities.js';
@@ -103,6 +105,26 @@ function whatTheySee(exp: Experiment): string {
   return out.join('\n');
 }
 
+/**
+ * What the components literally hold — the STORED world, before the settled
+ * view catches a sleeping tile up. Two runs at different radii must differ
+ * here (or nothing ever slept and the equalities below are vacuous) and must
+ * agree once settled.
+ */
+function storedState(exp: Experiment): string {
+  const parts: string[] = [];
+  const rows: string[] = [];
+  exp.world.forEach((e: Entity) => {
+    const node = e.components['ResourceNode'] as ResourceNode | undefined;
+    const t = e.components['Transform2D'] as Transform2D | undefined;
+    if (node) rows.push(`${e.id}:${node.kind}:${node.stock}`);
+    if (e.components['Animal'] && t) rows.push(`${e.id}@${t.x},${t.y}`);
+  });
+  rows.sort();
+  parts.push(rows.join('|'));
+  return parts.join('\n');
+}
+
 describe('the activation radius is not observable', () => {
   it('gives every being the same world to perceive at 512 m and at 3000 m', () => {
     const near = new Experiment({ seed: 'activity', agentCount: 40, scenario: 'forager-continent', activityRadius: 512 });
@@ -112,61 +134,48 @@ describe('the activation radius is not observable', () => {
       wide.advance(400);
       expect(whatTheySee(near), `tick ${near.tick}`).toBe(whatTheySee(wide));
     }
-    // And the beings themselves ended up in identical states, which is the
-    // premise the equivalence is conditioned on. The one thing that legitimately
-    // differs is where an animal in a sleeping tile is standing — so that is
-    // excluded here and proved unobservable below.
     expect(near.aliveCount()).toBe(wide.aliveCount());
     expect(near.eventCount).toBe(wide.eventCount);
-    expect(fingerprintOf(near, { animals: false })).toBe(fingerprintOf(wide, { animals: false }));
+    // The WHOLE state, animals and node stock included, through the settled
+    // view: the two runs are the same world, not merely the same experience.
+    // (The `animals: false` exclusion this test used to need is gone — see
+    // `runner/settled.ts`.)
+    expect(fingerprintOf(near)).toBe(fingerprintOf(wide));
+    // …and it is not vacuous: the stored components really do differ, because
+    // ground really was left unstepped.
+    expect(storedState(near)).not.toBe(storedState(wide));
+  }, 300_000);
 
-    // No living being, in either run, is anywhere near an animal the two runs
-    // disagree about. That is what makes the exclusion above legitimate rather
-    // than convenient.
-    const place = (exp: Experiment): Map<number, [number, number]> => {
-      const out = new Map<number, [number, number]>();
-      exp.world.forEach((e: Entity) => {
-        if (!e.components['Animal']) return;
-        const t = e.components['Transform2D'] as Transform2D;
-        out.set(e.id, [t.x, t.y]);
-      });
-      return out;
-    };
-    const people = [...near.agentIds, ...wide.agentIds].flatMap((id) => {
-      const from = near.agentBody(id)?.alive ? near : wide;
-      const entity = from.agentEntity(id);
-      if (!entity || !from.agentBody(id)?.alive) return [];
-      const t = entity.components['Transform2D'] as Transform2D;
-      return [[t.x, t.y] as [number, number]];
+  it('matches a control that never sleeps at all', () => {
+    // The strongest form: against a run whose tiles are ALL live, every tick,
+    // there is nothing left to be honest about.
+    const tiled = new Experiment({ seed: 'never-dormant', agentCount: 40, scenario: 'forager-continent' });
+    const awake = new Experiment({
+      seed: 'never-dormant',
+      agentCount: 40,
+      scenario: 'forager-continent',
+      activityRadius: 60_000, // wider than the world: nothing is ever dormant
     });
-    const a = place(near);
-    const b = place(wide);
-    expect([...a.keys()].sort()).toEqual([...b.keys()].sort());
-    const sight = 92 ** 2;
-    let disagreements = 0;
-    for (const [id, pos] of a) {
-      const other = b.get(id)!;
-      if (pos[0] === other[0] && pos[1] === other[1]) continue;
-      disagreements++;
-      for (const p of people) {
-        for (const q of [pos, other]) {
-          expect((q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2, `animal ${id} differs within sight`).toBeGreaterThan(sight);
-        }
-      }
-    }
-    // If nothing ever went dormant the test would pass vacuously.
-    expect(disagreements).toBeGreaterThan(0);
+    tiled.advance(2400);
+    awake.advance(2400);
+    expect(fingerprintOf(tiled)).toBe(fingerprintOf(awake));
+    expect(storedState(tiled)).not.toBe(storedState(awake));
   }, 300_000);
 
   it('leaves the classic world identical whether or not it skips dormant tiles', () => {
     // The classic scenario's default is "every tile, always". Given a finite
     // radius it skips dormant ground like the continent does — and must still
     // produce the same world, which is the same claim the goldens make.
-    const stepped = new Experiment({ seed: 'classic-activity', agentCount: 30 });
-    const skipping = new Experiment({ seed: 'classic-activity', agentCount: 30, activityRadius: 300 });
-    stepped.advance(2400);
-    skipping.advance(2400);
+    const stepped = new Experiment({ seed: 'classic-activity', agentCount: 8 });
+    const skipping = new Experiment({ seed: 'classic-activity', agentCount: 8, activityRadius: 64 });
+    stepped.advance(9600);
+    skipping.advance(9600);
     expect(fingerprintOf(skipping)).toBe(fingerprintOf(stepped));
+    // Not vacuous: at the 300 m this case used to ask for, a 2 km world was
+    // lit end to end and nothing was ever skipped. At 64 m most of it sleeps.
+    const tiles = ActivityRegions.within(2000, 256, 64);
+    tiles.update(skipping.world, skipping.tick);
+    expect(tiles.activeTiles.length, 'the classic world never slept').toBeLessThan(tiles.count / 2);
   }, 300_000);
 });
 
@@ -200,6 +209,35 @@ describe('the tiling itself', () => {
     all.update(world, 11);
     expect(all.activeTiles).toHaveLength(all.count);
     expect(all.isActive(0)).toBe(true);
+  });
+
+  /**
+   * THE INVARIANT THE WHOLE SCHEME RESTS ON. A being lights every tile within
+   * `ceil(radius / tileSize)` tiles of its own, so the nearest DORMANT ground
+   * is at least one whole tile away — `CONTINENT_TILE` metres. As long as that
+   * exceeds the furthest a being can see, an animal snapping onto its loop as
+   * its tile wakes can never be witnessed. 256 m against 92 m of daylight.
+   */
+  it('keeps dormant ground further away than anyone can see', () => {
+    expect(CONTINENT_TILE).toBeGreaterThan(CONTINENT_SCALE.perceptionDay);
+    const world = new World();
+    const tiles = ActivityRegions.within(8192, CONTINENT_TILE, 768);
+    world.createEntity({
+      Transform2D: { x: 4000, y: 4000 },
+      GahallianBody: createGahallianBody('', identityAt(0).traits, 0),
+    });
+    tiles.update(world, 1);
+    let nearestDormant = Infinity;
+    for (let tile = 0; tile < tiles.count; tile++) {
+      if (tiles.isActive(tile)) continue;
+      const tx = (tile % tiles.cols) * CONTINENT_TILE;
+      const ty = Math.floor(tile / tiles.cols) * CONTINENT_TILE;
+      // Nearest point of the tile's box to the being.
+      const dx = Math.max(0, tx - 4000, 4000 - (tx + CONTINENT_TILE));
+      const dy = Math.max(0, ty - 4000, 4000 - (ty + CONTINENT_TILE));
+      nearestDormant = Math.min(nearestDormant, Math.hypot(dx, dy));
+    }
+    expect(nearestDormant).toBeGreaterThan(CONTINENT_SCALE.perceptionDay);
   });
 });
 

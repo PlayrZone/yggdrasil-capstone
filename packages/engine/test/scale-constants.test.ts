@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CLASSIC_SCALE, classicGeography } from '../src/world/geography.js';
 import type { BodyScale } from '../src/world/geography.js';
 import { CONTINENT_SCALE, SCALE_TABLE, scaleReport } from '../src/worlds/forager/scale.js';
-import { PERCEPTION_RADIUS_DAY, PERCEPTION_RADIUS_NIGHT, TICKS_PER_DAY } from '../src/body/WorldRegularities.js';
+import { TICKS_PER_DAY } from '../src/body/WorldRegularities.js';
 
 /**
  * THE CONSTANTS TABLE, PINNED AS DATA.
@@ -53,8 +53,10 @@ describe('the scale table', () => {
 
   it('holds the classic column against the modules the values came from', () => {
     // If someone edits a body constant without touching the table, this fails.
-    expect(CLASSIC_SCALE.perceptionDay).toBe(PERCEPTION_RADIUS_DAY);
-    expect(CLASSIC_SCALE.perceptionNight).toBe(PERCEPTION_RADIUS_NIGHT);
+    // The perception radii are pinned to the literals the retired
+    // `WorldRegularities.PERCEPTION_RADIUS_*` held, not to themselves.
+    expect(CLASSIC_SCALE.perceptionDay).toBe(92);
+    expect(CLASSIC_SCALE.perceptionNight).toBe(38);
     expect(rows.get('ticksPerDay')!.classic).toBe(TICKS_PER_DAY);
     expect(CLASSIC_SCALE.moveSpeed).toBe(0.5);
     expect(CLASSIC_SCALE.arriveDistance).toBe(1.0);

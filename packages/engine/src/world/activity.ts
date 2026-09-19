@@ -21,12 +21,22 @@ import type { GahallianBody } from '../body/GahallianBody.js';
  *     it is a calculation, not a replay;
  *  2. nothing a dormant tile contains can be CHANGED from outside it, because
  *     the activation radius is far larger than any range at which a being can
- *     reach, see, or be noticed by anything.
+ *     reach, see, or be noticed by anything. `CONTINENT_TILE` (256 m) is
+ *     itself wider than daylight perception (92 m), so the nearest dormant
+ *     ground is always further off than anyone can see — which is why an
+ *     animal snapping onto its loop as its tile wakes has no witness.
+ *
+ * ONE THING DOES REACH INTO A DORMANT TILE, on purpose: the wildlife respawn
+ * ledger (`body/ContinentWildlife.ts`) creates a replacement animal on the
+ * tick it is due, whether or not that tile is awake. That is not a leak, it is
+ * the opposite of one — entity ids would otherwise depend on when a tile woke,
+ * and an instrument reading the world would be able to tell.
  *
  * Together those mean the result depends on the beings' trajectories and the
  * seed, never on when a tile happened to wake —
- * `test/continent-activity.test.ts` runs the same world at two radii and
- * compares everything any being could have perceived.
+ * `test/continent-activity.test.ts` runs the same world at two radii, and
+ * against a control that never sleeps, and compares the whole state through
+ * `runner/settled.ts`.
  *
  * The classic world uses `everywhere()`, whose tiles are all active always, so
  * it steps exactly what it always stepped; the goldens are the proof.
@@ -174,6 +184,34 @@ export class TiledEntities {
   /** Entity ids in this tile, in creation order (which is ascending by id). */
   in(tile: number): readonly number[] {
     return this.byTile[tile]!;
+  }
+
+  /** Which tile owns this entity, or undefined if this index never took it. */
+  tileFor(id: number): number | undefined {
+    return this.tileOfId.get(id);
+  }
+
+  /**
+   * Re-file an entity that HAS moved. Only the continent's predators use it,
+   * and only when a chase has carried one out of the ground it lives on: an
+   * animal filed in a tile it has left would stop being stepped the moment
+   * that tile went dormant, and would then stand frozen in plain sight.
+   */
+  relocate(id: number): void {
+    const entity = this.world.getEntity(id);
+    if (!entity || this.tileOfId.get(id) === undefined) return;
+    const t = entity.components['Transform2D'] as Transform2D | undefined;
+    if (!t || !Number.isFinite(t.x) || !Number.isFinite(t.y)) return;
+    const tile = this.tiles.tileOf(t.x, t.y);
+    if (tile === this.tileOfId.get(id)) return;
+    this.drop(id);
+    // Kept ascending by id, so a tile's list is walked in the same order
+    // however its members arrived.
+    const list = this.byTile[tile]!;
+    let at = list.length;
+    while (at > 0 && list[at - 1]! > id) at--;
+    list.splice(at, 0, id);
+    this.tileOfId.set(id, tile);
   }
 
   get size(): number {

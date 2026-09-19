@@ -4,7 +4,9 @@ import type { Entity } from '../src/core/Entity.js';
 import type { Transform2D } from '../src/core/Transform2D.js';
 import type { ResourceNode } from '../src/body/ResourceNodeSystem.js';
 import type { ResourceNodeKind } from '../src/worlds/forager/types.js';
-import { MAX_DENSITY } from '../src/worlds/forager/continentScenario.js';
+import { DEFAULT_REGROW } from '../src/body/ResourceNodeSystem.js';
+import { ContinentScenario, MAX_DENSITY } from '../src/worlds/forager/continentScenario.js';
+import { CONTINENT_ACTIVITY_RADIUS } from '../src/runner/Scenario.js';
 import { CLASSIC_SCALE } from '../src/world/geography.js';
 import { continentGeography, inFoundingValley } from '../src/world/continent.js';
 
@@ -19,6 +21,11 @@ const ORE: ReadonlySet<string> = new Set([
   'copperVein', 'tinVein', 'ironVein', 'coalSeam', 'silverVein', 'goldVein', 'gemVein',
 ]);
 const FOOD: ReadonlySet<string> = new Set(['berryBush', 'tuberPlant', 'mushroomPatch', 'foodPlant']);
+const WOOD: ReadonlySet<string> = new Set(['tree']);
+const WATER: ReadonlySet<string> = new Set(['river', 'waterSource']);
+
+/** Ten seeds, so nothing here can be true only of the one it was tuned on. */
+const SEEDS = ['p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9'];
 
 interface Placed {
   x: number;
@@ -26,8 +33,8 @@ interface Placed {
   kind: ResourceNodeKind;
 }
 
-function worldOf(scenario: 'forager-classic' | 'forager-continent', agents: number) {
-  const exp = new Experiment({ seed: 'placement', agentCount: agents, scenario });
+function worldOf(scenario: 'forager-classic' | 'forager-continent', agents: number, seed = 'placement') {
+  const exp = new Experiment({ seed, agentCount: agents, scenario });
   exp.advance(1); // let the wildlife stock itself
   const nodes: Placed[] = [];
   exp.world.forEach((e: Entity) => {
@@ -53,6 +60,10 @@ function inSight(nodes: Placed[], at: Transform2D, kinds: ReadonlySet<string>): 
   return n;
 }
 
+function mean(ns: Placed[], at: Transform2D[], kinds: ReadonlySet<string>): number {
+  return at.reduce((s, p) => s + inSight(ns, p, kinds), 0) / at.length;
+}
+
 describe('founder placement', () => {
   const { nodes, founders } = worldOf('forager-continent', 150);
 
@@ -64,30 +75,58 @@ describe('founder placement', () => {
     }
   });
 
+  /**
+   * THE PARITY CLAIM, ON TEN SEEDS.
+   *
+   * "Early survival is comparable" means what a founder can SEE, not what the
+   * map contains. Both sides of the ratio are measured the same way — the mean
+   * over 150 founders of the nodes inside 92 m — but they are NOT equally
+   * stable. The classic world scatters its wood into forest patches and drops
+   * its founders over a 1.2 km band, so whether a founder sees any wood at all
+   * is mostly luck: its per-seed means swing by a factor of 1.6 on their own.
+   * That swing is what made the single-seed version of this test pass on its
+   * own seed and miss the band (wood ×1.43) on an unseen one.
+   *
+   * So the BASELINE is the classic world pooled over the same ten seeds, and
+   * each continent seed is held against it. The continent side needs no
+   * pooling: its densities are placed by systematic accumulation rather than
+   * by a die per candidate, and the spread below records how tight that is.
+   */
   it('gives a founder as much to eat, drink and build with as the classic world did', () => {
-    const classic = worldOf('forager-classic', 150);
-    const mean = (ns: Placed[], at: Transform2D[], kinds: ReadonlySet<string>): number =>
-      at.reduce((s, p) => s + inSight(ns, p, kinds), 0) / at.length;
-    const water = new Set(['river', 'waterSource']);
-    const wood = new Set(['tree']);
-    const here = {
-      food: mean(nodes, founders, FOOD),
-      wood: mean(nodes, founders, wood),
-      water: mean(nodes, founders, water),
-    };
-    const there = {
-      food: mean(classic.nodes, classic.founders, FOOD),
-      wood: mean(classic.nodes, classic.founders, wood),
-      water: mean(classic.nodes, classic.founders, water),
-    };
-    // The operational definition of "early survival is comparable": what a
-    // founder can SEE, not what the map contains. ±35%.
-    for (const key of ['food', 'wood', 'water'] as const) {
-      const ratio = here[key] / there[key];
-      expect(ratio, `${key}: continent ${here[key].toFixed(1)} vs classic ${there[key].toFixed(1)}`).toBeGreaterThan(0.65);
-      expect(ratio, `${key}: continent ${here[key].toFixed(1)} vs classic ${there[key].toFixed(1)}`).toBeLessThan(1.35);
+    const baseline = { food: 0, wood: 0, water: 0 };
+    const here: Record<string, number[]> = { food: [], wood: [], water: [] };
+    const waterNodes: number[] = [];
+    for (const seed of SEEDS) {
+      const classic = worldOf('forager-classic', 150, seed);
+      baseline.food += mean(classic.nodes, classic.founders, FOOD) / SEEDS.length;
+      baseline.wood += mean(classic.nodes, classic.founders, WOOD) / SEEDS.length;
+      baseline.water += mean(classic.nodes, classic.founders, WATER) / SEEDS.length;
+      const cont = worldOf('forager-continent', 150, seed);
+      here['food']!.push(mean(cont.nodes, cont.founders, FOOD));
+      here['wood']!.push(mean(cont.nodes, cont.founders, WOOD));
+      here['water']!.push(mean(cont.nodes, cont.founders, WATER));
+      waterNodes.push(cont.nodes.filter((n) => n.kind === 'river').length);
     }
-  }, 120_000);
+    for (const key of ['food', 'wood', 'water'] as const) {
+      const seen = here[key]!;
+      const lo = Math.min(...seen) / baseline[key];
+      const hi = Math.max(...seen) / baseline[key];
+      const label = `${key}: continent ${seen.map((v) => v.toFixed(1)).join('/')} vs classic ${baseline[key].toFixed(1)}`;
+      expect(lo, label).toBeGreaterThan(0.65);
+      expect(hi, label).toBeLessThan(1.35);
+    }
+    // The scattered kinds are placed by accumulation, so what a founder can
+    // see barely moves between seeds — that is what makes the band above a
+    // construction rather than luck.
+    for (const key of ['food', 'wood'] as const) {
+      const seen = here[key]!;
+      expect(Math.max(...seen) / Math.min(...seen), `${key} spread`).toBeLessThan(1.25);
+    }
+    // A river's drinking points are not scattered at all — they are laid along
+    // its course, identically on every seed — so a valley founder's ±30 % is
+    // entirely where the 150 of them happened to stand relative to the bank.
+    expect(new Set(waterNodes).size, `river node counts ${waterNodes.join('/')}`).toBe(1);
+  }, 600_000);
 });
 
 describe('habitat rules', () => {
@@ -119,21 +158,75 @@ describe('habitat rules', () => {
   });
 
   it('makes the ground near fresh water the fertile ground', () => {
-    // Food per km² within 200 m of the great river, against food per km² on
-    // plains more than 1 km from any water. The habitat rule, as a ratio.
+    // Food per km² inside the founding valley, against food per km² on plains
+    // more than 2 km from it and away from any river. The habitat rule, as a
+    // ratio. The two areas are the valley's 0.706 km² and a 700 m disc.
     let near = 0;
     let far = 0;
     for (const node of nodes) {
       if (!FOOD.has(node.kind)) continue;
-      if (continentGeography.regionAt(node.x, node.y) !== 'plains') continue;
       if (inFoundingValley(node.x, node.y)) near++;
       else if (Math.hypot(node.x - 6200, node.y - 5200) < 700) far++;
     }
-    expect(near / 0.69).toBeGreaterThan((far / 1.54) * 2);
+    expect(near / 0.706).toBeGreaterThan((far / (Math.PI * 0.49)) * 2);
   });
 
+  /**
+   * THE DENSITY IS THE TARGET, NOT AN EXPECTATION AROUND IT. Systematic
+   * accumulation means a habitat's realised count is its table rounded, so the
+   * same seed-independent totals come back run after run. Pinned as a spread
+   * rather than a literal: a table change should move both ends together.
+   */
+  it('places the same counts on every seed', () => {
+    const counts = SEEDS.slice(0, 6).map((seed) => {
+      const world = worldOf('forager-continent', 20, seed);
+      const by = new Map<string, number>();
+      for (const node of world.nodes) by.set(node.kind, (by.get(node.kind) ?? 0) + 1);
+      return by;
+    });
+    for (const kind of ['berryBush', 'tree', 'tuberPlant', 'stoneDeposit', 'goldVein', 'saltFlat']) {
+      const seen = counts.map((by) => by.get(kind) ?? 0);
+      expect(Math.min(...seen), `${kind} is never placed`).toBeGreaterThan(0);
+      expect(Math.max(...seen) / Math.min(...seen), `${kind}: ${seen.join('/')}`).toBeLessThan(1.15);
+    }
+  }, 600_000);
+
+  /**
+   * THE VALLEY FEEDS ABOUT THE BAND THAT FOUNDS IT — the whole point of the
+   * ecology rebuild. Measured from the world as built: count the food nodes
+   * inside `inFoundingValley`, turn their regrowth intervals into items per
+   * day over a whole year, and divide by what one being eats. The answer has
+   * to land near `VALLEY_CARRYING_CAPACITY`, or the derivation in
+   * `continentScenario.ts` has drifted from the world it claims to describe.
+   */
+  it('feeds roughly its founding band, and no more', () => {
+    const report = new ContinentScenario('x', 'placement', 150, CONTINENT_ACTIVITY_RADIUS).ecologyReport();
+    const exp = new Experiment({ seed: 'placement', agentCount: 150, scenario: 'forager-continent' });
+    exp.advance(1);
+    let perDay = 0;
+    let valleyFood = 0;
+    exp.world.forEach((e: Entity) => {
+      if (e.components['Animal']) return;
+      const node = e.components['ResourceNode'] as ResourceNode | undefined;
+      if (!node || !FOOD.has(node.kind) || node.regrowEvery <= 0) return;
+      const t = e.components['Transform2D'] as Transform2D;
+      if (!inFoundingValley(t.x, t.y)) return;
+      valleyFood++;
+      perDay += (2400 / node.regrowEvery) * 0.625; // winter halts, autumn halves
+    });
+    expect(valleyFood, 'no food in the founding valley').toBeGreaterThan(100);
+    const eats = (0.022 * 2400 * 1.21) / 55; // hunger burnt per day ÷ one meal
+    const supports = perDay / eats;
+    expect(supports, `the valley feeds ${supports.toFixed(0)}`).toBeGreaterThan(report.capacity * 0.85);
+    expect(supports, `the valley feeds ${supports.toFixed(0)}`).toBeLessThan(report.capacity * 1.15);
+    // …and it gets there by regrowing slower, not by holding fewer bushes.
+    expect(report.slowdown).toBeGreaterThan(1);
+    expect(report.berryRegrowEvery).toBeGreaterThan(DEFAULT_REGROW['berryBush']);
+  }, 120_000);
+
   it('never asks a tile for more than the candidate budget allows', () => {
-    // A habitat denser than MAX_DENSITY would be silently thinned, so the
+    // A kind whose effective density reached MAX_DENSITY would be owed more
+    // than one node per candidate and would be silently thinned, so the
     // ceiling has to dominate every table INCLUDING the riparian gain.
     expect(MAX_DENSITY).toBeGreaterThanOrEqual(2374);
   });

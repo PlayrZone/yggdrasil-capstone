@@ -22,6 +22,7 @@ import { ScaffoldLedger } from '../record/ScaffoldLedger.js';
 import { traitCurveValue } from '../contract/adapter.js';
 import type { CognitionDefaults, WorldAdapter } from '../contract/adapter.js';
 import type { Intent, MindOutput, SimEvent, Traits } from '../contract/types.js';
+import { generationOf } from './kinship.js';
 import { runFlagsFrom } from './options.js';
 import type { ExperimentOptions, RunFlags } from './options.js';
 import { installEventPipeline } from './EventPipeline.js';
@@ -29,6 +30,7 @@ import { createRecorder } from './recording.js';
 import { RunCounters } from './RunCounters.js';
 import type { BirthRecord, ObservedEntity, RuntimeView } from './RuntimeView.js';
 import type { Scenario } from './Scenario.js';
+import { SettledWorld } from './settled.js';
 import type { WildlifeRules } from '../body/WildlifeSystem.js';
 import { enrichCulture } from './promptCulture.js';
 import { CoPresenceSystem } from './society/CoPresence.js';
@@ -91,6 +93,9 @@ export class SimRuntime implements RuntimeView, SocietyHost {
 
   tick = 0;
 
+  /** Nodes and animals as an instrument should see them — see `settled.ts`. */
+  readonly settled: SettledWorld;
+
   /** Which tiles of the world are live this tick — see `world/activity.ts`. */
   private readonly tiles: ActivityRegions;
   private readonly resources: ResourceNodeSystem;
@@ -119,6 +124,7 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     this.tiles = Number.isFinite(activity.radius)
       ? ActivityRegions.within(this.geography.span, activity.tileSize, activity.radius)
       : ActivityRegions.everywhere(this.geography.span, activity.tileSize);
+    this.settled = new SettledWorld(this.tiles, this);
     // Subscribed BEFORE the scenario furnishes the world, so it sees every
     // node the world is built with, not only the ones that sprout later.
     this.resources = new ResourceNodeSystem(
@@ -200,7 +206,8 @@ export class SimRuntime implements RuntimeView, SocietyHost {
       const tick = this.tick++;
       // Positions written from outside the body (a host relocating a being
       // between ticks) are re-homed here, before anything queries the world.
-      this.world.spatial.reconcile();
+      // The tick schedules the periodic audit of the static set.
+      this.world.spatial.reconcile(tick);
       // Which ground is live this tick. Read by everything below it, so it is
       // computed from where the beings ARE before anything else moves.
       this.tiles.update(this.world, tick);
@@ -354,27 +361,8 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     return body.name && body.name.length ? body.name : `Gahallian #${agentId}`;
   }
 
-  /**
-   * Which generation a being belongs to: founders are 1, a child is one past
-   * its eldest-known parent. Computed from the births ledger — the only record
-   * of lineage. Used to measure how a skill propagates DOWN the generations.
-   */
   generationOf(id: number): number {
-    const parentOf = new Map<number, [number, number]>();
-    for (const b of this.births) parentOf.set(b.child, b.parents);
-    const cache = new Map<number, number>();
-    const depth = (a: number, guard: number): number => {
-      if (cache.has(a)) return cache.get(a)!;
-      const parents = parentOf.get(a);
-      if (!parents || guard > 100) {
-        cache.set(a, 1);
-        return 1;
-      }
-      const g = 1 + Math.max(depth(parents[0], guard + 1), depth(parents[1], guard + 1));
-      cache.set(a, g);
-      return g;
-    };
-    return depth(id, 0);
+    return generationOf(this.births, id);
   }
 
   day(): number {

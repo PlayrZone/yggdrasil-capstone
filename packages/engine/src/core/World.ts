@@ -10,6 +10,16 @@ export type WorldEvents = {
 
 export type { VisitCounter } from './SpatialIndex.js';
 
+export interface CreateOptions {
+  /**
+   * This entity's position will never change except through
+   * `spatial.markMoved` — a bush, a seam, a hut. It then costs nothing in the
+   * per-tick `reconcile`. Breaking the promise is caught by the periodic audit
+   * (`spatial.staticDrift`), not by silence.
+   */
+  readonly static?: boolean;
+}
+
 export class World {
   private nextId = 1;
   private entities = new Map<number, Entity>();
@@ -22,11 +32,12 @@ export class World {
   readonly spatial = new SpatialIndex();
   private counter: VisitCounter | null = null;
 
-  createEntity(initial: Record<string, unknown> = {}): Entity {
+  createEntity(initial: Record<string, unknown> = {}, options: CreateOptions = {}): Entity {
     const id = this.nextId++;
     const entity: Entity = { id, components: { ...initial } };
     this.entities.set(id, entity);
     this.spatial.insert(entity); // indexed before anyone can hear about it
+    if (options.static === true) this.spatial.markStatic(id);
     this.events.emit('entityCreated', { id });
     return entity;
   }

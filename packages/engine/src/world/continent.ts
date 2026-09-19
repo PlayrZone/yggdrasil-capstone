@@ -1,4 +1,4 @@
-import { clamp01, mix, smoothstep01, valueNoise } from './noise.js';
+import { mix, smoothstep01, valueNoise } from './noise.js';
 import { slopeOf } from './geography.js';
 import type { WorldGeography } from './geography.js';
 import type { Region } from './regions.js';
@@ -21,9 +21,9 @@ import type { Region } from './regions.js';
  *
  * SLOPE BUDGET. Each layer's gradient is bounded by construction (see
  * `noise.ts`): shore 0.20, undulation 0.06, hills 0.54, the range's belt 0.75
- * and its crest field 0.38, river carving 0.44. They cannot all align, and the
- * measured maximum over a 4 m grid is pinned by `test/continent-relief.test.ts`
- * against `CONTINENT_MAX_SLOPE`.
+ * and its crest field 0.38. River carving adds at most 1.5 · depth / 420 across
+ * the valley, and the deepest cut measures 56 m, so 0.20. They cannot all
+ * align, and the measured maximum is pinned by `test/continent-relief.test.ts`.
  */
 
 export const CONTINENT_SPAN = 8192;
@@ -105,84 +105,6 @@ function rangeAt(belt: number, x: number, y: number): number {
   return belt <= 0 ? 0 : belt * (260 + 800 * valueNoise(x, y, 2800, S_CREST));
 }
 
-// ── Rivers ───────────────────────────────────────────────────────────────────
-
-interface River {
-  readonly x0: number;
-  readonly x1: number;
-  /** Bed height where the river leaves the hills, in metres. */
-  readonly bedTop: number;
-  centreY(x: number): number;
-}
-
-/** Three rivers, all draining the range westward into the sea. */
-const RIVERS: readonly River[] = [
-  {
-    x0: 520,
-    x1: 5400,
-    bedTop: 150,
-    centreY: (x) =>
-      4200 + 560 * Math.sin((TAU * x) / CONTINENT_SPAN * 1.9 + 0.35) + 170 * Math.sin((TAU * x) / CONTINENT_SPAN * 4.3),
-  },
-  { x0: 1200, x1: 5050, bedTop: 190, centreY: (x) => 2330 + 420 * Math.sin((TAU * x) / CONTINENT_SPAN * 2.6 + 1.9) },
-  { x0: 900, x1: 4850, bedTop: 170, centreY: (x) => 5900 + 380 * Math.sin((TAU * x) / CONTINENT_SPAN * 2.2 + 3.3) },
-];
-
-export const RIVER_COUNT = RIVERS.length;
-/** Half-width of the wet channel. A river is 52 m across and fordable. */
-const RIVER_HALF = 26;
-/** Half-width of the flat floor the river has cut. */
-const VALLEY_HALF = 420;
-
-function riverBed(river: River, x: number): number {
-  const u = clamp01((x - river.x0) / (river.x1 - river.x0));
-  return 3 + u ** 1.5 * (river.bedTop - 3);
-}
-
-/** How strongly the valley floor claims this point: 1 on the line, 0 at the rim. */
-function valleyWeight(river: River, x: number, y: number): number {
-  if (x < river.x0 || x > river.x1) return 0;
-  const across = smoothstep01((VALLEY_HALF - Math.abs(y - river.centreY(x))) / VALLEY_HALF);
-  if (across <= 0) return 0;
-  // Faded at both ends — an abruptly-ending trench would be a cliff, and the
-  // upstream end has 400 m of mountain to give back, so it fades over 1.6 km.
-  return across * smoothstep01((x - river.x0) / 280) * smoothstep01((river.x1 - x) / 1600);
-}
-
-/**
- * A river cuts at most this deep below the ground it crosses. Without the
- * bound, the upper reaches became a 250 m gorge whose walls measured 1.64 rise
- * over run; a valley 840 m wide can only hold so much relief.
- */
-const MAX_CARVE = 85;
-
-function carveRivers(x: number, y: number, height: number): number {
-  let h = height;
-  for (const river of RIVERS) {
-    const w = valleyWeight(river, x, y);
-    if (w <= 0) continue;
-    const bed = Math.max(riverBed(river, x), h - MAX_CARVE);
-    if (bed < h) h = mix(h, bed, w);
-  }
-  return h;
-}
-
-function inRiverChannel(x: number, y: number): boolean {
-  for (const river of RIVERS) {
-    if (x < river.x0 || x > river.x1) continue;
-    if (Math.abs(y - river.centreY(x)) < RIVER_HALF) return true;
-  }
-  return false;
-}
-
-/** Points along a river's centre line, for placing drinkable water. */
-export function riverCourse(index: number, stepM: number): { x: number; y: number }[] {
-  const river = RIVERS[index]!;
-  const out: { x: number; y: number }[] = [];
-  for (let x = river.x0; x <= river.x1; x += stepM) out.push({ x, y: river.centreY(x) });
-  return out;
-}
-
 // ── Lakes ────────────────────────────────────────────────────────────────────
 
 /** [centre x, centre y, radius] — all in the western lowlands. */
@@ -214,7 +136,8 @@ function lakeAt(x: number, y: number): 'in' | 'edge' | null {
 
 // ── The field itself ─────────────────────────────────────────────────────────
 
-export function continentHeightAt(x: number, y: number): number {
+/** The ground before any river has touched it. The rivers are read off it. */
+function landHeightAt(x: number, y: number): number {
   const d = coastDistance(x, y);
   const land = smoothstep01((COAST_OUT - d) / (COAST_OUT - COAST_IN));
   let h = mix(SEA_FLOOR, SHORE_TOP, land);
@@ -229,7 +152,158 @@ export function continentHeightAt(x: number, y: number): number {
       h += relief * (hills * (46 + 120 * valueNoise(x, y, 1200, S_HILLTOP)) + rangeAt(belt, x, y));
     }
   }
-  return carveRivers(x, y, h) - lakeBasin(x, y);
+  return h - lakeBasin(x, y);
+}
+
+export function continentHeightAt(x: number, y: number): number {
+  return carveRivers(x, y, landHeightAt(x, y));
+}
+
+// ── Rivers ───────────────────────────────────────────────────────────────────
+
+/** Where a river rises and which way it wanders. The ground decides the rest. */
+interface RiverSpec {
+  readonly source: number;
+  centreY(x: number): number;
+}
+
+/** Three rivers, all draining the range westward into the sea. */
+const RIVER_SPECS: readonly RiverSpec[] = [
+  {
+    source: 5400,
+    centreY: (x) =>
+      4200 + 560 * Math.sin((TAU * x) / CONTINENT_SPAN * 1.9 + 0.35) + 170 * Math.sin((TAU * x) / CONTINENT_SPAN * 4.3),
+  },
+  { source: 5050, centreY: (x) => 2330 + 420 * Math.sin((TAU * x) / CONTINENT_SPAN * 2.6 + 1.9) },
+  { source: 4850, centreY: (x) => 5900 + 380 * Math.sin((TAU * x) / CONTINENT_SPAN * 2.2 + 3.3) },
+];
+
+export const RIVER_COUNT = RIVER_SPECS.length;
+/** Half-width of the wet channel. A river is 52 m across and fordable. */
+const RIVER_HALF = 26;
+/** Half-width of the flat floor the river has cut. */
+const VALLEY_HALF = 420;
+/** Longitudinal sampling of a bed profile, in metres. */
+const PROFILE_STEP = 16;
+/** How far below the ground it crosses a channel is cut. */
+const INCISION = 9;
+/**
+ * The carve does not stop at the waterline but runs on until the sea floor is
+ * this deep, so the channel has no lip across its mouth. The RIVER — the fresh
+ * water a being can drink and ford — ends at `shore`, which is the waterline.
+ */
+const MOUTH_H = -18;
+/** The carve fades over this much at each end: an abrupt trench is a cliff. */
+const MOUTH_FADE = 320;
+const HEAD_FADE = 1600;
+/** No river is followed past here; the world's outermost ring is open sea. */
+const MIN_RIVER_X = 120;
+
+interface River {
+  readonly centreY: (x: number) => number;
+  readonly source: number;
+  /** Downstream end of the CARVE — under water. */
+  readonly mouth: number;
+  /** Downstream end of the RIVER — where fresh water meets the sea or a lake. */
+  readonly shore: number;
+  /** Bed height every `PROFILE_STEP` metres, index 0 at `mouth`. */
+  readonly bed: Float64Array;
+}
+
+/**
+ * A RIVER, AS THE GROUND DECIDES IT. The spec says where it rises and how it
+ * wanders; everything else is read off the land. It is followed west until it
+ * meets water, and its bed is the RUNNING MINIMUM of the ground it has
+ * crossed, `INCISION` metres down. A running minimum cannot rise, so the bed
+ * falls from source to sea BY CONSTRUCTION rather than by a fitted curve that
+ * happened to — which is what the first draft got wrong: two of its three
+ * rivers stopped on dry ground, 18.5 m and 27.3 m up, hundreds of metres short
+ * of the water. Nothing here is seeded: the land is one particular continent.
+ */
+function buildRiver(spec: RiverSpec): River {
+  let mouth = spec.source;
+  let shore = spec.source;
+  let foundShore = false;
+  for (let x = spec.source; x > MIN_RIVER_X; x -= PROFILE_STEP) {
+    mouth = x;
+    const y = spec.centreY(x);
+    // A lake on the way is a widening, not an end: the river runs out of it.
+    if (lakeAt(x, y) !== null) continue;
+    const h = landHeightAt(x, y);
+    if (!foundShore && h < 0) {
+      shore = x;
+      foundShore = true;
+    }
+    if (h < MOUTH_H) break;
+  }
+  const n = Math.floor((spec.source - mouth) / PROFILE_STEP) + 1;
+  const bed = new Float64Array(n);
+  let running = Number.POSITIVE_INFINITY;
+  for (let i = n - 1; i >= 0; i--) {
+    const x = mouth + i * PROFILE_STEP;
+    const cut = landHeightAt(x, spec.centreY(x)) - INCISION;
+    if (cut < running) running = cut;
+    bed[i] = running;
+  }
+  return { centreY: spec.centreY, source: mouth + (n - 1) * PROFILE_STEP, mouth, shore, bed };
+}
+
+const RIVERS: readonly River[] = RIVER_SPECS.map(buildRiver);
+
+function bedAt(river: River, x: number): number {
+  const u = (x - river.mouth) / PROFILE_STEP;
+  const i = Math.floor(u);
+  const last = river.bed.length - 1;
+  if (i < 0) return river.bed[0]!;
+  if (i >= last) return river.bed[last]!;
+  return mix(river.bed[i]!, river.bed[i + 1]!, u - i);
+}
+
+/** Bed height at a point on a river's course, in metres — the M1b invariant. */
+export function riverBedHeight(index: number, x: number): number {
+  return bedAt(RIVERS[index]!, x);
+}
+
+/** Where a river rises, meets the sea, and stops being carved at all. */
+export function riverExtent(index: number): { source: number; shore: number; mouth: number } {
+  const river = RIVERS[index]!;
+  return { source: river.source, shore: river.shore, mouth: river.mouth };
+}
+
+/** How strongly the valley floor claims this point: 1 on the line, 0 at the rim. */
+function valleyWeight(river: River, x: number, y: number): number {
+  if (x < river.mouth || x > river.source) return 0;
+  const across = smoothstep01((VALLEY_HALF - Math.abs(y - river.centreY(x))) / VALLEY_HALF);
+  if (across <= 0) return 0;
+  return across * smoothstep01((x - river.mouth) / MOUTH_FADE) * smoothstep01((river.source - x) / HEAD_FADE);
+}
+
+function carveRivers(x: number, y: number, height: number): number {
+  let h = height;
+  for (const river of RIVERS) {
+    const w = valleyWeight(river, x, y);
+    if (w <= 0) continue;
+    const bed = bedAt(river, x);
+    if (bed < h) h = mix(h, bed, w);
+  }
+  return h;
+}
+
+/** Fresh water proper: the sea below the shore is sea, however it was cut. */
+function inRiverChannel(x: number, y: number): boolean {
+  for (const river of RIVERS) {
+    if (x < river.shore || x > river.source) continue;
+    if (Math.abs(y - river.centreY(x)) < RIVER_HALF) return true;
+  }
+  return false;
+}
+
+/** Points along a river's centre line, for placing drinkable water. */
+export function riverCourse(index: number, stepM: number): { x: number; y: number }[] {
+  const river = RIVERS[index]!;
+  const out: { x: number; y: number }[] = [];
+  for (let x = river.shore; x <= river.source; x += stepM) out.push({ x, y: river.centreY(x) });
+  return out;
 }
 
 /** Metres. Above this the ground is the range; ore and gems live only here. */
@@ -307,7 +381,7 @@ const FERTILE_RANGE = 460;
 export function freshWaterNearness(x: number, y: number): number {
   let best = Infinity;
   for (const river of RIVERS) {
-    const cx = x < river.x0 ? river.x0 : x > river.x1 ? river.x1 : x;
+    const cx = x < river.shore ? river.shore : x > river.source ? river.source : x;
     const d = Math.hypot(x - cx, y - river.centreY(cx));
     if (d < best) best = d;
   }

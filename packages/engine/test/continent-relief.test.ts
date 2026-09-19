@@ -168,18 +168,25 @@ describe('scaleReport', () => {
       x: FOUNDING_VALLEY.x,
       y: FOUNDING_VALLEY.y,
       widthM: FOUNDING_VALLEY.half * 2,
-      floorM: 20.5,
+      floorM: 12.4,
     });
     expect(continentHeightAt(FOUNDING_VALLEY.x, FOUNDING_VALLEY.y)).toBeCloseTo(r.valley!.floorM, 1);
-    // The land's own span, measured as the extent of ground a walker can stand on.
+    // The land's own span and area, measured as ground a walker can stand on.
+    // Both are figures the report publishes and nothing used to check.
     let minX = CONTINENT_SPAN;
     let maxX = 0;
-    grid(8, (x, y) => {
+    let walkable = 0;
+    const step = 16;
+    grid(step, (x, y) => {
       if (continentIsDeepWater(x, y)) return;
+      walkable++;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
     });
     expect(maxX - minX).toBeCloseTo(r.landSpanM, -2);
+    expect((walkable * step * step) / 1e6).toBeCloseTo(r.walkableAreaKm2, 1);
+    expect(r.uplandFromM).toBe(UPLAND_M);
+    expect(r.highlandFromM).toBe(HIGHLAND_M);
   }, 300_000);
 
   it('describes the classic world without pretending it is to scale', () => {

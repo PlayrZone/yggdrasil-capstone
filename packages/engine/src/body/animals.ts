@@ -109,10 +109,13 @@ export function resolveStrike(
   });
   if (animal.health > 0) return;
   world.removeEntity(animalId); // the beast is slain
-  world.createEntity({
-    Transform2D: { x: at.x, y: at.y } satisfies Transform2D,
-    ResourceNode: createResourceNode('game', 2), // a carcass to butcher
-  });
+  world.createEntity(
+    {
+      Transform2D: { x: at.x, y: at.y } satisfies Transform2D,
+      ResourceNode: createResourceNode('game', 2), // a carcass to butcher
+    },
+    { static: true }, // a carcass does not walk
+  );
   bus.emit({
     tick,
     type: 'KilledPredator',

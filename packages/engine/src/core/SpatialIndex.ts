@@ -17,6 +17,13 @@ export interface VisitCounter {
  * while the frequent short-range queries (company 8, water 12, shelter 4) touch
  * at most 3×3. Smaller cells would multiply the bookkeeping the wide queries
  * pay; larger ones would make the narrow ones sweep mostly-irrelevant ground.
+ *
+ * SIZED OFF THE CLASSIC WORLD, MEASURED AGAINST THE CONTINENT. Both use the
+ * same perception radius, so the argument carries; so do the numbers. Total
+ * ms/tick at 150 founders over 600 ticks, at cell 24 / 48 / 96 / 192: classic
+ * 0.271 / 0.258 / 0.263 / 0.266, continent 0.240 / 0.218 / 0.205 / 0.219 —
+ * a few per cent either way, inside run-to-run noise. It stays one engine-wide
+ * constant rather than becoming a scenario knob with nothing to tune.
  */
 const CELL_SIZE = 48;
 
@@ -26,6 +33,14 @@ const CELL_SIZE = 48;
 // engine models — are clamped into the outermost cell. Queries clamp the same
 // way, so a clamped entity is still found by a query centred near it, and the
 // exact distance test still decides membership.
+/**
+ * Ticks between full `reconcile` passes that also cover the static set. A
+ * tenth of a sim-day: amortised it costs 0.4 % of scanning everything every
+ * tick, and it is short enough that a host quietly moving a static entity
+ * shows up inside a run rather than after it.
+ */
+const STATIC_AUDIT_EVERY = 256;
+
 const CELL_SPAN = 0x10000;
 const CELL_BIAS = 0x8000;
 const CELL_MIN = -CELL_BIAS;
@@ -89,6 +104,14 @@ interface Bucket {
  * moves a being, swaps its `Transform2D` for a new object, or drops it
  * altogether between ticks is picked up.
  *
+ * STATIC ENTITIES. A bush, a seam and a hut never move, and on a 67 km² world
+ * they outnumber what does two hundred to one — re-reading all of them every
+ * tick was 38 % of a continent tick. `markStatic` takes a record off the
+ * per-tick pass. The safety net is kept rather than traded away: every
+ * `STATIC_AUDIT_EVERY` ticks the pass covers the static set too, re-homes
+ * anything that did move and counts it in `staticDrift`, so a host that moves
+ * a "static" entity is found late and visibly rather than never.
+ *
  * MUTATION DURING ITERATION. `each` walks a snapshot and re-checks liveness, so
  * a callback may create or remove entities: it visits exactly those of that
  * kind present at the call and still present when reached, in id order. The
@@ -97,8 +120,12 @@ interface Bucket {
  */
 export class SpatialIndex {
   private readonly records = new Map<number, Indexed>();
+  /** The subset `reconcile` walks every tick: everything not marked static. */
+  private readonly moving = new Map<number, Indexed>();
   private readonly buckets = new Map<string, Bucket>();
   counter: VisitCounter | null = null;
+  /** How often a static entity was found to have moved anyway. Must stay 0. */
+  staticDrift = 0;
 
   /** Idempotent: re-inserting an entity replaces whatever was listed for it. */
   insert(entity: Entity): void {
@@ -115,19 +142,28 @@ export class SpatialIndex {
       y: 0,
     };
     this.records.set(entity.id, record);
+    this.moving.set(entity.id, record);
     for (const key of keys) this.listIn(key, record);
     this.settle(record);
+  }
+
+  /** Promise this entity only ever moves through `markMoved`. It then leaves
+   *  the per-tick `reconcile` pass; the periodic audit still covers it. */
+  markStatic(id: number): void {
+    this.moving.delete(id);
   }
 
   remove(id: number): void {
     const record = this.records.get(id);
     if (!record) return;
     this.records.delete(id);
+    this.moving.delete(id);
     for (const key of record.keys) this.listOut(key, record);
   }
 
   clear(): void {
     this.records.clear();
+    this.moving.clear();
     this.buckets.clear();
   }
 
@@ -171,17 +207,22 @@ export class SpatialIndex {
   /**
    * Re-home anything whose position changed without a `markMoved` — including a
    * `Transform2D` that was replaced, added or dropped straight on the entity.
-   * O(indexed) per call.
+   * O(movable) per call, and O(indexed) on the audit tick. `tick` schedules
+   * that audit; called without one it walks the movable set only.
    */
-  reconcile(): void {
-    if (this.counter) this.counter.visits += this.records.size;
-    for (const record of this.records.values()) {
+  reconcile(tick?: number): void {
+    const auditing =
+      tick !== undefined && tick % STATIC_AUDIT_EVERY === 0 && this.moving.size !== this.records.size;
+    const scanned = auditing ? this.records : this.moving;
+    if (this.counter) this.counter.visits += scanned.size;
+    for (const record of scanned.values()) {
       const t = (record.entity.components['Transform2D'] as Transform2D | undefined) ?? null;
       if (t === record.transform) {
-        if (t && (t.x !== record.x || t.y !== record.y)) this.settle(record);
-        continue;
+        if (!t || (t.x === record.x && t.y === record.y)) continue;
+      } else {
+        record.transform = t;
       }
-      record.transform = t;
+      if (auditing && !this.moving.has(record.entity.id)) this.staticDrift++;
       this.settle(record);
     }
   }

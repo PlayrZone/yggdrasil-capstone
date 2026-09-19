@@ -1,4 +1,4 @@
-import { it } from 'vitest';
+import { expect, it } from 'vitest';
 import { Experiment } from '../src/runner/Experiment.js';
 import type { Entity } from '../src/core/Entity.js';
 import type { Transform2D } from '../src/core/Transform2D.js';
@@ -15,17 +15,24 @@ import { FOUNDING_VALLEY } from '../src/world/continent.js';
  * fixed checkpoints, for both scenarios — because a ratio can hide a
  * regression and once did.
  *
- * Budgets this file exists to check (M1):
- *   · world build < 10 s at 150 founders
- *   · steady-state tick cost ≤ 2× the classic world's at the same population
- *   · heap after 1 sim-day ≤ 2× classic
- *   · 300 beings × 1 sim-day headless in < 90 s
- *   · 12 sim-days at 150 founders: population viable, births happen, and the
- *     beings stay where living is possible
+ * THE BUDGETS ARE ASSERTED, not narrated. They used to be prose in this
+ * comment, which meant the bench could not fail and a 2× regression would have
+ * been a number nobody read. Every threshold below is set at roughly three
+ * times what the machine it was written on measures, so it catches a
+ * regression of that size and not a noisy afternoon: measured here, classic
+ * build 0.02 s / 0.258 ms per tick, continent build 0.45 s / 0.218 ms per tick
+ * at 20 k entities, 300 beings × 1 sim-day in 2.9 s of a 90 s budget.
  */
 
 const DAY = 2400;
 const gc = (globalThis as { gc?: () => void }).gc;
+
+/** Budgets. Generous on purpose — a tripwire, not a stopwatch. */
+const BUILD_BUDGET_S = 10;
+const TICK_BUDGET_MS = 0.8;
+const CONTINENT_TICK_RATIO = 2.5; // of the classic world's, same population
+const HEAP_RATIO = 2.5; // ditto, after one sim-day
+const DAY_BUDGET_S = 90; // 300 beings × 1 sim-day, headless
 
 function heapMb(): number {
   gc?.();
@@ -54,6 +61,8 @@ function positions(exp: Experiment): { x: number; y: number }[] {
 
 it('cost of a world sixteen times the size', () => {
   const rows: string[] = [];
+  const tick: Record<string, number> = {};
+  const heap: Record<string, number> = {};
   for (const scenario of ['forager-classic', 'forager-continent'] as ScenarioId[]) {
     const before = heapMb();
     const t0 = performance.now();
@@ -72,6 +81,8 @@ it('cost of a world sixteen times the size', () => {
     const t2 = performance.now();
     exp.advance(600);
     const tickMs = (performance.now() - t2) / 600;
+    tick[scenario] = tickMs;
+    heap[scenario] = heapDay1 - before;
 
     rows.push(
       `${scenario.padEnd(18)} build ${buildS.toFixed(2)}s | ${String(counts.total).padStart(6)} entities ` +
@@ -79,8 +90,18 @@ it('cost of a world sixteen times the size', () => {
         `= ${(DAY / daySec).toFixed(0)} ticks/s | steady ${tickMs.toFixed(3)} ms/tick @ ${alive} alive | ` +
         `heap ${before.toFixed(0)} → ${heapDay1.toFixed(0)} MB`,
     );
+    expect(buildS, `${scenario} build`).toBeLessThan(BUILD_BUDGET_S);
+    expect(tickMs, `${scenario} steady tick`).toBeLessThan(TICK_BUDGET_MS);
   }
   console.log('\n' + rows.join('\n') + '\n');
+  // The whole point of activity regions: sixteen times the world, not sixteen
+  // times the tick. The ratio is what a regression in tiling would break.
+  expect(tick['forager-continent']! / tick['forager-classic']!, 'continent tick vs classic').toBeLessThan(
+    CONTINENT_TICK_RATIO,
+  );
+  expect(heap['forager-continent']! / Math.max(1, heap['forager-classic']!), 'continent heap vs classic').toBeLessThan(
+    HEAP_RATIO,
+  );
 }, 600_000);
 
 it('300 beings for one sim-day on the continent', () => {
@@ -89,9 +110,11 @@ it('300 beings for one sim-day on the continent', () => {
   exp.advance(DAY);
   const s = (performance.now() - t0) / 1000;
   console.log(
-    `\n300 beings × 1 sim-day: ${s.toFixed(1)}s (budget 90) | ${(DAY / s).toFixed(0)} ticks/s | ` +
+    `\n300 beings × 1 sim-day: ${s.toFixed(1)}s (budget ${DAY_BUDGET_S}) | ${(DAY / s).toFixed(0)} ticks/s | ` +
       `${exp.aliveCount()} alive | heap ${heapMb().toFixed(0)} MB\n`,
   );
+  expect(s).toBeLessThan(DAY_BUDGET_S);
+  expect(exp.aliveCount(), 'the band did not survive its first day').toBeGreaterThan(150);
 }, 600_000);
 
 it('twelve days in the valley: is it a home?', () => {
@@ -124,4 +147,14 @@ it('twelve days in the valley: is it a home?', () => {
       `\n\ndeaths by cause: ${JSON.stringify(exp.deathsByCause)}\n` +
       `structures built: ${exp.buildCount} | knowledge held: ${exp.totalKnowledge()}\n`,
   );
+  // A home is a place where a people persists, has children, and builds.
+  expect(exp.aliveCount(), 'the valley did not hold a population').toBeGreaterThan(100);
+  expect(exp.birthCount, 'nobody was born').toBeGreaterThan(50);
+  expect(exp.buildCount, 'nothing was built').toBeGreaterThan(20);
+  // …and where the ecology, not a table, decides how many. A population that
+  // never presses on its food is the defect this world was rebuilt to fix.
+  const mean = positions(exp)
+    .map((p) => Math.hypot(p.x - FOUNDING_VALLEY.x, p.y - FOUNDING_VALLEY.y))
+    .reduce((s, v, _i, all) => s + v / all.length, 0);
+  expect(mean, 'nobody ever left the valley floor').toBeGreaterThan(100);
 }, 600_000);

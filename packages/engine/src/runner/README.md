@@ -22,6 +22,7 @@ fingerprints are bit-identical.
 | `recording.ts` | The lossless cognition recorder's construction and its read-only window on the world. |
 | `promptCulture.ts`, `kinship.ts` | The stories / kin / felt-relationships a being's prompt is given. |
 | `RuntimeView.ts` | **The seam.** The read-only interface the instrument — and only the instrument — sees the runtime through. |
+| `settled.ts` | The one read that CORRECTS what it finds: a node's stock and an animal's position as they would be at the last tick simulated, for a reader that is not standing there. Activates nothing, writes nothing. It is what makes an omniscient read — the lab, a report, a golden — independent of the activation radius. |
 | `instrument/` | Every analysis facade and observatory accessor, as functions over a `RuntimeView`. |
 | `options.ts` | `ExperimentOptions`, `RecordingOptions`, the A/B `RunFlags`. |
 

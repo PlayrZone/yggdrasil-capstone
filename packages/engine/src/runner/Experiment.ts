@@ -19,7 +19,7 @@ import type { ExperimentOptions } from './options.js';
 import { SimRuntime } from './Runtime.js';
 import { Interventions } from './Interventions.js';
 import { scenarioFor } from './Scenario.js';
-import type { BirthRecord } from './RuntimeView.js';
+import type { BirthRecord, SettledView } from './RuntimeView.js';
 import type { WorldGeography } from '../world/geography.js';
 import * as instrument from './instrument/index.js';
 import type {
@@ -123,6 +123,16 @@ export class Experiment {
 
   get tick(): number {
     return this.rt.tick;
+  }
+
+  /**
+   * Nodes and animals as they would be at the last tick simulated, rather than
+   * as the components happen to hold them — see `runner/settled.ts`. The read
+   * every omniscient reader (the lab, a report, a fingerprint) must use, and
+   * what makes those reads independent of the activation radius.
+   */
+  get settled(): SettledView {
+    return this.rt.settled;
   }
 
   get cognitionLog(): CognitionLog | null {
@@ -296,7 +306,7 @@ export class Experiment {
     return instrument.animals(this.rt);
   }
 
-  resourceNodes(): { id: number; x: number; y: number; kind: string }[] {
+  resourceNodes(): { id: number; x: number; y: number; kind: string; stock: number }[] {
     return instrument.resourceNodes(this.rt);
   }
 

@@ -89,6 +89,9 @@ export interface ScenarioWorld {
 /** How far from a living being a continent tile stays live, in metres. */
 export const CONTINENT_ACTIVITY_RADIUS = 768;
 
+/** A bush does not walk: keep it out of the per-tick position reconcile. */
+const STATIC = { static: true } as const;
+
 /**
  * WHICH WORLD THIS RUN HAPPENS IN. Two scenarios, one mind: both hand the same
  * `foragerAdapter` to every being, so nothing under `agent/ memory/ learning/
@@ -152,7 +155,7 @@ export class ForagerScenario implements Scenario {
   build(world: World): ScenarioWorld {
     const rng = mulberry32(hashSeed(`${this.seed}:world`));
     const place = (kind: ResourceNodeKind, x: number, y: number, stock: number): void => {
-      world.createEntity({ Transform2D: { x, y }, ResourceNode: createResourceNode(kind, stock) });
+      world.createEntity({ Transform2D: { x, y }, ResourceNode: createResourceNode(kind, stock) }, STATIC);
     };
     // Rejection-sample `count` nodes of `kind` inside a given region.
     const scatter = (kind: ResourceNodeKind, region: Region, count: number, stock: number): void => {
