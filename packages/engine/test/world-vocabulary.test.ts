@@ -1,3 +1,5 @@
+import { foragerEdges, liftPlan } from '../src/index.js';
+import { FORAGER_MOCK } from './fixtures/foragerMock.js';
 import { describe, expect, it } from 'vitest';
 import {
   AgentMind,
@@ -103,11 +105,24 @@ describe('the same decisions, from the world’s tables', () => {
       '{"plan":[{"durationTicks":9,"buildKind":"wall","objectKind":"wood","targetId":3,"y":2,"x":1,"kind":"Build"}]}',
       foragerAdapter,
     );
-    // The MIND's step carries one opaque place; the WIRE — what the body is
-    // handed and what a corpus row stores — keeps the field order it has always
-    // had, which is the thing byte-identity is a claim about (W1-B4).
-    expect(Object.keys(out.plan[0]!)).toEqual(['kind', 'place', 'targetId', 'objectKind', 'buildKind', 'durationTicks']);
-    expect(Object.keys(encodeIntent(foragerAdapter, out.plan[0]!))).toEqual([
+    // THE PARSER YIELDS THE FIELDS AS WRITTEN (W1-B4 round 4). It used to
+    // assemble them into one opaque `place` here; that was the last thing in a
+    // mind directory able to turn numbers into a place, and a mind that can
+    // mint one can triangulate any place it is given. So the crossing moved to
+    // `liftPlan`, at the edge where a plan enters the world — and the two are
+    // exact inverses, so the WIRE order below, which is what the body is handed
+    // and what a corpus row stores, is the order it has always had.
+    expect(Object.keys(out.plan[0]!)).toEqual(['kind', 'x', 'y', 'targetId', 'objectKind', 'buildKind', 'durationTicks']);
+    // …and lifting them puts the place exactly where the pair was.
+    expect(Object.keys(liftPlan(foragerEdges.codec, out.plan)[0]!)).toEqual([
+      'kind',
+      'place',
+      'targetId',
+      'objectKind',
+      'buildKind',
+      'durationTicks',
+    ]);
+    expect(Object.keys(encodeIntent(foragerEdges.codec, liftPlan(foragerEdges.codec, out.plan)[0]!))).toEqual([
       'kind',
       'x',
       'y',
@@ -212,7 +227,7 @@ describe('the mind→body edge over a real run', () => {
       seed: 'b3-refusal',
       agentCount: 4,
       mindBackend: new MockMindBackend({
-        world: foragerAdapter,
+        ...FORAGER_MOCK,
         policy: {
           think: (): MindOutput => ({
             goals: [],
@@ -251,7 +266,7 @@ describe('the mind→body edge over a real run', () => {
       seed: 'b3-undeclared',
       agentCount: 4,
       mindBackend: new MockMindBackend({
-        world: foragerAdapter,
+        ...FORAGER_MOCK,
         policy: {
           think: (): MindOutput => ({
             goals: [],

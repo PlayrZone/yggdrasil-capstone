@@ -1,9 +1,12 @@
 import type { WorldAdapter } from '../../contract/adapter.js';
+import type { WorldEdges } from '../../contract/edges.js';
+import type { PlaceRef } from '../../contract/space.js';
 import { defineForagerWorld } from './define.js';
 import { FORAGER_ACTIONS } from './actions.js';
 import { FORAGER_KINDS } from './kinds.js';
 import { foragerReflexPolicy } from './reflexPolicy.js';
-import { foragerSpace } from './space.js';
+import { at, foragerCodec, foragerSpace, pointOf, xOf, yOf } from './space.js';
+import type { Point } from './space.js';
 import { NEED_CRITICAL, NEED_PRESSING } from './types.js';
 import { seasonAt } from '../../body/index.js';
 
@@ -229,4 +232,40 @@ export const foragerAdapter: WorldAdapter = defineForagerWorld({
     { id: 'SawAgent', salience: 0.1, causal: false },
     { id: 'FoundResource', salience: 0.3 },
   ],
+});
+
+/**
+ * THIS WORLD, AS ITS EDGES HOLD IT (W1-B4 round 4).
+ *
+ * The world factory hands back two things and they go to different places. The
+ * ADAPTER is data a mind reads: tables, thresholds, the questions it may ask
+ * about space. The EDGES are a CAPABILITY — the codec that turns a place into
+ * this world's two numbers and back, plus this plane's own readers for the body,
+ * the reflex policy and the instrument.
+ *
+ * The host wiring (`SimRuntime`, the lab bridge, a test) takes this and passes
+ * it to exactly the components that sit at an edge. Nothing reachable from
+ * `foragerAdapter` reaches `foragerEdges`; the reference goes the other way, and
+ * `test/mind-type-graph.test.ts` walks the type graph to prove it.
+ */
+export interface ForagerEdges extends WorldEdges {
+  readonly at: (x: number, y: number) => PlaceRef;
+  readonly pointOf: (place: PlaceRef) => Point;
+  readonly xOf: (place: PlaceRef) => number;
+  readonly yOf: (place: PlaceRef) => number;
+}
+
+export const foragerEdges: ForagerEdges = Object.freeze({
+  adapter: foragerAdapter,
+  codec: foragerCodec,
+  at,
+  pointOf,
+  xOf,
+  yOf,
+});
+
+/** The world as one thing, for a caller that wants both halves named together. */
+export const foragerWorld: { readonly adapter: WorldAdapter; readonly edges: ForagerEdges } = Object.freeze({
+  adapter: foragerAdapter,
+  edges: foragerEdges,
 });

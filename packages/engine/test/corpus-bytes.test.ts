@@ -1,3 +1,4 @@
+import { foragerEdges } from '../src/index.js';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { COGNITION_SCHEMA_VERSION, buildThinkPrompt, deserializeThinkInput, foragerAdapter } from '../src/index.js';
@@ -80,7 +81,7 @@ describe('a cognition row is the bytes it always was', () => {
   it('replays a row captured before the step to the prompt it was sent as', () => {
     for (const row of BEFORE.rows) {
       const stored = JSON.parse(row.input) as SerializedThinkInput;
-      const rebuilt = buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter), foragerAdapter);
+      const rebuilt = buildThinkPrompt(deserializeThinkInput(stored, foragerEdges), foragerAdapter);
       expect(rebuilt.system, `being ${row.being}@${row.tick}`).toBe(row.system);
       expect(rebuilt.user, `being ${row.being}@${row.tick}`).toBe(row.user);
     }

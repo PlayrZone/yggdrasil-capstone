@@ -1,3 +1,4 @@
+import { FORAGER_MOCK } from './fixtures/foragerMock.js';
 import { describe, expect, it } from 'vitest';
 import { Experiment } from '../src/runner/Experiment.js';
 import { MockMindBackend } from '../src/consciousness/MockMindBackend.js';
@@ -49,7 +50,7 @@ async function run(options: { provenance?: ProvenanceLevel } = {}): Promise<Memo
   const exp = new Experiment({
     seed: 'recorder-tick',
     agentCount: 24,
-    mindBackend: new MockMindBackend({ world: foragerAdapter }),
+    mindBackend: new MockMindBackend({ ...FORAGER_MOCK }),
     now: () => 0,
     ...(options.provenance ? { provenance: options.provenance } : {}),
     recording: { sink, runId: 'run-recorder-tick', scenarioId: 'w1a1b', nowMs: () => 0 },

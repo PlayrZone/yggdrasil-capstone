@@ -81,7 +81,11 @@ export function inhabit(): number {
   // The slow path, built for a world this compiler cannot see: the backend, the
   // mind that drives it, the prompt it composes and the parser that reads the
   // reply. Not CALLED — the proof is about resolution, not behaviour.
-  const backend = new MockMindBackend({ world });
+  // writeReply is what a mock is HANDED instead of a codec (W1-B4 round 4),
+  // and this is the proof that the seam is narrow enough: a compilation with no
+  // worlds/ in it can still build one, because a function from a decision to
+  // text names nothing about space.
+  const backend = new MockMindBackend({ world, writeReply: () => '{}' });
   const paid = new FireworksMindBackend({ apiKey: '', model: 'none' });
   const llm = new LlmMind(backend, { world, fallback: policyFor(world) });
   const parsed = parseMindOutput('{"plan":[{"kind":"Dawdle"}]}', world);

@@ -1,3 +1,5 @@
+import { foragerEdges } from '../src/index.js';
+import { FORAGER_MOCK } from './fixtures/foragerMock.js';
 import { describe, expect, it } from 'vitest';
 import {
   COGNITION_SCHEMA_VERSION,
@@ -271,7 +273,7 @@ describe('validity: the gate bites past the execution caps', () => {
     // handed and a row stores. Half a place is still half a place — the model
     // offered one coordinate and the other never existed.
     const wire = (raw: string): Record<string, unknown> =>
-      encodeIntent(foragerAdapter, parseMindOutput(raw).plan[0]!);
+      encodeIntent(foragerEdges.codec, parseMindOutput(raw).plan[0]!);
     expect(wire('{"plan":[{"kind":"MoveTo","x":null,"y":5}]}')).toEqual({ kind: 'MoveTo', y: 5 });
     expect(wire('{"plan":[{"kind":"MoveTo","x":"far","y":5}]}')).toEqual({ kind: 'MoveTo', y: 5 });
     // -0 is finite and exact: it is kept as the model wrote it, not rounded away.
@@ -414,7 +416,7 @@ describe('eval gate 1: JSON validity', () => {
   const inputs = (): ThinkInput[] => leakTrapBattery().slice(0, 4).map((t) => t.input);
 
   it('scores the mock backend valid and reports the salvage count', async () => {
-    const r = await evalJsonValidity(new MockMindBackend({ world: foragerAdapter }), inputs());
+    const r = await evalJsonValidity(new MockMindBackend({ ...FORAGER_MOCK }), inputs());
     expect(r.rate).toBe(1);
     expect(r.byReason).toEqual({});
     expect(r.salvagedFenced).toBe(0);
@@ -446,7 +448,7 @@ describe('eval gate 1: JSON validity', () => {
     expect(lazyScore.acting).toBe(0);
     expect(lazyScore.speaking).toBe(0);
 
-    const real = await evalJsonValidity(new MockMindBackend({ world: foragerAdapter }), inputs());
+    const real = await evalJsonValidity(new MockMindBackend({ ...FORAGER_MOCK }), inputs());
     expect(real.rate).toBe(1); // identical headline…
     expect(real.acting).toBeGreaterThan(0); // …different mind
     expect(real.idleOnly).toBeLessThan(lazyScore.idleOnly);

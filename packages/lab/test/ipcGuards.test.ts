@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { codecFor, foragerAdapter } from '@yggdrasil/engine';
+import { foragerAdapter, foragerEdges } from '@yggdrasil/engine';
 import {
   PROMPT_LIMITS,
   RateLimiter,
@@ -19,7 +19,7 @@ import {
  * may write `{"kind":"MoveTo","x":5}`), and a hand-rolled copy would have
  * quietly guessed otherwise.
  */
-const foragerPlaces = codecFor(foragerAdapter.space);
+const foragerPlaces = foragerEdges.codec;
 const isPlace = (value: unknown): boolean => foragerPlaces.isPlace(value);
 
 /** A payload whose only unusual thing is where the being is standing. */

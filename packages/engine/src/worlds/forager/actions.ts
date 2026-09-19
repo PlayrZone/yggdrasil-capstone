@@ -1,4 +1,5 @@
 import type { ActionBinding, ParamSchema, PromptArgs } from '../../contract/actions.js';
+import { PLANE_FIELDS } from '../plane.js';
 import type { IntentKind } from './types.js';
 
 /**
@@ -24,11 +25,16 @@ import type { IntentKind } from './types.js';
 
 /**
  * WHERE THE ACT IS AIMED (W1-B4). One param, not two: the mind carries an
- * opaque place and this world writes it as the pair `x`,`y` it always has
- * (`foragerSpace.fields`). The wire, the prompt's argument shapes and the body
- * are unchanged; what changed is that none of them is spelled in the mind.
+ * opaque place and this world writes it as the pair `x`,`y` it always has.
+ * The wire, the prompt's argument shapes and the body are unchanged; what
+ * changed is that none of them is spelled in the mind.
+ *
+ * `PLANE_FIELDS` is the SAME constant this world's codec is built from, so the
+ * fields a prompt advertises and the fields a row is written with cannot drift
+ * (round 4 — they used to be read off the codec, through a lookup the mind
+ * could also have made).
  */
-const PLACE: ParamSchema = { id: 'place', type: 'place' };
+const PLACE: ParamSchema = { id: 'place', type: 'place', fields: PLANE_FIELDS };
 /** A node, a container or another being — whatever the act is aimed at. */
 const TARGET: ParamSchema = { id: 'targetId', type: 'ref' };
 /** Anything the world is made of. The hint is the parser's, word for word. */

@@ -1,6 +1,6 @@
-import type { WorldAdapter } from './adapter.js';
-import { codecFor, placeFieldNames } from './space.js';
-import type { PlaceRef, SpaceCodec } from './space.js';
+import { placeFieldNames } from './edges.js';
+import type { SpaceCodec } from './edges.js';
+import type { PlaceRef } from './space.js';
 import type {
   AgentSnapshot,
   Goal,
@@ -35,6 +35,14 @@ import type {
  *    only two seams is what let that one go unnoticed.
  *
  * Nothing between them ever sees a field name.
+ *
+ * EVERY FUNCTION HERE TAKES THE CODEC, NOT THE WORLD (round 4). It used to take
+ * a `WorldAdapter` and ask `codecFor(world.space)`, which is the module-level
+ * lookup round 3 walked through with one cast; there is no lookup now, so the
+ * capability has to arrive as an argument. This is the one file in `contract/`
+ * allowed to import `contract/edges.ts`, and `test/mind-type-graph.test.ts`
+ * fails if a second one ever does — which is what makes a relay impossible
+ * rather than merely unwritten.
  */
 
 /**
@@ -75,16 +83,11 @@ export interface WireOutput {
  * being remembers (W1-B3 verifier, the fail). Dropping it here would delete
  * that memory just as surely as refusing it at the gate did.
  */
-export function encodeIntent(world: WorldAdapter, intent: Intent): WireIntent {
-  return writeIntent(codecFor(world.space), intent);
+export function encodeIntent(codec: SpaceCodec, intent: Intent): WireIntent {
+  return writeIntent(codec, intent);
 }
 
-/**
- * The same, with the codec already in hand. Every plan the body is handed goes
- * through here on every tick of every run, so the world's codec is looked up
- * once per PLAN rather than once per act (round 3: the indirection is what the
- * verifier's −14.4% was made of, and this is one strand of it).
- */
+/** The same, internal — every plan the body is handed goes through here. */
 function writeIntent(codec: SpaceCodec, intent: Intent): WireIntent {
   // AN ACT WITH NO PLACE IS ALREADY WRITTEN. Half this world's verbs take no
   // place at all (`Eat`, `Idle`, `Craft`, `Sleep`), and every plan the body is
@@ -104,8 +107,7 @@ function writeIntent(codec: SpaceCodec, intent: Intent): WireIntent {
 }
 
 /** A whole decision, written out — its own key order kept. */
-export function encodeOutput(world: WorldAdapter, output: MindOutput): WireOutput {
-  const codec = codecFor(world.space);
+export function encodeOutput(codec: SpaceCodec, output: MindOutput): WireOutput {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(output)) {
     out[key] = key === 'plan' ? (value as Intent[]).map((intent) => writeIntent(codec, intent)) : value;
@@ -113,11 +115,49 @@ export function encodeOutput(world: WorldAdapter, output: MindOutput): WireOutpu
   return out as unknown as WireOutput;
 }
 
+/**
+ * A DECISION AS A MODEL WOULD HAVE SENT IT — the text, not the object.
+ *
+ * Anything standing in for a model has to WRITE what a model writes, and the
+ * things that stand in for one (`MockMindBackend`, the eval mocks) hold a
+ * policy's `MindOutput`, which carries opaque places. This is the whole of the
+ * crossing, bound to a world's codec once, so that a stand-in can be handed one
+ * function instead of a capability it would then be holding.
+ */
+export function replyWriter(codec: SpaceCodec): (output: MindOutput) => string {
+  return (output) => JSON.stringify(encodeOutput(codec, output));
+}
+
 /** A plan, written out. */
-export function encodePlan(world: WorldAdapter, plan: readonly Intent[]): WireIntent[] {
+export function encodePlan(codec: SpaceCodec, plan: readonly Intent[]): WireIntent[] {
   if (plan.length === 0) return [];
-  const codec = codecFor(world.space);
   return plan.map((intent) => writeIntent(codec, intent));
+}
+
+/**
+ * A WHOLE PLAN READ THE OTHER WAY — every act's wire fields lifted back into
+ * the one opaque place the engine's `Intent` carries (round 4).
+ *
+ * THIS IS WHERE A MODEL'S ANSWER BECOMES A DECISION ABOUT A PLACE, and it is at
+ * the EDGE on purpose. `consciousness/schema.ts` reads a model's JSON and the
+ * fields are the world's, so until round 4 the parser held a bound `decode` —
+ * the one door a mind directory still had onto the codec, and the one that
+ * makes triangulation possible (mint three places of known coordinates, ask
+ * `distance` three times, and the handle you were given is pinned). So the
+ * parser now yields the fields AS WRITTEN and this runs where the plan enters
+ * the world (`SimRuntime.applyPlan`), which is the first point that holds the
+ * world's edges.
+ *
+ * IT IS A NO-OP ON A PLAN THAT ALREADY CARRIES PLACES — the reflex path, which
+ * never went near a parser — because a world's fields are simply not in those
+ * acts. One function therefore handles both shapes, and neither is special-cased.
+ */
+export function liftPlan(codec: SpaceCodec, plan: readonly Intent[]): Intent[] {
+  if (plan.length === 0) return [];
+  // `liftPlace` is the same operation a stored row takes on its way back, and
+  // it is the same operation here: the place lands at the position of the FIRST
+  // field it was written as, so `encodePlan` puts it back byte for byte.
+  return plan.map((intent) => liftPlace<Intent>(codec, intent as unknown as Record<string, unknown>));
 }
 
 /**
@@ -136,11 +176,11 @@ export function encodePlan(world: WorldAdapter, plan: readonly Intent[]): WireIn
  * there is ONE reviewed serialisation seam, `space.encode`, and this is the only
  * caller of it outside a world's own module.
  */
-export function inlinePlace<T extends object>(world: WorldAdapter, row: T): Record<string, unknown> {
+export function inlinePlace<T extends object>(codec: SpaceCodec, row: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) {
     if (key === PLACE_FIELD && value !== undefined && value !== null) {
-      Object.assign(out, codecFor(world.space).encode(value as PlaceRef));
+      Object.assign(out, codec.encode(value as PlaceRef));
     } else out[key] = value;
   }
   return out;
@@ -151,8 +191,7 @@ export function inlinePlace<T extends object>(world: WorldAdapter, row: T): Reco
  * were a place. The place is rebuilt at the position of the first of them, so a
  * row that is read and written again comes back byte-identical.
  */
-export function liftPlace<T>(world: WorldAdapter, row: Record<string, unknown>): T {
-  const codec = codecFor(world.space);
+export function liftPlace<T>(codec: SpaceCodec, row: Record<string, unknown>): T {
   const fields = placeFieldNames(codec);
   const carried: Record<string, unknown> = {};
   let present = false;
@@ -210,8 +249,7 @@ export type SentThinkInput = Omit<ThinkInput, 'snapshot' | 'worldView' | 'recall
 };
 
 /** Every place in a think input, written as this world writes one. */
-export function encodeThinkInputPlaces(world: WorldAdapter, input: ThinkInput): SentThinkInput {
-  const codec = codecFor(world.space);
+export function encodeThinkInputPlaces(codec: SpaceCodec, input: ThinkInput): SentThinkInput {
   // Tolerant of a partial input, because this runs at a TRANSPORT seam: a
   // backend stub, a replayed row, a being that perceived nothing. A field that
   // is not there is not written, and a field that is not a place is passed on
@@ -246,8 +284,7 @@ export function encodeThinkInputPlaces(world: WorldAdapter, input: ThinkInput): 
  * place simply yields none — which makes the rebuilt prompt differ from the one
  * that was sent, which is a refusal, which is the outcome that edge wants.
  */
-export function decodeThinkInputPlaces(world: WorldAdapter, sent: unknown): ThinkInput {
-  const codec = codecFor(world.space);
+export function decodeThinkInputPlaces(codec: SpaceCodec, sent: unknown): ThinkInput {
   const asRow = (value: unknown): Record<string, unknown> | undefined =>
     value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
   const read = (value: unknown): PlaceRef | undefined => {

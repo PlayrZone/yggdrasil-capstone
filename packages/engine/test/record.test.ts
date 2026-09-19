@@ -1,3 +1,5 @@
+import { foragerEdges } from '../src/index.js';
+import { FORAGER_MOCK } from './fixtures/foragerMock.js';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -12,7 +14,6 @@ import {
   ScaffoldLedger,
   attemptPrompt,
   buildThinkPrompt as buildThinkPromptIn,
-  codecFor,
   cognitionToExample,
   deserializeThinkInput,
   foragerAdapter,
@@ -43,7 +44,7 @@ import type {
 } from '../src/index.js';
 import { at, pointOf } from '../src/worlds/forager/space.js';
 
-const foragerPlaces = codecFor(foragerAdapter.space);
+const foragerPlaces = foragerEdges.codec;
 import { fingerprintOf } from './fingerprint.js';
 import { CTX, mem, resetIds } from './helpers.js';
 
@@ -97,7 +98,7 @@ class ScriptedMind implements IMind {
 }
 
 function scripted(make: (input: ThinkInput) => MindOutput): MockMindBackend {
-  return new MockMindBackend({ world: foragerAdapter, policy: new ScriptedMind(make) });
+  return new MockMindBackend({ ...FORAGER_MOCK, policy: new ScriptedMind(make) });
 }
 
 /** Advance in small chunks, letting the scheduler's promises land between them. */
@@ -181,13 +182,13 @@ describe('lossless cognition record — replay', () => {
       offerMaking: false,
     };
 
-    const stored = wire(serializeThinkInput(input, foragerAdapter));
-    const replayed = buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter));
+    const stored = wire(serializeThinkInput(input, foragerEdges));
+    const replayed = buildThinkPrompt(deserializeThinkInput(stored, foragerEdges));
     const original = buildThinkPrompt(input);
     expect(replayed.system).toBe(original.system);
     expect(replayed.user).toBe(original.user);
     // …and the typed array survives the trip, which JSON alone would flatten.
-    expect(deserializeThinkInput(stored, foragerAdapter).recalledMemories[1]!.embedding).toEqual(Float32Array.from([0.5, -0.25]));
+    expect(deserializeThinkInput(stored, foragerEdges).recalledMemories[1]!.embedding).toEqual(Float32Array.from([0.5, -0.25]));
   });
 
   it('replays every row of a real run', async () => {
@@ -204,7 +205,7 @@ describe('lossless cognition record — replay', () => {
 
     expect(sink.records.length).toBeGreaterThanOrEqual(4);
     for (const row of sink.records) {
-      const prompt = buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerAdapter));
+      const prompt = buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerEdges));
       expect(prompt.system).toBe(row.prompt.system);
       expect(prompt.user).toBe(row.prompt.user);
     }
@@ -253,7 +254,7 @@ describe('lossless cognition record — replay', () => {
     exp.endRecording();
 
     const row = sink.records.find((r) => r.beingId === being)!;
-    const prompt = buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerAdapter));
+    const prompt = buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerEdges));
     expect(prompt.user).toBe(row.prompt.user);
     expect(prompt.system).toBe(row.prompt.system);
     // The row holds the belief as the model saw it, not as it ended up.
@@ -512,7 +513,7 @@ describe('outcome windows measure only themselves', () => {
     const exp = new Experiment({
       seed: 'window-truth',
       agentCount: 14,
-      mindBackend: new MockMindBackend({ world: foragerAdapter }),
+      mindBackend: new MockMindBackend({ ...FORAGER_MOCK }),
       recording: { sink, runId: 'run-window', outcomeWindowTicks: 40, nowMs: () => 0 },
     });
     const tracked = exp.agentIds.slice(0, 5);
@@ -647,7 +648,7 @@ describe('nothing goes missing quietly', () => {
     expect(row.attempts).toEqual([]);
     expect(row.appliedTick).toBeNull();
     expect(row.prompt.user).toContain('NEEDS'); // still fully replayable
-    expect(buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerAdapter)).user).toBe(row.prompt.user);
+    expect(buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerEdges)).user).toBe(row.prompt.user);
     const counts = sink.summary!.counts;
     expect(counts.promptsSent).toBe(counts.recordsWritten + counts.recordsDropped);
     expect(counts.unanswered).toBe(1);
@@ -679,7 +680,7 @@ describe('nothing goes missing quietly', () => {
     const exp = new Experiment({
       seed: 'broken-sink',
       agentCount: 12,
-      mindBackend: new MockMindBackend({ world: foragerAdapter }),
+      mindBackend: new MockMindBackend({ ...FORAGER_MOCK }),
       recording: { sink: brokenSink, runId: 'run-broken', nowMs: () => 0, onFailure: (e) => failures.push(e) },
     });
     for (const id of exp.agentIds.slice(0, 6)) exp.makeConscious(id);
@@ -720,7 +721,7 @@ describe('retried acts', () => {
     const exp = new Experiment({
       seed: 'retry',
       agentCount: 8,
-      mindBackend: new MockMindBackend({ world: foragerAdapter, failTimes: 1 }), // junk first, then valid
+      mindBackend: new MockMindBackend({ ...FORAGER_MOCK, failTimes: 1 }), // junk first, then valid
       recording: { sink, runId: 'run-retry', nowMs: () => 0 },
     });
     exp.makeConscious(exp.agentIds[0]!);
@@ -729,7 +730,7 @@ describe('retried acts', () => {
 
     const row = sink.records.find((r) => r.parse.retried)!;
     expect(row.attempts).toHaveLength(2);
-    const base = buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerAdapter));
+    const base = buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerEdges));
     // The first attempt was sent the base prompt, so it stores no delta at all.
     expect(row.attempts[0]!.promptDelta).toBeUndefined();
     expect(attemptPrompt(row, row.attempts[0]!)).toEqual(base);
@@ -759,7 +760,7 @@ describe('retried acts', () => {
     const exp = new Experiment({
       seed: 'retry-bytes',
       agentCount: 8,
-      mindBackend: new MockMindBackend({ world: foragerAdapter, failTimes: 1 }),
+      mindBackend: new MockMindBackend({ ...FORAGER_MOCK, failTimes: 1 }),
       recording: { sink, runId: 'run-retry-bytes', nowMs: () => 0 },
     });
     exp.makeConscious(exp.agentIds[0]!);
@@ -786,7 +787,7 @@ describe('zero perturbation', () => {
       const exp = new Experiment({
         seed: 'perturbation',
         agentCount: 24,
-        mindBackend: new MockMindBackend({ world: foragerAdapter }),
+        mindBackend: new MockMindBackend({ ...FORAGER_MOCK }),
         ...(sink ? { recording: { sink, runId: 'run-perturb', nowMs: () => 0 } } : {}),
       });
       for (const id of exp.agentIds.slice(0, 8)) exp.makeConscious(id);
@@ -831,7 +832,7 @@ describe('a throwing closeRun is not silent', () => {
     const exp = new Experiment({
       seed: 'close-throws',
       agentCount: 8,
-      mindBackend: new MockMindBackend({ world: foragerAdapter }),
+      mindBackend: new MockMindBackend({ ...FORAGER_MOCK }),
       recording: { sink: halfBrokenSink, runId: 'run-close-throws', nowMs: () => 0, onFailure: (e) => failures.push(e) },
     });
     exp.makeConscious(exp.agentIds[0]!);
@@ -932,13 +933,13 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     expect(sent.user).toContain('about NaN away (toward NaN,3)');
     expect(sent.system).toContain('curiosity -Infinity');
 
-    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input, foragerAdapter)), foragerAdapter));
+    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input, foragerEdges)), foragerEdges));
     expect(replayed.user).toBe(sent.user);
     expect(replayed.system).toBe(sent.system);
   });
 
   it('stores the placeholder 0 on disk and the token beside it', () => {
-    const stored = wire(serializeThinkInput(everyNonFinite(), foragerAdapter));
+    const stored = wire(serializeThinkInput(everyNonFinite(), foragerEdges));
     expect(stored.snapshot.needs.hunger).toBe(0);
     expect(stored.snapshot.needs.rest).toBe(0);
     expect(stored.snapshot.health).toBe(0);
@@ -958,54 +959,54 @@ describe('a non-finite number replays to the bytes that were sent', () => {
   });
 
   it('restores -0 exactly and leaves a clean input unflagged', () => {
-    const stored = wire(serializeThinkInput(nonFiniteInput({ x: -0, y: -0 }), foragerAdapter));
+    const stored = wire(serializeThinkInput(nonFiniteInput({ x: -0, y: -0 }), foragerEdges));
     expect(Object.is(stored.snapshot.x, 0)).toBe(true); // JSON has no -0…
     expect(stored.nonFinite).toEqual([
       { path: '$.snapshot.x', value: '-0' },
       { path: '$.snapshot.y', value: '-0' },
     ]);
-    const replayed = deserializeThinkInput(stored, foragerAdapter); // …so the row carries it
+    const replayed = deserializeThinkInput(stored, foragerEdges); // …so the row carries it
     expect(Object.is(pointOf(replayed.snapshot.place).x, -0)).toBe(true);
     expect(Object.is(pointOf(replayed.snapshot.place).y, -0)).toBe(true);
 
-    expect(wire(serializeThinkInput(nonFiniteInput(), foragerAdapter)).nonFinite).toBeUndefined();
+    expect(wire(serializeThinkInput(nonFiniteInput(), foragerEdges)).nonFinite).toBeUndefined();
   });
 
   it('leaves the stored row untouched, so the same row replays twice', () => {
-    const stored = wire(serializeThinkInput(everyNonFinite(), foragerAdapter));
-    const first = buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter));
+    const stored = wire(serializeThinkInput(everyNonFinite(), foragerEdges));
+    const first = buildThinkPrompt(deserializeThinkInput(stored, foragerEdges));
     expect(stored.snapshot.needs.hunger).toBe(0); // still the placeholder
-    expect(buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter)).user).toBe(first.user);
+    expect(buildThinkPrompt(deserializeThinkInput(stored, foragerEdges)).user).toBe(first.user);
   });
 
   it('refuses a row whose number was LOST, naming the field, and accepts one that was restored', () => {
-    const clean = wire(serializeThinkInput(nonFiniteInput(), foragerAdapter));
+    const clean = wire(serializeThinkInput(nonFiniteInput(), foragerEdges));
     // What a row looks like after JSON dropped a number outright.
     const lost = { ...clean, snapshot: { ...clean.snapshot, health: null as unknown as number } };
-    expect(() => deserializeThinkInput(lost, foragerAdapter)).toThrow(/snapshot\.health is null/);
+    expect(() => deserializeThinkInput(lost, foragerEdges)).toThrow(/snapshot\.health is null/);
     const gone = { ...clean, snapshot: { ...clean.snapshot, health: undefined as unknown as number } };
-    expect(() => deserializeThinkInput(gone, foragerAdapter)).toThrow(/snapshot\.health is undefined/);
+    expect(() => deserializeThinkInput(gone, foragerEdges)).toThrow(/snapshot\.health is undefined/);
     const lostConfidence = {
       ...clean,
       knowledge: [{ ...clean.knowledge[0]!, confidence: null as unknown as number }],
     };
-    expect(() => deserializeThinkInput(lostConfidence, foragerAdapter)).toThrow(/knowledge\[1\]\.confidence/);
+    expect(() => deserializeThinkInput(lostConfidence, foragerEdges)).toThrow(/knowledge\[1\]\.confidence/);
     const lostCount = {
       ...clean,
       snapshot: { ...clean.snapshot, inventory: { berry: null as unknown as number } },
     };
-    expect(() => deserializeThinkInput(lostCount, foragerAdapter)).toThrow(/snapshot\.inventory\.berry/);
+    expect(() => deserializeThinkInput(lostCount, foragerEdges)).toThrow(/snapshot\.inventory\.berry/);
 
     // …while a faithfully restored NaN is the value the prompt was built from.
-    expect(() => deserializeThinkInput(wire(serializeThinkInput(everyNonFinite(), foragerAdapter)), foragerAdapter)).not.toThrow();
+    expect(() => deserializeThinkInput(wire(serializeThinkInput(everyNonFinite(), foragerEdges)), foragerEdges)).not.toThrow();
   });
 
   it('refuses a side-channel that disagrees with the row rather than writing elsewhere', () => {
-    const stored = wire(serializeThinkInput(nonFiniteInput({ health: NaN }), foragerAdapter));
+    const stored = wire(serializeThinkInput(nonFiniteInput({ health: NaN }), foragerEdges));
     const misnamed = { ...stored, nonFinite: [{ path: '$.snapshot.needs.nope', value: 'NaN' as const }] };
-    expect(() => deserializeThinkInput(misnamed, foragerAdapter)).toThrow(/does not name a substituted number/);
+    expect(() => deserializeThinkInput(misnamed, foragerEdges)).toThrow(/does not name a substituted number/);
     const notAPlaceholder = { ...stored, snapshot: { ...stored.snapshot, health: 42 } };
-    expect(() => deserializeThinkInput(notAPlaceholder, foragerAdapter)).toThrow(/does not name a substituted number/);
+    expect(() => deserializeThinkInput(notAPlaceholder, foragerEdges)).toThrow(/does not name a substituted number/);
   });
 
   /**
@@ -1031,7 +1032,7 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     const clean = wire(
       serializeThinkInput(
         { ...nonFiniteInput({ sacredPlace: { x: 900, y: 120 } }), tragedyPlaces: [at(1, 2), at(3, 4)] },
-        foragerAdapter,
+        foragerEdges,
       ),
     );
     type Row = Record<string, unknown>;
@@ -1073,7 +1074,7 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     expect(CASES).toHaveLength(17);
 
     // The clean row is clean on both paths, or the table proves nothing.
-    expect(() => deserializeThinkInput(clean, foragerAdapter)).not.toThrow();
+    expect(() => deserializeThinkInput(clean, foragerEdges)).not.toThrow();
     expect(() => peekThinkInput(clean)).not.toThrow();
 
     /** What `peek` cannot ask, and why — a world's own schema, not a number. */
@@ -1086,7 +1087,7 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     ]);
 
     for (const [what, row, expected] of CASES) {
-      expect(() => deserializeThinkInput(row, foragerAdapter), `with world: ${what}`).toThrow(expected as RegExp);
+      expect(() => deserializeThinkInput(row, foragerEdges), `with world: ${what}`).toThrow(expected as RegExp);
       if (UNASKED.has(what)) {
         expect(() => peekThinkInput(row), `peek: ${what}`).not.toThrow();
       } else {
@@ -1102,7 +1103,7 @@ describe('a non-finite number replays to the bytes that were sent', () => {
    * neither will anything that rebuilds a call.
    */
   it('hands back a row that carries its places as stored, and that no prompt will take', () => {
-    const clean = wire(serializeThinkInput(nonFiniteInput({ sacredPlace: { x: 900, y: 120 } }), foragerAdapter));
+    const clean = wire(serializeThinkInput(nonFiniteInput({ sacredPlace: { x: 900, y: 120 } }), foragerEdges));
     const peeked = peekThinkInput(clean);
     // Everything a world-free reader wants is there and right.
     expect(peeked.worldView.tick).toBe(1);
@@ -1114,7 +1115,7 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     expect(foragerPlaces.owns(peeked.sacredPlace)).toBe(false);
     expect(foragerPlaces.owns((peeked.snapshot as unknown as Record<string, unknown>)['place'])).toBe(false);
     // …and the world path does hand back handles, for the same row.
-    const replayed = deserializeThinkInput(clean, foragerAdapter);
+    const replayed = deserializeThinkInput(clean, foragerEdges);
     expect(foragerPlaces.owns(replayed.sacredPlace)).toBe(true);
     expect(foragerAdapter.space.equal(replayed.sacredPlace!, at(900, 120))).toBe(true);
   });
@@ -1128,9 +1129,9 @@ describe('a non-finite number replays to the bytes that were sent', () => {
    */
   it('lifts a story’s site and the shunned places back through the world', () => {
     const input = nonFiniteInput({ sacredPlace: { x: 900, y: 120 } });
-    const stored = wire(serializeThinkInput(input, foragerAdapter));
+    const stored = wire(serializeThinkInput(input, foragerEdges));
     expect(stored.sacredPlace).toEqual({ x: 900, y: 120 });
-    const replayed = deserializeThinkInput(stored, foragerAdapter);
+    const replayed = deserializeThinkInput(stored, foragerEdges);
     expect(foragerAdapter.space.equal(replayed.sacredPlace!, at(900, 120))).toBe(true);
     expect(replayed.sacredPlace).not.toBe(stored.sacredPlace);
   });
@@ -1199,7 +1200,7 @@ describe('a row does not carry bookkeeping the prompt never read', () => {
   });
 
   it('strips provenance from every knowledge record, everywhere in the row', () => {
-    const stored = wire(serializeThinkInput(inputWith(believer(12)), foragerAdapter));
+    const stored = wire(serializeThinkInput(inputWith(believer(12)), foragerEdges));
     for (const k of stored.knowledge) expect('provenance' in k).toBe(false);
     expect(JSON.stringify(stored)).not.toContain('provenance');
     // What a prompt DOES read is untouched.
@@ -1209,7 +1210,7 @@ describe('a row does not carry bookkeeping the prompt never read', () => {
 
   it('replays byte-for-byte from the stripped row', () => {
     const input = inputWith(believer(12));
-    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input, foragerAdapter)), foragerAdapter));
+    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input, foragerEdges)), foragerEdges));
     const sent = buildThinkPrompt(input);
     expect(replayed.user).toBe(sent.user);
     expect(replayed.system).toBe(sent.system);
@@ -1217,7 +1218,7 @@ describe('a row does not carry bookkeeping the prompt never read', () => {
 
   it('is most of a populated row', () => {
     const input = inputWith(believer(12));
-    const stored = serializeThinkInput(input, foragerAdapter);
+    const stored = serializeThinkInput(input, foragerEdges);
     const after = Buffer.byteLength(JSON.stringify(stored));
     // Exactly what the old path stored: the live records, spread verbatim.
     const before = Buffer.byteLength(JSON.stringify({ ...stored, knowledge: input.knowledge }));
@@ -1308,7 +1309,7 @@ describe('a closed recorder counts nothing more', () => {
           ...(level ? { provenance: level } : {}),
         },
         scaffold: new ScaffoldLedger(),
-        adapter: foragerAdapter,
+        edges: foragerEdges,
         world: world(),
         nowMs: () => 0,
       });
@@ -1340,7 +1341,7 @@ describe('a closed recorder counts nothing more', () => {
       backendLabel: 'mock/x',
       options: { agentCount: 1, mythBehavior: false, leadership: false, offerMaking: false, craftLearning: false, outcomeWindowTicks: 100 },
       scaffold: new ScaffoldLedger(),
-      adapter: foragerAdapter,
+      edges: foragerEdges,
       world: world(),
       nowMs: () => 0,
     });

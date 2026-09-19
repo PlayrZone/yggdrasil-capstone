@@ -1,4 +1,5 @@
 import { checkIntent } from './actions.js';
+import type { PlaceTest } from './actions.js';
 import type { WorldAdapter } from './adapter.js';
 import type { DriveLevels, EventId } from './ids.js';
 import type { Intent, KnowledgeRule, MemoryRecord } from './types.js';
@@ -114,9 +115,15 @@ export class WorldGate {
    *
    * The rest of the plan is unaffected either way — a being that asks for one
    * impossible thing still does the others.
+   *
+   * WHETHER A VALUE IS A PLACE IS HANDED IN (round 4). Only a world's codec can
+   * answer it, a gate belongs to a MIND, and a mind may not hold a codec — so
+   * the caller that holds the world's edges supplies `edges.codec.isPlace`. It
+   * is required rather than optional on purpose: a default would be a silent
+   * "every place is fine", which is the answer this exists to stop giving.
    */
-  admitIntent(world: WorldAdapter, intent: Intent): boolean {
-    const refusal = checkIntent(world, intent);
+  admitIntent(world: WorldAdapter, intent: Intent, isPlace: PlaceTest): boolean {
+    const refusal = checkIntent(world, intent, isPlace);
     if (refusal === null) return true;
     if (refusal === 'undeclared-action') {
       this.undeclaredAction++;

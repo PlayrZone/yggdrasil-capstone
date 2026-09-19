@@ -1,6 +1,6 @@
 import { defineWorld } from '../../src/contract/adapter.js';
 import type { WorldAdapter } from '../../src/contract/adapter.js';
-import { toySpace } from './toySpace.js';
+import { TOY_PLACE_FIELDS, toySpace } from './toySpace.js';
 
 /**
  * A WHOLE WORLD IN TWENTY LINES — two drives, three events, one context
@@ -60,7 +60,7 @@ export function makeToyWorld(id: string, salience: number): WorldAdapter {
       // ONE place param, written as ONE named spot — where the forager
       // continent writes two numbers. Same mind, same `Intent.place`, nothing
       // shared on the wire (W1-B4).
-      { id: 'Shuffle', core: 'Move', params: [{ id: 'place', type: 'place' }] },
+      { id: 'Shuffle', core: 'Move', params: [{ id: 'place', type: 'place', fields: TOY_PLACE_FIELDS }] },
       { id: 'Snaffle', core: 'Take', params: [{ id: 'targetId', type: 'ref', required: true }] },
       {
         id: 'Nibble',

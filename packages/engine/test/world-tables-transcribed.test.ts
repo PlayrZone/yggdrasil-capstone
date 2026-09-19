@@ -1,3 +1,4 @@
+import { foragerEdges } from '../src/index.js';
 import { describe, expect, it } from 'vitest';
 import { World } from '../src/core/World.js';
 import { PerceptionSystem } from '../src/body/PerceptionSystem.js';
@@ -9,7 +10,6 @@ import { AgentMind } from '../src/agent/AgentMind.js';
 import { RuleIntern } from '../src/knowledge/KnowledgeStore.js';
 import { featureActive, traitCurveValue } from '../src/contract/adapter.js';
 import { inlinePlace } from '../src/contract/wire.js';
-import { codecFor } from '../src/contract/space.js';
 import type { MemoryRecord, SimEvent, Traits } from '../src/contract/types.js';
 import type { ContextFeatureKey, ContextFeatures, SimEventType } from '../src/worlds/forager/types.js';
 import { importanceOf } from '../src/memory/importance.js';
@@ -38,7 +38,7 @@ import {
 } from './fixtures/foragerTablesBefore.js';
 import type { Deltas } from './fixtures/foragerTablesBefore.js';
 
-const foragerPlaces = codecFor(foragerAdapter.space);
+const foragerPlaces = foragerEdges.codec;
 
 /**
  * W1-B1 MOVED TABLES; IT DID NOT WRITE THEM. `fixtures/foragerTablesBefore.ts`
@@ -234,7 +234,7 @@ describe('the perspective switch became data without changing', () => {
           // the place IS those two fields — so what is compared is the memory
           // as it WRITES (`inlinePlace`, through the world's own `space.encode`), which is the form a corpus row and a
           // digest have always seen. Same bytes, same slot, same order.
-          const now = built === undefined ? undefined : inlinePlace(foragerAdapter, built);
+          const now = built === undefined ? undefined : inlinePlace(foragerEdges.codec, built);
           if (JSON.stringify(was) !== JSON.stringify(now)) {
             divergences.push(`${type}/self=${selfId}/${JSON.stringify(payload)}`);
           }
@@ -319,6 +319,7 @@ describe('the prestige rule reaches a witness the same way', () => {
     };
     installEventPipeline(host, {
       world: foragerAdapter,
+    edges: foragerEdges,
       narrator,
       leadership,
       tombstoneRules: new RuleIntern(),

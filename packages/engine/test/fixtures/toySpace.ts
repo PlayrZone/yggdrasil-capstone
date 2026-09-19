@@ -1,5 +1,6 @@
-import { defineSpace } from '../../src/contract/space.js';
-import type { DirectionId, PlaceRef, SpaceCodec, SpaceOps } from '../../src/contract/space.js';
+import { defineSpace } from '../../src/contract/edges.js';
+import type { SpaceCodec } from '../../src/contract/edges.js';
+import type { DirectionId, PlaceRef, SpaceOps } from '../../src/contract/space.js';
 
 /**
  * A SPACE WITH NO COORDINATES IN IT AT ALL (W1-B4).
@@ -137,4 +138,12 @@ const wayfaringCodec: SpaceCodec = {
  * world a place from the continent and it must say so rather than answer
  * `Infinity` hops to `undefined`.
  */
-export const toySpace: SpaceOps = defineSpace({ ops: wayfaring, codec: wayfaringCodec });
+const guarded = defineSpace({ ops: wayfaring, codec: wayfaringCodec });
+
+export const toySpace: SpaceOps = guarded.space;
+
+/** This world's edges' half — handed over, never looked up (round 4). */
+export const toyCodec: SpaceCodec = guarded.codec;
+
+/** The fields this world writes a place as, for its own `place` param. */
+export const TOY_PLACE_FIELDS = wayfaringCodec.fields;

@@ -1,3 +1,4 @@
+import { FORAGER_MOCK } from './foragerMock.js';
 import { Experiment, MockMindBackend, foragerAdapter } from '../../src/index.js';
 import type {
   CognitionOutcome,
@@ -93,7 +94,7 @@ export async function runThinkInputCohort(): Promise<ThinkInputTrace> {
   const exp = new Experiment({
     seed: 'w1-b4-think-input',
     agentCount: 12,
-    mindBackend: new MockMindBackend({ world: foragerAdapter, policy }),
+    mindBackend: new MockMindBackend({ ...FORAGER_MOCK, policy }),
     now: () => 0,
     recording: { sink, runId: 'think-input', nowMs: () => 0 },
   });

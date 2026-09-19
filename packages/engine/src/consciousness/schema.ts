@@ -1,8 +1,6 @@
 import { kindsFor, planArguments } from '../contract/actions.js';
 import type { ParamSchema } from '../contract/actions.js';
 import type { WorldAdapter } from '../contract/adapter.js';
-import { codecFor } from '../contract/space.js';
-import type { PlaceRef } from '../contract/space.js';
 import type { Goal, Intent, MindOutput, SpeechAct, Utterance } from '../contract/types.js';
 
 /**
@@ -102,6 +100,25 @@ import type { Goal, Intent, MindOutput, SpeechAct, Utterance } from '../contract
  * comparison, so `"pl\u0061n"` does not smuggle a second `plan` past it. This
  * costs one linear pass and needs no dependency — cheaper than a class of
  * output the gate cannot otherwise see.
+ *
+ * **A PLACE LEAVES HERE AS THE MODEL WROTE IT** (W1-B4 round 4). This file is
+ * the model's edge and it lives in a mind directory, so it may not hold the
+ * thing that turns `x,y` into a place — holding a bound `decode` was the last
+ * door, and the expensive one, because a mind that can MINT a place of known
+ * coordinates recovers any place it is given from three `distance` calls. So an
+ * act comes out of here carrying the world's own fields, and
+ * `contract/wire.ts`'s `liftPlan` — run where a plan enters the world
+ * (`SimRuntime.applyPlan`), the first point that holds the world's edges — is
+ * where it becomes a place.
+ *
+ * The cost is that a `MindOutput` from THIS function is wire-shaped in its
+ * places while one from a reflex policy carries handles, and `Intent` names
+ * only the handle. The two shapes meet at `liftPlan`, which is a no-op on the
+ * second, and at `encodeIntent`, which is a no-op on the first; no reader
+ * between them touches a place (`AgentMind.applyOutput` resolves speech; the
+ * recorder stores the wire form either way). Naming the difference in the type
+ * would mean a second `MindOutput` threaded through `IMind`, `LlmMind` and the
+ * scheduler for one optional field — more surface than the honest comment.
  */
 
 const SPEECH_ACTS = new Set<SpeechAct>(['share-knowledge', 'share-episode', 'inform', 'request']);
@@ -135,7 +152,17 @@ interface PlanArg {
    * Present for a PLACE (W1-B4): the wire fields this world writes one as, in
    * the order written, each read exactly as an argument of its own type would
    * be — so `x` then `y` on the forager plane, with the same `bad-number`
-   * naming the same field. What is BUILT from them is one opaque handle.
+   * naming the same field.
+   *
+   * WHAT IS BUILT FROM THEM IS NOTHING, HERE (round 4). The parser used to hold
+   * a bound `codec.decode` and hand back one opaque handle — the last door a
+   * mind directory had onto a world's geometry, and the expensive one: a mind
+   * that can MINT a place of known coordinates can triangulate any place it is
+   * given out of three `distance` calls. So an act leaves this file carrying
+   * the fields exactly as the model wrote them, and `contract/wire.ts`'s
+   * `liftPlan` — called where a plan enters the world, which is the first point
+   * that holds the world's edges — turns them into a place. Same numbers, same
+   * refusals, same key order, same bytes.
    */
   readonly fields?: readonly PlanArg[];
 }
@@ -150,17 +177,6 @@ interface Vocabulary {
   readonly args: readonly PlanArg[];
   readonly needs: ReadonlySet<string>;
   readonly needHint: string;
-  /**
-   * THE ONE THING THAT CAN TURN THIS WORLD'S FIELDS INTO A PLACE, and all that
-   * is kept of the codec: a bound `decode`, not the codec itself. The parser is
-   * the model's edge and genuinely has to build a place — but it needs exactly
-   * this one question answered, and holding the whole codec here would put
-   * `encode`, `placeOf` and the rest within reach of every function in a mind
-   * directory (W1-B4 verifier, round 2, routes 20-21). `vocabularyOf` is the
-   * single allow-listed seam that asks `codecFor`, and `test/mind-no-geometry`
-   * asserts there is exactly one function of that name in this file.
-   */
-  readonly decodePlace: (fields: Record<string, unknown>) => PlaceRef | undefined;
 }
 
 const VOCABULARIES = new WeakMap<WorldAdapter, Vocabulary>();
@@ -168,21 +184,22 @@ const VOCABULARIES = new WeakMap<WorldAdapter, Vocabulary>();
 function vocabularyOf(world: WorldAdapter): Vocabulary {
   const cached = VOCABULARIES.get(world);
   if (cached) return cached;
-  const codec = codecFor(world.space);
   const built: Vocabulary = {
     actions: new Set(world.actions.map((action) => action.id)),
-    args: planArguments(world).map((param) => planArg(world, param, codec.fields)),
+    args: planArguments(world).map((param) => planArg(world, param)),
     needs: new Set(world.drives.map((drive) => drive.id)),
     needHint: `a goal serves one of ${world.drives.map((drive) => drive.id).join(', ')}`,
-    decodePlace: (fields) => codec.decode(fields),
   };
   VOCABULARIES.set(world, built);
   return built;
 }
 
-function planArg(world: WorldAdapter, param: ParamSchema, placeFields: readonly ParamSchema[]): PlanArg {
+function planArg(world: WorldAdapter, param: ParamSchema): PlanArg {
   if (param.type === 'place') {
-    return { id: param.id, fields: placeFields.map((field) => planArg(world, field, placeFields)) };
+    // The world DECLARES the fields a place is written as, beside the act that
+    // takes one (`PlaceParam.fields`) — so the parser reads them without ever
+    // holding the thing that turns them into a place.
+    return { id: param.id, fields: param.fields.map((field) => planArg(world, field)) };
   }
   if (param.type === 'kind' || param.type === 'enum') {
     const values = param.type === 'kind' ? kindsFor(world, param) : [...param.values];
@@ -475,7 +492,18 @@ function parsePlan(value: unknown, vocab: Vocabulary): Intent[] {
     // keeps the field order it has always had on the wire.
     const intent = { kind } as Intent & Record<string, unknown>;
     for (const arg of vocab.args) {
-      const read = readArg(o, arg, kind, vocab);
+      // A PLACE IS ITS OWN FIELDS, AND STAYS THEM (round 4). They are written
+      // at the position the place param occupies, in the world's own order, so
+      // the act reads `{kind,x,y,targetId}` — which is what the model wrote,
+      // what the body has always been handed, and what a row stores.
+      if (arg.fields) {
+        for (const field of arg.fields) {
+          const read = readArg(o, field, kind);
+          if (read !== undefined) intent[field.id] = read;
+        }
+        continue;
+      }
+      const read = readArg(o, arg, kind);
       if (read !== undefined) intent[arg.id] = read;
     }
     plan.push(intent);
@@ -485,26 +513,13 @@ function parsePlan(value: unknown, vocab: Vocabulary): Intent[] {
 }
 
 /**
- * ONE ARGUMENT, READ THE WAY THIS WORLD WRITES IT. A place is its own fields,
- * read in the world's order and assembled into one opaque handle: the same
- * numbers, refused for the same reasons, naming the same field — and a HALF of
- * one is kept, because `{"kind":"MoveTo","x":5}` with no `y` is a thing a model
- * writes and the body has always been the one to answer for it.
+ * ONE ARGUMENT, READ THE WAY THIS WORLD WRITES IT. A place's fields are read
+ * one at a time by the loop above, in the world's order: the same numbers,
+ * refused for the same reasons, naming the same field — and a HALF of one is
+ * kept, because `{"kind":"MoveTo","x":5}` with no `y` is a thing a model writes
+ * and the body has always been the one to answer for it.
  */
-function readArg(
-  o: Record<string, unknown>,
-  arg: PlanArg,
-  kind: string,
-  vocab: Vocabulary,
-): unknown {
-  if (arg.fields) {
-    const written: Record<string, unknown> = {};
-    for (const field of arg.fields) {
-      const read = readArg(o, field, kind, vocab);
-      if (read !== undefined) written[field.id] = read;
-    }
-    return vocab.decodePlace(written);
-  }
+function readArg(o: Record<string, unknown>, arg: PlanArg, kind: string): unknown {
   return arg.allowed ? readEnum(o, arg.id, arg.allowed, `${kind} ${arg.hint}`) : readNumber(o, arg.id);
 }
 

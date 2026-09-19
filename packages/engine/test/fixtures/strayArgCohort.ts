@@ -1,3 +1,4 @@
+import { FORAGER_MOCK } from './foragerMock.js';
 import { Experiment, MockMindBackend, foragerAdapter } from '../../src/index.js';
 import type {
   CognitionOutcome,
@@ -199,7 +200,7 @@ export async function runStrayArgCohort(): Promise<StrayArgTrace> {
   const exp = new Experiment({
     seed: 'w1-b3-stray-args',
     agentCount: 12,
-    mindBackend: new MockMindBackend({ world: foragerAdapter, policy }),
+    mindBackend: new MockMindBackend({ ...FORAGER_MOCK, policy }),
     now: () => 0,
     recording: { sink, runId: 'stray-args', nowMs: () => 0 },
   });

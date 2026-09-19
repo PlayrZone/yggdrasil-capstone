@@ -1,3 +1,4 @@
+import { FORAGER_MOCK } from './fixtures/foragerMock.js';
 import { describe, expect, it } from 'vitest';
 import { AgentMind, LlmMind, MockMindBackend, ReflexMind, at, buildThinkPrompt, foragerAdapter, narrativeRefOf } from '../src/index.js';
 import type { IMind, KnowledgeRule, MindOutput, ThinkInput, Utterance } from '../src/index.js';
@@ -84,7 +85,7 @@ function hear(listener: AgentMind, utterance: Utterance): void {
 }
 
 async function speakThroughLlm(agent: AgentMind, utterances: Utterance[]): Promise<Utterance[]> {
-  const llm = new LlmMind(new MockMindBackend({ world: foragerAdapter, policy: new ScriptedMind(utterances) }), { world: foragerAdapter });
+  const llm = new LlmMind(new MockMindBackend({ ...FORAGER_MOCK, policy: new ScriptedMind(utterances) }), { world: foragerAdapter });
   const output = await llm.complete(thinkInput(agent));
   return agent.applyOutput(output).utterances;
 }

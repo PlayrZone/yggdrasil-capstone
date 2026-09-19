@@ -1,12 +1,13 @@
 import type { World } from '../core/World.js';
 import type { Entity } from '../core/Entity.js';
 import type { WorldAdapter } from '../contract/adapter.js';
+import type { WorldEdges } from '../contract/edges.js';
 import type { ResourceNodeKind } from '../worlds/forager/types.js';
 import type { TerrainField } from '../body/PerceptionSystem.js';
 import type { WildlifeRules } from '../body/WildlifeSystem.js';
 import { WildlifeSystem, createResourceNode, spawnGahallians, TICKS_PER_SEASON } from '../body/index.js';
 import { mulberry32, hashSeed } from '../body/prng.js';
-import { foragerAdapter } from '../worlds/forager/adapter.js';
+import { foragerAdapter, foragerEdges } from '../worlds/forager/adapter.js';
 import { ContinentScenario } from '../worlds/forager/continentScenario.js';
 import { CONTINENT_TILE } from '../world/continent.js';
 import { CLASSIC_SCALE, classicGeography } from '../world/geography.js';
@@ -40,6 +41,14 @@ export interface Scenario {
    * world AND declares it; by B6 the two are one thing.
    */
   readonly adapter: WorldAdapter;
+  /**
+   * The same world's EDGES: the codec that turns a place into this world's own
+   * fields and back, plus whatever readers its own body and instrument use. A
+   * world factory hands back both halves and they go to different places — the
+   * adapter to every mind, this to the handful of components that sit at an
+   * edge (round 4; see contract/edges.ts).
+   */
+  readonly edges: WorldEdges;
   /** The ground: extents, relief, water, and the world's own edge. */
   readonly geography: WorldGeography;
   /** How far a metre is to a body here — reach, pace, earshot, eyesight. */
@@ -131,6 +140,7 @@ const FORAGER_DEMOGRAPHY: Demography = {
  */
 export class ForagerScenario implements Scenario {
   readonly adapter = foragerAdapter;
+  readonly edges = foragerEdges;
   readonly geography: WorldGeography = classicGeography;
   readonly scale: BodyScale = CLASSIC_SCALE;
   readonly terrain: TerrainField = { elevationBand };

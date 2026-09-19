@@ -1,6 +1,5 @@
 import type { WorldAdapter } from '../contract/adapter.js';
-import { encodeOutput } from '../contract/wire.js';
-import type { ThinkInput } from '../contract/types.js';
+import type { MindOutput, ThinkInput } from '../contract/types.js';
 import type { IMind } from './IMind.js';
 import type { IMindBackend } from './IMindBackend.js';
 import type { ThinkPrompt } from './prompt.js';
@@ -20,8 +19,23 @@ import { policyFor } from './policy.js';
  * exactly how a policy's answer came to be serialized as a mind's shape.
  */
 export interface MockMindBackendOptions {
-  /** The world this mock is answering in: whose policy, and whose wire. */
+  /** The world this mock is answering in: whose policy it borrows. */
   readonly world: WorldAdapter;
+  /**
+   * HOW AN ANSWER IS WRITTEN DOWN, handed in (round 4). A policy's `MindOutput`
+   * carries opaque places and a model writes this world's wire fields; only the
+   * world's codec can cross between them, and this file sits in a mind
+   * directory, where a codec may not go. So the wiring that built the world
+   * passes `writeReply(edges.codec)` — a function from a decision to the text a
+   * model would have sent.
+   *
+   * REQUIRED, not defaulted. The default this replaces was "stringify the
+   * policy's own output", which wrote `{"kind":"MoveTo","place":{…}}` where a
+   * model writes `{"kind":"MoveTo","x":…,"y":…}`, and every mock-driven being
+   * silently lost its destination (W1-B4 verifier, round 1, the fail). A seam
+   * that went wrong once quietly does not get a default.
+   */
+  readonly writeReply: (output: MindOutput) => string;
   /** Policy whose output the mock writes as "the model's answer". Default: the world's reflex. */
   readonly policy?: IMind;
   /**
@@ -40,12 +54,12 @@ export interface MockMindBackendOptions {
  */
 export class MockMindBackend implements IMindBackend {
   readonly modelId = 'mock/reflex-policy';
-  private readonly world: WorldAdapter;
+  private readonly writeReply: (output: MindOutput) => string;
   private readonly policy: IMind;
   private failTimes: number;
 
   constructor(options: MockMindBackendOptions) {
-    this.world = options.world;
+    this.writeReply = options.writeReply;
     this.policy = options.policy ?? policyFor(options.world);
     this.failTimes = options.failTimes ?? 0;
   }
@@ -60,7 +74,7 @@ export class MockMindBackend implements IMindBackend {
    * being lost its destination, including the pilgrimage toward a story's site
    * that the whole sacred-place machinery exists to measure.
    *
-   * `encodeOutput` is the codec that already existed for the body and the
+   * `writeReply` is the codec that already existed for the body and the
    * recorder; this is the third seam it never reached. Nothing else here
    * changed, so a policy that emits no place writes the bytes it always did.
    */
@@ -69,7 +83,6 @@ export class MockMindBackend implements IMindBackend {
       this.failTimes--;
       return Promise.resolve('not json — the model glitched');
     }
-    const out = this.policy.think(input);
-    return Promise.resolve(JSON.stringify(encodeOutput(this.world, out)));
+    return Promise.resolve(this.writeReply(this.policy.think(input)));
   }
 }

@@ -1,9 +1,10 @@
+import { foragerEdges } from '../src/index.js';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   AgentMind,
   ForeignPlaceError,
   buildThinkPrompt,
-  codecFor,
   createPlaneSpace,
   foragerAdapter,
   at,
@@ -13,11 +14,11 @@ import type { AgentSnapshot, PlaceRef, SimEvent, SpaceOps, WorldView } from '../
 import { memoryFromEvent } from '../src/memory/memoryFromEvent.js';
 import { SuccessionMiner } from '../src/learning/SuccessionMiner.js';
 import { toyWorld } from './fixtures/toyAdapter.js';
-import { TOY_SPOTS, spot } from './fixtures/toySpace.js';
+import { TOY_SPOTS, spot, toyCodec } from './fixtures/toySpace.js';
 import { mem, resetIds } from './helpers.js';
 
-const places = codecFor(foragerAdapter.space);
-const toyPlaces = codecFor(toyWorld.space);
+const places = foragerEdges.codec;
+const toyPlaces = toyCodec;
 
 /**
  * W1-B4 — THE MIND STOPPED KNOWING GEOMETRY.
@@ -338,9 +339,9 @@ describe('a world refuses a place another world minted', () => {
     expect(town.space.distance(town.at(0, 0), town.at(3, 4))).toBe(5);
     expect(foragerAdapter.space.distance(at(0, 0), here)).toBe(5);
     // And neither codec will read the other's handle as a place.
-    expect(codecFor(town.space).isPlace(here)).toBe(false);
+    expect(town.codec.isPlace(here)).toBe(false);
     expect(places.isPlace(theirs)).toBe(false);
-    expect(codecFor(town.space).owns(here)).toBe(false);
+    expect(town.codec.owns(here)).toBe(false);
     expect(places.owns(theirs)).toBe(false);
     expect(places.owns(here)).toBe(true);
   });
@@ -665,5 +666,142 @@ describe('the 22 routes out of a place, run against a real one', () => {
   it('route 18 — a SimEvent still carries this world’s x and y — RESIDUAL, owner B6', () => {
     const event = { tick: 1, type: 'AteFood', actorId: 1, targetIds: [], x: X, y: Y, payload: {} } as unknown as SimEvent;
     expect(leaks((event as unknown as Record<string, unknown>)[K])).toBe(true);
+  });
+});
+
+
+/**
+ * ─── THE CODEC IS INSIDE THE GATE TOO (W1-B4 verifier, round 3, FAIL 2) ─────
+ *
+ * `defineSpace` guarded the five `SpaceOps` functions and left `SpaceCodec`
+ * outside, so a place from another world reaching a SERIALISATION seam —
+ * `writeIntent`, `inlinePlace`, `encodeThinkInputPlaces`, `withPlacesWritten`,
+ * every one of which calls `codec.encode(place)` — produced a raw
+ * `TypeError: Cannot read private member #x from an object whose class did not
+ * declare it`. No `op`, no `argument`, no mention of worlds, and NOT the error
+ * written for exactly this case. The verifier put a second plane's place into a
+ * live conscious cohort and got eleven rows reading `answered | TypeError:
+ * Cannot read private member #x` — a plausible substituted decision, which is
+ * the outcome `ForeignPlaceError` exists to prevent.
+ *
+ * Every codec entry point that TAKES a place is inside the gate now. `decode`,
+ * `placeOf`, `isPlace` and `owns` are not, and are not meant to be: they take
+ * untrusted JSON, a world's own carrier, or anything at all, and answering "no"
+ * is their whole job.
+ */
+describe('a codec refuses another world’s place, by name (W1-B4 round 4)', () => {
+  const town = createPlaneSpace();
+  const foragerPlace = at(748.25, -311.5);
+
+  const expectForeignPlace = (op: string, call: () => unknown, what: string): void => {
+    let thrown: unknown;
+    try {
+      call();
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown, `${what}: ${op}`).toBeInstanceOf(ForeignPlaceError);
+    const error = thrown as ForeignPlaceError;
+    expect(error.op, what).toBe(op);
+    expect(error.argument, what).toBe(1);
+    // …and the refusal says nothing about where the place was.
+    expect(error.message).not.toMatch(/748|311/);
+  };
+
+  it('refuses a second plane’s place at `encode`, both ways round', () => {
+    expectForeignPlace('encode', () => foragerEdges.codec.encode(town.at(3, 9)), 'town place, forager codec');
+    expectForeignPlace('encode', () => town.codec.encode(foragerPlace), 'forager place, town codec');
+  });
+
+  it('refuses a world with no plane in it at all, both ways round', () => {
+    expectForeignPlace('encode', () => foragerEdges.codec.encode(spot('ridge')), 'toy place, forager codec');
+    expectForeignPlace('encode', () => toyCodec.encode(foragerPlace), 'forager place, toy codec');
+    expectForeignPlace('encode', () => toyCodec.encode(town.at(1, 1)), 'town place, toy codec');
+  });
+
+  it('refuses one at `pointOf` — the world’s own reader, which an instrument holds', () => {
+    expectForeignPlace('pointOf', () => pointOf(town.at(3, 9)), 'town place, forager pointOf');
+    expectForeignPlace('pointOf', () => town.pointOf(foragerPlace), 'forager place, town pointOf');
+    expectForeignPlace('pointOf', () => town.pointOf(spot('well')), 'toy place, town pointOf');
+  });
+
+  it('does NOT refuse the questions about untrusted data — they answer no instead', () => {
+    // `isPlace` is the edge's question about JSON, so a foreign handle is simply
+    // not one; `owns` is the brand test and says so; `decode` reads fields.
+    expect(foragerEdges.codec.isPlace(town.at(3, 9))).toBe(false);
+    expect(foragerEdges.codec.owns(town.at(3, 9))).toBe(false);
+    expect(toyCodec.isPlace(foragerPlace)).toBe(false);
+    expect(() => foragerEdges.codec.decode({ x: 1, y: 2 })).not.toThrow();
+  });
+
+  it('still lets a world encode its OWN places, or the gate is vacuous', () => {
+    expect(foragerEdges.codec.encode(foragerPlace)).toEqual({ x: 748.25, y: -311.5 });
+    expect(town.codec.encode(town.at(3, 9))).toEqual({ x: 3, y: 9 });
+    expect(toyCodec.encode(spot('ridge'))).toEqual({ spot: 'ridge' });
+  });
+});
+
+/**
+ * ─── WHAT A WITNESS REMEMBERS ABOUT *WHERE* (verifier round 1, item 8) ──────
+ *
+ * `c727af7` copied `event.x` and `event.y` onto every memory unconditionally.
+ * Round 3's `placeOf` asked for two `number`s first, so four shapes a host can
+ * author — `{x:5}`, `{y:6}`, `{x:"5",y:6}`, `{x:5,y:null}` — formed a memory
+ * with NO place where base formed one carrying exactly what was written.
+ * Reachable only through `authorEvent` plus a witness, which is why no golden
+ * caught it; it would have moved one the first time it bit.
+ *
+ * The fixture beside this was produced by running base's own `memoryFromEvent`
+ * in the permanent `c727af7` checkout. The comparison is on what the place
+ * ENCODES back to, because that is the form a row has always stored and the
+ * only form the two versions can be compared in at all.
+ */
+describe('a memory carries where it happened, exactly as `c727af7` did', () => {
+  const BASE = JSON.parse(
+    readFileSync(new URL('./fixtures/memoryPlaces.c727af7.json', import.meta.url), 'utf8'),
+  ) as Record<string, { x: unknown; y: unknown }>;
+
+  const SHAPES: Record<string, Record<string, unknown>> = {
+    'x-only': { x: 5 },
+    'y-only': { y: 6 },
+    'x-string': { x: '5', y: 6 },
+    'y-null': { x: 5, y: null },
+    'x-nan': { x: NaN, y: 6 },
+    both: { x: 7, y: 8 },
+    'minus-zero': { x: -0, y: 0 },
+  };
+
+  /** Base wrote `undefined`, `NaN` and `-0` straight onto the memory; JSON cannot
+   *  hold any of the three, so the fixture spells them and so does this. */
+  const show = (v: unknown): unknown =>
+    typeof v === 'number' && Number.isNaN(v) ? 'NaN' : Object.is(v, -0) ? '-0' : v === undefined ? '<absent>' : v;
+
+  it('a carrier with NEITHER field is nowhere — the one deliberate divergence, named in the fixture', () => {
+    expect(typeof BASE['neither']).toBe('string');
+    expect(foragerEdges.codec.placeOf({ tick: 1 })).toBeUndefined();
+    // …and this is the shape that actually reaches it: another world's handle.
+    expect(foragerEdges.codec.placeOf(spot('ridge'))).toBeUndefined();
+  });
+
+  for (const [name, coords] of Object.entries(SHAPES)) {
+    it(`stores ${name} the way base did`, () => {
+      const event = { tick: 3, type: 'FoundResource', actorId: 1, targetIds: [], payload: {}, ...coords } as unknown as SimEvent;
+      const place = foragerEdges.codec.placeOf(event);
+      expect(place, `${name}: base formed a memory here`).toBeDefined();
+      const written = foragerEdges.codec.encode(place!);
+      expect({ x: show(written['x']), y: show(written['y']) }).toEqual({
+        x: show(BASE[name]!.x === '<absent>' ? undefined : BASE[name]!.x === 'NaN' ? NaN : BASE[name]!.x === '-0' ? -0 : BASE[name]!.x),
+        y: show(BASE[name]!.y === '<absent>' ? undefined : BASE[name]!.y === 'NaN' ? NaN : BASE[name]!.y === '-0' ? -0 : BASE[name]!.y),
+      });
+    });
+  }
+
+  it('and the memory a witness forms really does carry it', () => {
+    const event = { tick: 3, type: 'FoundResource', actorId: 1, targetIds: [], payload: {}, x: 5 } as unknown as SimEvent;
+    const place = foragerEdges.codec.placeOf(event);
+    const memory = memoryFromEvent(foragerAdapter, event, 2, { nearWater: false, night: false, inShelter: false, elevationBand: 0 }, place);
+    expect(memory, 'round 3 formed none at all').toBeDefined();
+    expect(memory!.place, 'round 3 left it undefined').toBeDefined();
+    expect(foragerEdges.codec.encode(memory!.place!)).toEqual({ x: 5 });
   });
 });

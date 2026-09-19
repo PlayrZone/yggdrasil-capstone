@@ -1,3 +1,5 @@
+import { foragerEdges } from '../src/index.js';
+import { FORAGER_MOCK } from './fixtures/foragerMock.js';
 import { describe, expect, it } from 'vitest';
 import {
   COMMON_WORD_FORMS,
@@ -248,7 +250,7 @@ describe('tier 2 — the matcher, measured', () => {
     };
     expect(quotableRecall(inflated)).toBe(LEXICAL_CALIBRATION.blind.recall);
 
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new GroundedPolicy() }), { card: inflated });
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new GroundedPolicy() }), { card: inflated });
     expect(r.detector.recall).toBe(LEXICAL_CALIBRATION.blind.recall);
     expect(r.verdictDetail).toContain(String(LEXICAL_CALIBRATION.blind.recall));
     expect(r.verdictDetail).not.toContain('0.99');
@@ -277,7 +279,7 @@ describe('tier 2 — the matcher, measured', () => {
     expect(bound).toBe(0.51);
     expect(quotableRecall(LEXICAL_CALIBRATION)).toBe(bound);
 
-    const backend = new MockMindBackend({ world: foragerAdapter, policy: new GroundedPolicy() });
+    const backend = new MockMindBackend({ ...FORAGER_MOCK, policy: new GroundedPolicy() });
     const bare = await evalKnowledgeFidelity(backend);
     const judged = await evalKnowledgeFidelity(backend, { judge: new MockLeakJudge() });
     for (const r of [bare, judged]) {
@@ -639,7 +641,7 @@ describe('tier 2 — the matcher, measured', () => {
     for (const seed of ['review-1', 'second-review', 'third-review']) {
       const battery = leakTrapBattery({ seed });
       for (const salt of salts) {
-        const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new SaltedGroundedPolicy(salt) }), { battery });
+        const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new SaltedGroundedPolicy(salt) }), { battery });
         expect(r.verdict, `${seed} / ${salt} — ${r.failures.join('; ')}`).toBe('NO LEAK DETECTED');
         expect(r.leaks, `${seed} / ${salt}`).toBe(0);
         expect(r.controlOverreach, `${seed} / ${salt}`).toBe(0);
@@ -1088,7 +1090,7 @@ class EchoInputPolicy implements IMind {
 
 describe('the gate discriminates', () => {
   it('fails a leaky policy, and names the tier that caught it', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new LeakyPolicy() }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new LeakyPolicy() }));
     expect(r.verdict).toBe('FAIL');
     expect(r.leaks).toBeGreaterThan(20);
     expect(r.structuralLeaks).toBeGreaterThan(0);
@@ -1099,7 +1101,7 @@ describe('the gate discriminates', () => {
   });
 
   it('reaches NO LEAK DETECTED — never PASS — for a faithful policy with no judge', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new GroundedPolicy() }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new GroundedPolicy() }));
     expect(r.failures, r.failures.join('; ')).toEqual([]);
     expect(r.verdict).toBe('NO LEAK DETECTED');
     expect(r.passed).toBe(false);
@@ -1111,7 +1113,7 @@ describe('the gate discriminates', () => {
   });
 
   it('prints PASS only when a judge has also looked', async () => {
-    const backend = new MockMindBackend({ world: foragerAdapter, policy: new GroundedPolicy() });
+    const backend = new MockMindBackend({ ...FORAGER_MOCK, policy: new GroundedPolicy() });
     const r = await evalKnowledgeFidelity(backend, { judge: new MockLeakJudge() });
     expect(r.verdict).toBe('PASS');
     expect(r.judge!.asked).toBeGreaterThan(0);
@@ -1123,7 +1125,7 @@ describe('the gate discriminates', () => {
     for (const probe of leakTrapBattery()) {
       overrides.set(`I will do what I have been shown and no more. ${probe.input.knowledge.map((k) => k.statement).join('. ')}`, 'leak');
     }
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new GroundedPolicy() }), {
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new GroundedPolicy() }), {
       judge: new MockLeakJudge({ overrides }),
     });
     expect(r.verdict).toBe('FAIL');
@@ -1132,7 +1134,7 @@ describe('the gate discriminates', () => {
   });
 
   it('can be narrowed to a domain or a call budget', async () => {
-    const backend = new MockMindBackend({ world: foragerAdapter, policy: new GroundedPolicy() });
+    const backend = new MockMindBackend({ ...FORAGER_MOCK, policy: new GroundedPolicy() });
     const one = await evalKnowledgeFidelity(backend, { domains: ['metallurgy'] });
     expect(one.traps).toBe(3);
     expect(one.byDomain).toHaveLength(1);
@@ -1158,32 +1160,32 @@ describe('adversarial policies all fail', () => {
   const reason = (failures: string[], needle: string): boolean => failures.some((f) => f.includes(needle));
 
   it('always-hedge — hedging is not an amnesty', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new AlwaysHedgePolicy() }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new AlwaysHedgePolicy() }));
     expect(r.verdict).toBe('FAIL');
     expect(r.speculativeRate).toBeGreaterThan(0.5);
     expect(reason(r.failures, 'hedged leaks'), r.failures.join('; ')).toBe(true);
   });
 
   it('branch-on-knowledge-count — the counts are equal now', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new KnowledgeCountPolicy() }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new KnowledgeCountPolicy() }));
     expect(r.verdict).toBe('FAIL');
     expect(r.leaks, 'a count branch leaks on the trap arm it cannot tell apart').toBeGreaterThan(0);
   });
 
   it('branch-on-a-fixed-story — the stories are drawn now', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new FixedStoryPolicy() }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new FixedStoryPolicy() }));
     expect(r.verdict).toBe('FAIL');
     expect(r.leaks > 0 || r.controlActRate < 0.8).toBe(true);
   });
 
   it('always-act — acting without the ground is the leak', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new LeakyPolicy() }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new LeakyPolicy() }));
     expect(r.verdict).toBe('FAIL');
     expect(reason(r.failures, 'traps leaked')).toBe(true);
   });
 
   it('never-act — that is what the controls are for', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new NeverActPolicy() }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new NeverActPolicy() }));
     expect(r.verdict).toBe('FAIL');
     expect(r.leaks).toBe(0);
     expect(r.controlActRate).toBe(0);
@@ -1191,14 +1193,14 @@ describe('adversarial policies all fail', () => {
   });
 
   it('echo-input — handing the prompt back is not comprehension', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new EchoInputPolicy() }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new EchoInputPolicy() }));
     expect(r.verdict).toBe('FAIL');
     expect(r.echoRate).toBeGreaterThan(0.9);
     expect(reason(r.failures, 'handed back')).toBe(true);
   });
 
   it('hide-it-in-a-goal — the detector reads every field the being wrote', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter, policy: new HidesInGoalsPolicy() }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK, policy: new HidesInGoalsPolicy() }));
     expect(r.verdict).toBe('FAIL');
     expect(r.lexicalLeaks, 'a leak in a goal or a name is still the being saying it').toBeGreaterThan(0);
     expect(reason(r.failures, 'traps leaked'), r.failures.join('; ')).toBe(true);
@@ -1207,7 +1209,7 @@ describe('adversarial policies all fail', () => {
   });
 
   it('the reflex fallback is clean on the traps and still cannot pass', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter }));
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ ...FORAGER_MOCK }));
     expect(r.leaks).toBe(0);
     expect(r.verdict).toBe('FAIL'); // it acts on no control
   });
@@ -1227,7 +1229,7 @@ async function realThinkInputs(): Promise<ThinkInput[]> {
   const exp = new Experiment({
     seed: 'fidelity-parity',
     agentCount: 10,
-    mindBackend: new MockMindBackend({ world: foragerAdapter }),
+    mindBackend: new MockMindBackend({ ...FORAGER_MOCK }),
     recording: { sink, runId: 'run-parity', nowMs: () => 0 },
   });
   for (const id of exp.agentIds.slice(0, 3)) exp.makeConscious(id);
@@ -1238,7 +1240,7 @@ async function realThinkInputs(): Promise<ThinkInput[]> {
   exp.endRecording();
   // With the world, so the stored place fields come back as opaque places — the
   // shape a mind is actually handed (W1-B4).
-  return records.map((r) => deserializeThinkInput(r.thinkInput, foragerAdapter));
+  return records.map((r) => deserializeThinkInput(r.thinkInput, foragerEdges));
 }
 
 /**

@@ -1,0 +1,11 @@
+{
+  "_": "WHAT A WITNESS REMEMBERED ABOUT *WHERE*, CAPTURED AT c727af7 (W1-B4 verifier, round 1, item 8). Produced by running `memoryFromEvent(foragerAdapter, {tick:3,type:'FoundResource',actorId:1,targetIds:[],payload:{},...coords}, 2, emptyContext)` in the permanent base checkout C:/dev/YggdrasilLab-vbase and reading the memory's own `x`/`y`. At c727af7 a memory carried the two coordinates directly; since W1-B4 it carries one opaque place, so the comparison is made on what the place ENCODES back to — which is the same bytes a row has always stored. `<absent>` means the property was there and held `undefined`.",
+  "x-only": { "x": 5, "y": "<absent>" },
+  "y-only": { "x": "<absent>", "y": 6 },
+  "x-string": { "x": "5", "y": 6 },
+  "y-null": { "x": 5, "y": null },
+  "x-nan": { "x": "NaN", "y": 6 },
+  "neither": "DIVERGES, DELIBERATELY: base minted a place of nothing for a carrier with neither field; this world says a carrier with neither field is nowhere. `SimEvent` declares both required so no host can author one, and the shape that DOES reach `placeOf` without them is a foreign world's handle — where 'nowhere' is the right answer and 'a place of nothing' would be this world claiming to know where another world's place is.",
+  "both": { "x": 7, "y": 8 },
+  "minus-zero": { "x": "-0", "y": 0 }
+}

@@ -1,5 +1,3 @@
-import type { ParamSchema } from './actions.js';
-
 /**
  * WHERE THINGS ARE, WITHOUT THE MIND KNOWING WHERE (W1-B4).
  *
@@ -14,43 +12,73 @@ import type { ParamSchema } from './actions.js';
  * places, not a choice, and `direction` names a direction this world declares
  * rather than describing one. Nothing here may be shown to a mind as a fact.
  *
- * ─── WHY THIS FILE IS SHAPED THE WAY IT IS (W1-B4 verifier, round 2) ─────────
+ * ─── THE THREAT MODEL, STATED ONCE (W1-B4 round 4) ───────────────────────────
  *
- * Round 2 wrote 22 routes out of the handle that all COMPILED, including a full
- * Euclidean distance made of `Object.values`, and two that needed no reflection
- * at all: `space.encode(p)` and `space.decode({x, y})` — the codec's own doors,
- * standing open on the object the mind is handed. A nominal TYPE cannot close
- * them. `const o: object = p` is legal for any object, and no checker rule will
- * ever enumerate every widening.
+ * Three rounds of a hostile verifier were spent re-discovering that a defence
+ * written down vaguely is a defence that gets re-litigated, so this is the whole
+ * claim and the whole of what is NOT claimed. The same paragraph is in
+ * `docs/rework/W1-B-worldadapter.md`; if the two ever disagree, this one is the
+ * code and wins.
  *
- * So the defence is two RUNTIME facts and one narrowed static guard:
+ * WHAT IS NOT CLAIMED. Same-process TypeScript cannot sandbox deliberate code.
+ * A file that WANTS a coordinate and is willing to write `node:inspector`,
+ * `eval`, or a patch to this file will get one. Nothing below is a capability
+ * boundary in the operating-system sense and nothing below should ever be cited
+ * as one.
  *
- *  1. **The handle is opaque at runtime.** A world mints places as instances of
- *     its own class whose whole state is ECMAScript `#private` fields. There is
- *     nothing for `Object.keys/values/entries`, spread, `for…in`,
- *     `Object.assign`, `structuredClone`, `JSON.stringify`, `Reflect.ownKeys`,
- *     `getOwnPropertyNames/Symbols/Descriptors` or `p?.[K]` to find, and the
- *     prototype is emptied so not even `constructor` is reachable.
- *  2. **Ownership is per WORLD INSTANCE.** `#x in v` is an exact, unforgeable
- *     brand check that only the minting class can perform, so two PLANAR worlds
- *     — and W1-C's town is planar — refuse each other's places. The old gate
- *     asked "does it carry any of my field names", which made `{x:3,y:9}` a
- *     forager place and answered `distance 1080.41` about it.
- *  3. **What the mind may ask is a different OBJECT from what the edges may
- *     do.** `SpaceOps` below is the whole of a mind's reach. `SpaceCodec` is the
- *     edges' — and it is reachable only through `codecFor`, a module-level
- *     lookup, never as a property of the `WorldAdapter` a mind is handed. Routes
- *     20–22 are gone by construction rather than by lint.
+ * WHAT IS CLAIMED: the mind cannot couple itself to one world's geometry BY
+ * ACCIDENT — by reaching for the obvious thing, by a convenience import, by a
+ * cast someone wrote to silence the compiler. Three facts hold that line:
  *
- * WHAT IS STILL OPEN, named here so it is not rediscovered as a hole:
- *  · `label(place)` renders this world's own writing of a place, which on a
- *    plane is `"900,120"` — text a mind could parse. It stays until B5 gives
- *    places WORDS, because the prompt's bytes must not move in this step. The
- *    static guard narrows it: in a mind directory a `label` result may only
- *    flow into string concatenation or a template.
- *  · `SimEvent` still carries this world's `x`/`y` (`contract/types.ts`), which
- *    a mind file holding a `SimEvent` can read. That is B6's, with the rest of
- *    the per-world instrument.
+ *  (i)  **A held place reveals nothing to any language operation.** A world
+ *       mints places as instances of its own class whose whole state is
+ *       ECMAScript `#private` fields. `Object.keys/values/entries`, spread,
+ *       `for…in`, `Object.assign`, `structuredClone`, `v8.serialize`,
+ *       `JSON.stringify`, `Reflect.ownKeys`,
+ *       `getOwnPropertyNames/Symbols/Descriptors` and `p?.[K]` all come back
+ *       empty; the prototype is emptied, so `constructor` — and with it `new`,
+ *       and with `new` the minting that made round 2's triangulation work — is
+ *       gone; `${p}`, `p + 1` and `String(p)` throw rather than render; and no
+ *       error message anywhere carries a coordinate.
+ *  (ii) **No importable function turns places or spaces into coordinates, or
+ *       numbers into places.** The codec is not looked up, it is HANDED OVER:
+ *       `defineSpace` returns it to the world factory, the world factory puts it
+ *       in `WorldEdges`, and the host wiring passes that object to exactly the
+ *       edge components that parse, serialise, gate or instrument. There is no
+ *       registry to import, so widening a lookup's type (round 3's one cast)
+ *       has nothing to widen. `test/mind-type-graph.test.ts` proves the negative
+ *       STRUCTURALLY: the mind's transitive import closure contains no
+ *       declaration of the codec or of a plane's readers, and neither does the
+ *       type graph of anything a mind is constructed with.
+ *  (iii)**Ownership is unforgeable, per world INSTANCE.** `#x in value` is an
+ *       exact brand test only the minting class can perform: no Proxy traps it,
+ *       no prototype inherits it, and two worlds built on the same plane refuse
+ *       each other's places (`ForeignPlaceError`). Every `SpaceOps` entry point
+ *       and every codec entry point that takes a place checks it.
+ *
+ * DECLARED RESIDUALS, each with the step that closes it. These are holes, they
+ * are known, and a hole that is written down is cheaper than a guard that does
+ * not hold:
+ *
+ *  · **`label(place)` renders text a mind can parse** — `"900,120"` on a plane.
+ *    Round 3 evaded a narrowed static guard on it five ways without a single
+ *    cast, so the guard has been DELETED rather than left as decoration.
+ *    `test/mind-no-geometry.test.ts` pins the residual as still-yielding, so
+ *    B5 closing it (places get WORDS, not coordinates) is a visible change.
+ *    OWNER: B5, the lexicon.
+ *  · **The wire FIELD NAMES are in the prompt.** `MoveTo{x,y}` is in the
+ *    argument paragraph every model has always been shown, so the names are
+ *    readable from a mind by construction. They are names, not values, and they
+ *    are prose. OWNER: B5, with the rest of the paragraph.
+ *  · **`SimEvent` still carries `x`/`y`** (`contract/types.ts`). It is a TYPE
+ *    surface: exactly one mind file mentions `SimEvent` and it reads no
+ *    coordinate off one. OWNER: B6, with the per-world instrument.
+ *  · **`node:inspector` reads `#x` directly** (`Runtime.getProperties` →
+ *    `privateProperties`, no flags). It is out of reach from `src/` only
+ *    because the engine's tsconfig ships no node types — an accident, not a
+ *    defence. Deliberate code was never in scope (see WHAT IS NOT CLAIMED).
+ *  · **Mind and worlds are one package.** Import bans are checked by tests, not
+ *    enforced by a module system. OWNER: W1-C, packaging.
  */
 
 /**
@@ -66,8 +94,7 @@ import type { ParamSchema } from './actions.js';
  * mind could reach.
  *
  * The nominal brand is the first line and NOT the defence — round 2 proved a
- * name is a thing a mind need never say. The defence is that the runtime value
- * a world hands over has nothing on it (see the block above).
+ * name is a thing a mind need never say. The defence is fact (i) above.
  *
  * **Not `===` comparable in any meaningful way.** Two places that are the same
  * place are usually two objects, so `equal` is the only answer, and it is the
@@ -93,7 +120,9 @@ export type DirectionId = string;
  *
  * This is the object on `WorldAdapter.space`. Every member is a question with a
  * scalar or a word for an answer; not one of them hands back anything a place
- * is MADE of, and there is deliberately no way to get from here to the codec.
+ * is MADE of, and there is deliberately no way to get from here to the codec —
+ * which now means what it says, because the codec is not reachable from
+ * anything this file exports (fact (ii) above).
  */
 export interface SpaceOps {
   /**
@@ -134,75 +163,15 @@ export interface SpaceOps {
    * world's, like `direction`: the forager continent writes a rounded pair of
    * coordinates because that is what its prompt has always said. The SENTENCE
    * around it is still `prompt.ts`'s and moves to the lexicon at B5, which is
-   * also when this stops being parseable text (see the header).
+   * also when this stops being parseable text — the first declared residual in
+   * the header.
    */
   label(place: PlaceRef): string;
 }
 
 /**
- * WHAT THE EDGES MAY DO WITH A PLACE — and nothing in the mind can reach it.
- *
- * A parser reading a model's JSON, a body being handed a plan, a recorder
- * writing a row, an IPC gate deciding whether untrusted JSON could be a place,
- * an instrument plotting where a story is anchored: each of these genuinely has
- * to open or build one. None of them is the mind, and the way they ask is
- * `codecFor(world.space)` — a module-level lookup, not a property of anything a
- * mind is handed.
- */
-export interface SpaceCodec {
-  /**
-   * The WIRE fields one place is written as, in the order they are written,
-   * each TYPED as an argument in its own right. World data: the forager plane
-   * writes two numbers `x`,`y`; a world with no plane writes one named spot.
-   *
-   * Typed rather than merely named, because the parser has to hold each of them
-   * to something — `{"kind":"MoveTo","x":1e999}` is `bad-number` about `x`, and
-   * a spot outside the world's list is `bad-arg` about the spot — and which of
-   * the two it is is a fact about the world's space, not about parsing.
-   */
-  readonly fields: readonly ParamSchema[];
-
-  /** The wire fields this place is written as, ready to be spliced into a row. */
-  encode(place: PlaceRef): Record<string, unknown>;
-  /**
-   * …and back. Reads only `fields`, and returns a place carrying exactly those
-   * that were there: a model may write half of one, and half of one is what
-   * reached the body before this step existed. Undefined when none were.
-   */
-  decode(fields: Record<string, unknown>): PlaceRef | undefined;
-  /** Could this value be a place here? The edge's question, not the body's. */
-  isPlace(value: unknown): boolean;
-  /**
-   * The place of something this world knows — an event, a snapshot, a thing
-   * seen. The world reads its own geometry off its own carrier and hands back
-   * a handle; this is the one bridge from a world's data into a mind's, and it
-   * goes one way. Undefined when the thing is nowhere in particular.
-   */
-  placeOf(carrier: unknown): PlaceRef | undefined;
-  /**
-   * DID THIS WORLD MINT THIS VALUE? The ownership check, and the one question
-   * only the minting module can answer: on a class with `#private` state it is
-   * `#x in value`, which nothing can forge, nothing can trap and no other
-   * world's places satisfy — including another world built on the same plane.
-   *
-   * It is NOT `isPlace`. `isPlace` is the EDGE's question about untrusted JSON
-   * and answers strictly: `{x: NaN}` is nonsense a model wrote. But a world
-   * MINTS non-finite and half-written places of its own — an event authored
-   * with a NaN coordinate becomes a memory whose site renders into a prompt —
-   * so a gate built on `isPlace` would throw inside runs that have always
-   * worked. Ownership and usability are different questions.
-   */
-  owns(value: unknown): boolean;
-}
-
-/** The names of the wire fields a place is written as, in the order written. */
-export function placeFieldNames(codec: SpaceCodec): string[] {
-  return codec.fields.map((field) => field.id);
-}
-
-/**
- * A PLACE FROM SOMEWHERE ELSE, REFUSED OUT LOUD (W1-B4 verifier, backlog 4 and
- * round 2 FAIL 2).
+ * A PLACE FROM SOMEWHERE ELSE, REFUSED OUT LOUD (W1-B4 verifier, backlog 4,
+ * round 2 FAIL 2 and round 3 FAIL 2).
  *
  * A place carries no world tag, and until this existed nothing noticed when one
  * world was handed another's: `equal` returned TRUE for two places that are not
@@ -211,12 +180,18 @@ export function placeFieldNames(codec: SpaceCodec): string[] {
  * to read — produced `"NaN,NaN"` or `undefined`. Silent garbage, in the one
  * comparison a mind is allowed to make.
  *
- * THE CHOICE, stated so it is not rediscovered: every `SpaceOps` entry point
- * that takes a place THROWS. It does not substitute `unplaced` and it does not
- * count and carry on, because both of those answer a question that was never
- * asked — a mind that reached the wrong world has a bug, and a bug that returns
- * a plausible number is the expensive kind. W1-C puts two worlds in one process;
+ * THE CHOICE, stated so it is not rediscovered: every entry point that takes a
+ * place THROWS. It does not substitute `unplaced` and it does not count and
+ * carry on, because both of those answer a question that was never asked — a
+ * mind that reached the wrong world has a bug, and a bug that returns a
+ * plausible number is the expensive kind. W1-C puts two worlds in one process;
  * this is what it will hit instead of a wrong answer.
+ *
+ * ROUND 3 FOUND THE HALF THAT WAS MISSING: `SpaceOps` was gated and the CODEC
+ * was not, so a foreign place at a serialisation seam produced a raw
+ * `TypeError: Cannot read private member #x…` with no op, no argument and no
+ * mention of worlds. Every codec entry point taking a place is inside the gate
+ * now (`defineSpace`, `contract/edges.ts`).
  */
 export class ForeignPlaceError extends Error {
   override readonly name = 'ForeignPlaceError';
@@ -229,89 +204,4 @@ export class ForeignPlaceError extends Error {
   ) {
     super(`space.${op}: argument ${argument} is not a place of this world`);
   }
-}
-
-/** A world's whole space: the mind's half and the edges' half, built together. */
-export interface SpaceDefinition {
-  readonly ops: SpaceOps;
-  readonly codec: SpaceCodec;
-}
-
-/**
- * THE CODEC IS NOT ON THE ADAPTER, AND THIS IS WHERE IT LIVES INSTEAD.
- *
- * A `WeakMap` keyed by the guarded `SpaceOps` a world publishes. An edge that
- * holds a world asks `codecFor(world.space)`; a mind holds the same world and
- * has no expression of the codec's type and no import of this function — which
- * is what `test/mind-no-geometry.test.ts` enforces, by file and function, with
- * the allow-listed names asserted to occur exactly once in their file so the
- * list cannot be widened by adding a second function with the same name (round
- * 2 did exactly that to `record/serialize.ts:asPlace`).
- */
-const CODECS = new WeakMap<SpaceOps, SpaceCodec>();
-
-/**
- * ONE WORLD'S SPACE, WITH THE DOOR SHUT. A world builds its ops and its codec
- * and hands both here; what comes back is the `SpaceOps` it publishes, wrapped
- * so every entry point taking a place refuses one this world did not mint.
- *
- * It wraps rather than being written into each world because the check is not a
- * fact about any world: a world says WHAT its places are (`codec.owns`), and
- * this says that nothing else may be passed off as one.
- *
- * UNTHROWABLE BY CONSTRUCTION. `owns` is a private-brand test, which reads no
- * property, invokes no getter and is not a Proxy trap — so a place whose `x` is
- * a throwing getter, a revoked Proxy and a `Proxy` that lies about its own keys
- * are all simply NOT OWNED, and come back as `ForeignPlaceError` rather than as
- * whatever the trap felt like throwing (round 2 FAIL 2, last paragraph).
- */
-export function defineSpace(definition: SpaceDefinition): SpaceOps {
-  const { ops, codec } = definition;
-  const check = (op: string, argument: number, value: PlaceRef): void => {
-    if (!codec.owns(value)) throw new ForeignPlaceError(op, argument);
-  };
-  const guarded: SpaceOps = {
-    directions: ops.directions,
-    unplaced: ops.unplaced,
-    distance(a, b) {
-      check('distance', 1, a);
-      check('distance', 2, b);
-      return ops.distance(a, b);
-    },
-    direction(from, to) {
-      check('direction', 1, from);
-      check('direction', 2, to);
-      return ops.direction(from, to);
-    },
-    within(a, b, radius) {
-      check('within', 1, a);
-      check('within', 2, b);
-      return ops.within(a, b, radius);
-    },
-    equal(a, b) {
-      check('equal', 1, a);
-      check('equal', 2, b);
-      return ops.equal(a, b);
-    },
-    label(place) {
-      check('label', 1, place);
-      return ops.label(place);
-    },
-  };
-  Object.freeze(guarded);
-  CODECS.set(guarded, codec);
-  return guarded;
-}
-
-/**
- * THE EDGE'S WAY IN. Throws rather than returning undefined: a space that was
- * not built by `defineSpace` has no ownership check either, so a caller handed
- * one would be writing rows with no idea whose places they are.
- */
-export function codecFor(space: SpaceOps): SpaceCodec {
-  const codec = CODECS.get(space);
-  if (!codec) {
-    throw new Error('space: this SpaceOps was not built by defineSpace, so it has no codec and no owner');
-  }
-  return codec;
 }

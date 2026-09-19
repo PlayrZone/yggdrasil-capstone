@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Experiment, TICKS_PER_DAY, at, foragerAdapter } from '@yggdrasil/engine';
+import { Experiment, TICKS_PER_DAY, at, foragerAdapter, foragerEdges } from '@yggdrasil/engine';
 import { daylightAt, ProxyMindBackend, SimHost, type HostPort } from '../src/renderer/sim/host.js';
 import {
   ACT_COUNT,
@@ -506,7 +506,7 @@ describe('SimHost — stats', () => {
 describe('ProxyMindBackend', () => {
   it('posts a think request and resolves with what comes back', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port, foragerAdapter);
+    const backend = new ProxyMindBackend('model-x', port, foragerEdges);
     const prompt = { system: 'you are', user: 'hungry. what now?' };
     const promise = backend.complete(prompt as never, { situation: 'hungry' } as never);
     const request = port.last('llm-request')!;
@@ -529,7 +529,7 @@ describe('ProxyMindBackend', () => {
    */
   it('writes every place out as this world writes one, so the clone carries it', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port, foragerAdapter);
+    const backend = new ProxyMindBackend('model-x', port, foragerEdges);
     const input = {
       snapshot: { id: 1, place: at(120, 80) },
       worldView: { agents: [{ id: 2, place: at(3, 4) }], resources: [], structures: [] },
@@ -553,7 +553,7 @@ describe('ProxyMindBackend', () => {
 
   it('rejects with the message main sent, so NO_LLM_KEY still reads as NO_LLM_KEY', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port, foragerAdapter);
+    const backend = new ProxyMindBackend('model-x', port, foragerEdges);
     const promise = backend.complete({} as never, {} as never);
     backend.settle(1, undefined, 'NO_LLM_KEY');
     await expect(promise).rejects.toThrow('NO_LLM_KEY');
@@ -561,7 +561,7 @@ describe('ProxyMindBackend', () => {
 
   it('ignores a reply for a request it does not have, and fails the rest on abort', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port, foragerAdapter);
+    const backend = new ProxyMindBackend('model-x', port, foragerEdges);
     expect(() => backend.settle(999, 'stray')).not.toThrow();
     const promise = backend.complete({} as never, {} as never);
     backend.abort();

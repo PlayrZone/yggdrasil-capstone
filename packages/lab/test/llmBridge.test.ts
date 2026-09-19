@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildThinkPrompt, codecFor, decodeThinkInputPlaces, foragerAdapter, retryPrompt } from '@yggdrasil/engine';
+import { buildThinkPrompt, decodeThinkInputPlaces, foragerAdapter, foragerEdges, retryPrompt } from '@yggdrasil/engine';
 import type { SpaceCodec, ThinkInput } from '@yggdrasil/engine';
 
-const foragerPlaces = codecFor(foragerAdapter.space);
+const foragerPlaces = foragerEdges.codec;
 import { RateLimiter } from '../src/main/ipcGuards.js';
 import { RETRY_ERROR_MAX, llmComplete, placeAt, type CompletionBackend } from '../src/main/llmBridge.js';
 
@@ -67,7 +67,7 @@ const WORLD = foragerAdapter.id;
  * expected bytes has to decode too, or it is composing a prompt no edge could.
  */
 const promptFor = (input: Record<string, unknown>): { system: string; user: string } =>
-  buildThinkPrompt(decodeThinkInputPlaces(foragerAdapter, input), foragerAdapter);
+  buildThinkPrompt(decodeThinkInputPlaces(foragerEdges.codec, input), foragerAdapter);
 
 const limiter = (): RateLimiter => new RateLimiter(10, 60_000);
 

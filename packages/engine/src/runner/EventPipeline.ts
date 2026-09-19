@@ -5,7 +5,7 @@ import type { AgentMind } from '../agent/AgentMind.js';
 import type { RuleIntern } from '../knowledge/KnowledgeStore.js';
 import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { WorldAdapter } from '../contract/adapter.js';
-import { codecFor } from '../contract/space.js';
+import type { WorldEdges } from '../contract/edges.js';
 import type { SimEvent } from '../contract/types.js';
 import type { RunCounters } from './RunCounters.js';
 import type { NarrativeAuthor } from './society/SocietySystem.js';
@@ -28,6 +28,12 @@ export interface EventPipelineHost {
 export interface EventPipelineOptions {
   /** What kind of place this is: what events mean, and what they move. */
   readonly world: WorldAdapter;
+  /**
+   * The same world's edges. This IS an edge — it is where a `SimEvent` becomes
+   * N subjective memories — so it is one of the components the host hands the
+   * codec to, rather than one that looks it up (round 4).
+   */
+  readonly edges: WorldEdges;
   /** Whose tale an event becomes, if any. */
   readonly narrator: NarrativeAuthor;
   /** Cycle 13 A/B: does respect grow from witnessed competence? (prestige) */
@@ -67,7 +73,7 @@ export interface EventPipelineOptions {
  */
 export function installEventPipeline(host: EventPipelineHost, opts: EventPipelineOptions): void {
   if (opts.recorder) host.bus.on(opts.recorder.observeBefore);
-  const places = codecFor(opts.world.space);
+  const places = opts.edges.codec;
 
   host.bus.on((event) => {
     host.counters.observe(event);

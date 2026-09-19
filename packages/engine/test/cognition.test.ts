@@ -1,3 +1,5 @@
+import { foragerEdges } from '../src/index.js';
+import { FORAGER_MOCK } from './fixtures/foragerMock.js';
 import { describe, expect, it } from 'vitest';
 import {
   CognitionLog,
@@ -119,7 +121,7 @@ describe('schema parser', () => {
     // W1-B4: the parsed step carries an opaque place; what the wire said — and
     // what the body is handed — is still the two fields it always was.
     const step = parseMindOutput('{"plan":[{"kind":"Build","buildKind":"wall","x":1,"y":2}]}').plan[0]!;
-    expect(encodeIntent(foragerAdapter, step)).toEqual({ kind: 'Build', buildKind: 'wall', x: 1, y: 2 });
+    expect(encodeIntent(foragerEdges.codec, step)).toEqual({ kind: 'Build', buildKind: 'wall', x: 1, y: 2 });
   });
 
   it('refuses an over-long plan rather than silently running the first eight', () => {
@@ -140,7 +142,7 @@ describe('LlmMind', () => {
   it('produces a valid plan through the backend and logs the call', async () => {
     const log: CognitionRecord[] = [];
     let clock = 0;
-    const mind = new LlmMind(new MockMindBackend({ world: foragerAdapter }), { world: foragerAdapter, onCognition: (r) => log.push(r), now: () => (clock += 5) });
+    const mind = new LlmMind(new MockMindBackend({ ...FORAGER_MOCK }), { world: foragerAdapter, onCognition: (r) => log.push(r), now: () => (clock += 5) });
     const out = await mind.complete(input());
     expect(out.plan.length).toBeGreaterThan(0); // hungry → eats the berry
     expect(log).toHaveLength(1);
@@ -151,7 +153,7 @@ describe('LlmMind', () => {
 
   it('retries once then falls back to reflex on persistent bad output', async () => {
     const log: CognitionRecord[] = [];
-    const backend = new MockMindBackend({ world: foragerAdapter, failTimes: 5 }); // always junk
+    const backend = new MockMindBackend({ ...FORAGER_MOCK, failTimes: 5 }); // always junk
     const mind = new LlmMind(backend, { world: foragerAdapter, fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
     const out = await mind.complete(input());
     expect(out).toBeDefined(); // reflex carried it
@@ -167,7 +169,7 @@ describe('LlmMind', () => {
 
   it('recovers on the retry when the model fails just once', async () => {
     const log: CognitionRecord[] = [];
-    const mind = new LlmMind(new MockMindBackend({ world: foragerAdapter, failTimes: 1 }), { world: foragerAdapter, onCognition: (r) => log.push(r) });
+    const mind = new LlmMind(new MockMindBackend({ ...FORAGER_MOCK, failTimes: 1 }), { world: foragerAdapter, onCognition: (r) => log.push(r) });
     await mind.complete(input());
     expect(log[0]!.valid).toBe(true);
     expect(log[0]!.retried).toBe(true);

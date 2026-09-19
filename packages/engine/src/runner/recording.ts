@@ -3,6 +3,7 @@ import type { PerceptionSystem } from '../body/PerceptionSystem.js';
 import type { GahallianBody } from '../body/GahallianBody.js';
 import type { AgentMind } from '../agent/AgentMind.js';
 import type { WorldAdapter } from '../contract/adapter.js';
+import type { WorldEdges } from '../contract/edges.js';
 import type { KnowledgeRecord } from '../contract/types.js';
 import { CognitionRecorder } from '../record/CognitionRecorder.js';
 import type { ScaffoldLedger } from '../record/ScaffoldLedger.js';
@@ -14,6 +15,9 @@ import type { RecordingOptions, RunFlags } from './options.js';
 export interface RecorderHost {
   readonly seed: string;
   readonly adapter: WorldAdapter;
+  /** The same world's edges — the recorder writes places down, so it is one of
+   *  the components the host hands the codec to (round 4). */
+  readonly edges: WorldEdges;
   readonly world: World;
   readonly perception: PerceptionSystem;
   readonly minds: ReadonlyMap<number, AgentMind>;
@@ -55,7 +59,7 @@ export function createRecorder(host: RecorderHost, spec: RecorderSpec): Cognitio
   if (!recording) return null;
   return new CognitionRecorder({
     sink: recording.sink,
-    adapter: host.adapter,
+    edges: host.edges,
     runId: recording.runId,
     scenarioId: recording.scenarioId ?? 'default',
     worldId: recording.worldId ?? spec.worldId,

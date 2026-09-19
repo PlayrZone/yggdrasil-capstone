@@ -1,9 +1,9 @@
+import { at, foragerEdges } from '../src/index.js';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { codecFor } from '../src/contract/space.js';
 import { foragerAdapter } from '../src/worlds/forager/adapter.js';
 import { compilerOptionsFor, functionNamesIn, leakKey, placeLeaksIn } from './placeLeaks.js';
 
@@ -37,7 +37,7 @@ const TSCONFIG = fileURLToPath(new URL('../tsconfig.json', import.meta.url));
 const MIND_DIRS = ['agent', 'memory', 'learning', 'knowledge', 'relationships', 'narrative', 'consciousness'];
 
 /** The fields THIS world writes a place with — `x`, `y`. */
-const COORDS = new Set(codecFor(foragerAdapter.space).fields.map((field) => field.id));
+const COORDS = new Set(foragerEdges.codec.fields.map((field) => field.id));
 /** …and the words it decides a direction is. */
 const DIRECTIONS = new Set(foragerAdapter.space.directions);
 
@@ -217,20 +217,22 @@ const ALLOW_LIST: { key: string; why: string }[] = [
 ];
 
 /**
- * THE ONE MIND FILE THAT MAY HOLD THE CODEC, and the reason it is one.
+ * NO MIND FILE MAY HOLD THE CODEC, AND NONE DOES (W1-B4 round 4).
  *
- * `consciousness/schema.ts` is the MODEL's edge: it reads a model's JSON and has
- * to build a place out of the fields this world writes one as. It lives in a
- * mind directory until B6 moves the directories, so it is allow-listed by file
- * AND function — and what it keeps is a bound `decode`, not the codec, so
- * `vocabularyOf` is the only function in the file that can see one.
+ * There used to be one entry here: `consciousness/schema.ts:vocabularyOf`, the
+ * MODEL's edge, which read a model's JSON and had to build a place out of the
+ * fields this world writes one as. It kept a bound `decode` rather than the
+ * whole codec, which sounded narrow and was not — a mind that can MINT a place
+ * of coordinates it chose recovers any place it is given from three `distance`
+ * calls, which is how round 2 read `748.25,-311.5` off a handle.
+ *
+ * So the lifting moved to the edge (`contract/wire.ts`'s `liftPlan`, called by
+ * `SimRuntime.applyPlan`), the parser yields the fields as the model wrote
+ * them, and the list is EMPTY. It is kept as an empty list rather than deleted
+ * because the next person to need a codec in a mind directory should have to
+ * add a line here and explain it.
  */
-const CODEC_SEAMS: { key: string; why: string }[] = [
-  {
-    key: 'consciousness/schema.ts:vocabularyOf:codec',
-    why: "the parser's vocabulary is derived once per world, and binding `decode` into it is the only reach a mind directory has",
-  },
-];
+const CODEC_SEAMS: { key: string; why: string }[] = [];
 
 describe('nothing in the mind opens a place (W1-B4 verifier, the second fail)', () => {
   const options = compilerOptionsFor(TSCONFIG);
@@ -241,7 +243,7 @@ describe('nothing in the mind opens a place (W1-B4 verifier, the second fail)', 
   );
   const program = ts.createProgram([...mindSources, ...seamSources, ...controls], options);
 
-  it('finds nothing in the seven directories that are the mind, but the one reviewed parser seam', () => {
+  it('finds nothing at all in the seven directories that are the mind', () => {
     const found = placeLeaksIn(program, mindSources).map(leakKey);
     expect(found.filter((key) => !CODEC_SEAMS.some((entry) => entry.key === key))).toEqual([]);
     for (const entry of CODEC_SEAMS) expect(found, entry.why).toContain(entry.key);
@@ -351,16 +353,14 @@ describe('nothing in the mind opens a place (W1-B4 verifier, the second fail)', 
    * the verifier's 22. The fixture compiles cleanly and every function in it is
    * caught.
    */
-  it('catches holding the codec, eval, and a label that is handled rather than said', () => {
+  it('catches holding the codec and eval — the two routes a type is happy with', () => {
     const codec = path.join(SRC, '..', 'test', 'fixtures', 'place-codec.ts');
     expect(diagnosticsFor(program, codec)).toEqual([]);
     expect([...new Set(placeLeaksIn(program, [codec]).map((leak) => `${leak.fn}:${leak.route}`))].sort()).toEqual(
       [
         'evaluatesIt:eval',
         'holdsTheCodec:codec',
-        'keepsTheLabel:label text',
         'mintsOne:codec',
-        'parsesTheLabel:label text',
         'readsBySource:eval',
         'writesOneDown:codec',
       ].sort(),
@@ -370,6 +370,49 @@ describe('nothing in the mind opens a place (W1-B4 verifier, the second fail)', 
     // "the codec file uses the codec".
     expect(placeLeaksIn(program, [codec], 'seam').map((leak) => leak.route)).toEqual([]);
   }, 120_000);
+});
+
+/**
+ * ─── THE RESIDUAL, PINNED AS STILL-YIELDING (W1-B4 round 4, ruling 2) ────────
+ *
+ * `label` is the one thing a mind holds that still renders a coordinate. Round
+ * 3 tried to narrow it with a static rule — a `label` result in a mind file had
+ * to flow into a template or a `+` — and the verifier walked past it five ways
+ * without a cast, each returning `[748, -311]` from one `.split(',')`. The rule
+ * is gone (see `placeLeaks.ts`): a guard that does not hold is worse than a
+ * stated residual, because it buys a claim nobody is checking.
+ *
+ * What is here instead is the residual ITSELF, asserted to still be true. It is
+ * a strange-looking test — it proves the hole is open — and that is the job: B5
+ * gives places WORDS, and on the day it lands this goes red, somebody reads
+ * this comment, and closing the hole is a visible change with an owner rather
+ * than a silent improvement nobody can point at.
+ */
+describe('the label residual is open, and stays pinned until B5 closes it (W1-B4 round 4)', () => {
+  it('still renders a place as text a mind could parse back into a coordinate pair', () => {
+    const place = at(748.25, -311.5);
+    const text = foragerAdapter.space.label(place);
+    expect(text).toBe('748,-311');
+    // …and this is the parse, spelled out, because the point is that it works.
+    expect(text.split(',').map(Number)).toEqual([748, -311]);
+  });
+
+  it('is the only textual route: `label` is called from exactly three files, and one is the gate', () => {
+    const callers: string[] = [];
+    for (const dir of [...MIND_DIRS, 'contract', 'record', 'runner', 'training', 'analysis', 'eval']) {
+      for (const entry of readdirSync(path.join(SRC, dir), { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
+        const source = readFileSync(path.join(SRC, dir, entry.name), 'utf8');
+        // The call, not the declaration or a mention in prose.
+        if (/\.label\(/.test(source)) callers.push(`${dir}/${entry.name}`);
+      }
+    }
+    // `contract/edges.ts` is the ownership gate forwarding the call, not a
+    // reader of the text; the other two are the prompt (which says it to a
+    // model) and the trace (which says it to a judge). Nothing else renders a
+    // place, so B5 has exactly two sentences to rewrite.
+    expect(callers.sort()).toEqual(['consciousness/prompt.ts', 'contract/edges.ts', 'eval/trace.ts']);
+  });
 });
 
 function diagnosticsFor(program: ts.Program, fileName: string): string[] {

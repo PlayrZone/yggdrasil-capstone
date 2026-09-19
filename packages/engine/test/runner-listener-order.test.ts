@@ -4,7 +4,7 @@ import { PerceptionSystem } from '../src/body/PerceptionSystem.js';
 import { createGahallianBody } from '../src/body/GahallianBody.js';
 import type { GahallianBody } from '../src/body/GahallianBody.js';
 import { AgentMind } from '../src/agent/AgentMind.js';
-import { foragerAdapter } from '../src/worlds/forager/adapter.js';
+import { foragerAdapter, foragerEdges } from '../src/worlds/forager/adapter.js';
 import { RuleIntern } from '../src/knowledge/KnowledgeStore.js';
 import { identityAt } from '../src/body/identities.js';
 import type { SimEvent } from '../src/contract/types.js';
@@ -91,6 +91,7 @@ function rig(withRecorder: boolean): Rig {
   };
   installEventPipeline(host, {
     world: foragerAdapter,
+    edges: foragerEdges,
     narrator,
     leadership: true,
     tombstoneRules: new RuleIntern(),

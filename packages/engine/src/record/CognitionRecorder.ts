@@ -1,4 +1,4 @@
-import type { WorldAdapter } from '../contract/adapter.js';
+import type { WorldEdges } from '../contract/edges.js';
 import { encodeOutput } from '../contract/wire.js';
 import type { WireIntent } from '../contract/wire.js';
 import type { MindOutput, SimEvent, ThinkInput } from '../contract/types.js';
@@ -25,11 +25,13 @@ import { COGNITION_SCHEMA_VERSION, DEFAULT_RECORDED_PROVENANCE } from './types.j
 export interface CognitionRecorderOptions {
   sink: ICognitionSink;
   /**
-   * The world this run is in. A record stores what the WORLD was handed — a
-   * plan in its own argument fields — so the codec that writes an opaque place
-   * back out is the adapter's (W1-B4). Nothing else here reads it.
+   * The world this run is in, AS ITS EDGES HOLD IT. A record stores what the
+   * WORLD was handed — a plan in its own argument fields — so a recorder is one
+   * of the components that genuinely needs the codec, and since round 4 it is
+   * handed it rather than looking it up (`contract/edges.ts`). Nothing else
+   * here reads either half.
    */
-  adapter: WorldAdapter;
+  edges: WorldEdges;
   runId: string;
   scenarioId: string;
   worldId: string;
@@ -164,7 +166,7 @@ export class CognitionRecorder {
     const tick = input.worldView.tick;
     this.counts.promptsSent++;
     this.slot(beingId).frozen = {
-      input: serializeThinkInput(input, this.options.adapter),
+      input: serializeThinkInput(input, this.options.edges),
       prompt: { ...prompt },
       scaffold: {
         ...this.options.scaffold.beingState(beingId, tick, (narrativeId) =>
@@ -217,7 +219,7 @@ export class CognitionRecorder {
         fellBackToReflex: attempt.fellBackToReflex,
         ...(attempt.error !== undefined ? { error: attempt.error } : {}),
       },
-      parsedOutput: snapshotJson(encodeOutput(this.options.adapter, act.parsed)),
+      parsedOutput: snapshotJson(encodeOutput(this.options.edges.codec, act.parsed)),
       resolvedOutput: resolvedOf(act),
       appliedTick: act.appliedPlan ? act.tick : null,
       latencyMs: attempt.latencyMs,

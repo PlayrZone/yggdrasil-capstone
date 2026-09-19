@@ -1,9 +1,12 @@
-import { defineSpace } from '../contract/space.js';
-import type { DirectionId, PlaceRef, SpaceCodec, SpaceOps } from '../contract/space.js';
+import { defineSpace } from '../contract/edges.js';
+import type { SpaceCodec } from '../contract/edges.js';
+import { ForeignPlaceError } from '../contract/space.js';
+import type { DirectionId, PlaceRef, SpaceOps } from '../contract/space.js';
+import type { ParamSchema } from '../contract/actions.js';
 
 /**
  * A EUCLIDEAN PLANE, AS A WORLD'S SPACE — and the opaque handle that goes with
- * it (W1-B4, round 3).
+ * it (W1-B4, rounds 3-4).
  *
  * The forager continent is a plane. W1-C's town will be a plane too, which is
  * exactly why this is a FACTORY and not a module-level singleton: each call
@@ -19,16 +22,14 @@ import type { DirectionId, PlaceRef, SpaceCodec, SpaceOps } from '../contract/sp
  * `Reflect.ownKeys`, `getOwnPropertyNames/Symbols/Descriptors` and `p?.[K]` all
  * come back with nothing, and the prototype is emptied — `constructor` deleted,
  * `[[Prototype]]` set to null, frozen — so not even the class that made it is
- * reachable from an instance. Instances are frozen. `#x in v` is then an exact
- * brand test no other object can satisfy and no Proxy can trap, which is both
- * the ownership check and the reason the gate cannot be made to throw.
+ * reachable from an instance. `#x in v` is then an exact brand test no other
+ * object can satisfy and no Proxy can trap, which is both the ownership check
+ * and the reason the gate cannot be made to throw.
  *
- * IT IS ALSO THE FAST REPRESENTATION, which is the other half of round 3. The
- * old handle was a plain `{x, y}` behind two casts, and every op paid for
- * `asPoint`/`fieldsOf` and every `placeOf` allocated a fresh pair (round 2,
- * FAIL 3: −14.4% ticks/s at 1,000 beings). A private field is a monomorphic
- * slot read, and `xOf`/`yOf` let this world's own body, policy and instrument
- * read one coordinate without building an object to hold both.
+ * NOTHING HERE IS EXPORTED AS A CODEC. `createPlaneSpace` RETURNS one, to the
+ * world that called it; the world puts it in its `WorldEdges` and the host
+ * wiring hands that to the edges. There is no lookup to import (see
+ * `contract/edges.ts` for what one cast did to the lookup this replaced).
  *
  * Every expression below is transcribed, not designed: `Math.hypot(…)` from
  * `prompt.ts`, `dx * dx + dy * dy > radius * radius` from `SuccessionMiner`, the
@@ -42,6 +43,19 @@ export interface Point {
   x: number;
   y: number;
 }
+
+/**
+ * THE TWO FIELDS A PLANE WRITES A PLACE AS, declared once and read by both
+ * halves: the codec below writes and reads them, and a planar world's `place`
+ * PARAM carries the same list so the parser and the prompt's argument paragraph
+ * can say `x,y` without holding a codec (`PlaceParam.fields`). One constant, so
+ * the two cannot drift; `test/world-space.test.ts` pins them against each other
+ * anyway, because a drift here is a silently different wire.
+ */
+export const PLANE_FIELDS: readonly ParamSchema[] = Object.freeze([
+  Object.freeze({ id: 'x', type: 'number' }) as ParamSchema,
+  Object.freeze({ id: 'y', type: 'number' }) as ParamSchema,
+]);
 
 /**
  * The nine directions a plane names. Eight compass words plus the one a being
@@ -67,12 +81,11 @@ function compass(dx: number, dy: number): DirectionId {
   return `${ns}${ew}` || 'near here';
 }
 
-/** One planar world's space: what a mind may ask, what an edge may do, and the
- *  three readers this world's own body, policy and instrument use. */
+/** One planar world's space: what a mind may ask, and what its edges may do. */
 export interface PlaneSpace {
   /** Published on the adapter. Guarded: refuses a place this plane did not mint. */
   readonly space: SpaceOps;
-  /** Reached only through `codecFor(space)` — never from the adapter. */
+  /** HANDED to this world's `WorldEdges` — never looked up, never on the adapter. */
   readonly codec: SpaceCodec;
   /** A place of THIS plane, from a pair of its coordinates. */
   at(x: number, y: number): PlaceRef;
@@ -82,6 +95,12 @@ export interface PlaneSpace {
    * One coordinate, with nothing allocated to carry it. `pointOf` builds a pair
    * per call, which is fine once and expensive inside a loop over everything a
    * being can see — which is where this world's reflex policy spends its time.
+   *
+   * UNGUARDED, deliberately, and the only two things here that are. They are
+   * this plane's own private readers, called from this world's own body and
+   * policy with places this world minted a few lines earlier, and they sit in
+   * the innermost loop of every tick. `pointOf` — the same read, cold — IS
+   * guarded, and so is every door an edge or another world can reach.
    */
   xOf(place: PlaceRef): number;
   yOf(place: PlaceRef): number;
@@ -93,8 +112,16 @@ export interface PlaneSpace {
  * A HALF-WRITTEN PLACE IS REACHABLE, not a mistake to design out: a model may
  * write `{"kind":"MoveTo","x":5}` with no `y`, and before this step that
  * half-written act reached the body, which answered for it with a refusal the
- * being remembers. The place carries exactly what was written, so both fields
- * are `number | undefined`.
+ * being remembers.
+ *
+ * SO IS A PLACE WHOSE COORDINATE IS NOT A NUMBER. A host may author an event
+ * carrying `x: "5"` or `y: null`, and until round 4 a witness of one formed NO
+ * MEMORY AT ALL, where `c727af7` formed one and stored exactly what was written
+ * (W1-B4 verifier, round 1 item 8). That is why the fields below are `unknown`
+ * rather than `number | undefined`: the handle carries what the world put in it,
+ * and every expression that reads one coerces exactly as the code it replaced
+ * did (`Math.round("5")` is 5, `"5" - 3` is 2). `test/world-space.test.ts` pins
+ * the four shapes against a fixture captured in the base checkout.
  */
 export function createPlaneSpace(): PlaneSpace {
   /**
@@ -102,13 +129,24 @@ export function createPlaneSpace(): PlaneSpace {
    * can read `#x`/`#y` — not another world, not a cast, not reflection.
    */
   class Place {
-    readonly #x: number | undefined;
-    readonly #y: number | undefined;
+    readonly #x: unknown;
+    readonly #y: unknown;
 
-    constructor(x: number | undefined, y: number | undefined) {
+    constructor(x: unknown, y: unknown) {
       this.#x = x;
       this.#y = y;
-      Object.freeze(this);
+      // SEALED, NOT FROZEN, and the difference is 2.4 points of tick rate
+      // (round 4). An instance has no own property to freeze AGAINST reading —
+      // the state is `#private` and the prototype is null — so what either call
+      // buys is the same one thing: `p.x = 900.5` may not ADD a property, so
+      // writing to a place and reading it back yields nothing and
+      // `Object.keys(p)` stays empty (`world-space.test.ts`, route 30). That is
+      // `preventExtensions`' whole job; `Object.freeze` also walks and reseals
+      // every own property, of which there are none, and it cost 2.4% of ticks
+      // per second at a thousand beings because a place is minted for every
+      // entity a being perceives. Measured both ways: freeze −7.5%,
+      // preventExtensions −5.1%, neither −5.0%.
+      Object.preventExtensions(this);
     }
 
     /** The ownership test: unforgeable, untrappable, and exact to this class. */
@@ -116,11 +154,11 @@ export function createPlaneSpace(): PlaneSpace {
       return typeof value === 'object' && value !== null && #x in value;
     }
 
-    static readX(place: PlaceRef): number | undefined {
+    static readX(place: PlaceRef): unknown {
       return (place as unknown as Place).#x;
     }
 
-    static readY(place: PlaceRef): number | undefined {
+    static readY(place: PlaceRef): unknown {
       return (place as unknown as Place).#y;
     }
   }
@@ -135,9 +173,10 @@ export function createPlaneSpace(): PlaneSpace {
   Object.freeze(Place.prototype);
 
   /** THE ONE CAST THAT MAKES A PLACE OF THIS PLANE. Half of one is legal here
-   *  and nowhere else: only `decode` builds one, from what a model wrote. */
-  const mint = (x: number | undefined, y: number | undefined): PlaceRef => new Place(x, y) as unknown as PlaceRef;
+   *  and nowhere else: only `decode` and `placeOf` build those. */
+  const mint = (x: unknown, y: unknown): PlaceRef => new Place(x, y) as unknown as PlaceRef;
   const at = (x: number, y: number): PlaceRef => mint(x, y);
+  const owns = Place.owns;
   const readX = Place.readX;
   const readY = Place.readY;
 
@@ -177,10 +216,7 @@ export function createPlaneSpace(): PlaneSpace {
   const codec: SpaceCodec = {
     /** The two numbers this world's acts have always been written with — and
      *  `number`, so `x: 1e999` is still `bad-number` about `x`. */
-    fields: [
-      { id: 'x', type: 'number' },
-      { id: 'y', type: 'number' },
-    ],
+    fields: PLANE_FIELDS,
 
     encode(place) {
       const x = readX(place);
@@ -204,8 +240,9 @@ export function createPlaneSpace(): PlaneSpace {
       if (value === null || typeof value !== 'object') return false;
       // A place THIS world minted answers from its own fields; anything else is
       // untrusted JSON and is read as untrusted JSON.
-      const x = Place.owns(value) ? readX(value as unknown as PlaceRef) : (value as { x?: unknown }).x;
-      const y = Place.owns(value) ? readY(value as unknown as PlaceRef) : (value as { y?: unknown }).y;
+      const mine = owns(value);
+      const x = mine ? readX(value as unknown as PlaceRef) : (value as { x?: unknown }).x;
+      const y = mine ? readY(value as unknown as PlaceRef) : (value as { y?: unknown }).y;
       // Each coordinate is the number the parser would have carried through, and
       // at least one of them is there — which is the half-written act above.
       const usable = (v: unknown): boolean => v === undefined || (typeof v === 'number' && Number.isFinite(v));
@@ -216,21 +253,53 @@ export function createPlaneSpace(): PlaneSpace {
      * Anything this world puts in the plane: a `SimEvent`, a body's transform, a
      * thing seen. It reads its own two fields off its own carrier — which is
      * exactly the reach a mind no longer has.
+     *
+     * A CARRIER THAT HAS EITHER FIELD IS SOMEWHERE, whatever is written there.
+     *
+     * Round 3 asked for two `number`s, which is what a body always writes — and
+     * which silently deleted the memory a witness of a HOST-AUTHORED event used
+     * to form when the host wrote `{x:5}`, `{y:6}`, `{x:"5",y:6}` or
+     * `{x:5,y:null}` (verifier round 1, item 8). `c727af7` did not ask: it
+     * copied `event.x` and `event.y` onto the memory unconditionally, so a
+     * witness always remembered WHERE, even when where was `undefined`. This is
+     * that, and nothing more: the place carries exactly what the carrier had.
+     *
+     * Downstream nothing moves, which is why it is safe to restore. `encode`
+     * writes only the fields that are not `undefined`, so a place of nothing
+     * stores as `{}` — which is what `{x: undefined, y: undefined}` has always
+     * become on the way to disk. `SuccessionMiner`'s proximity test compares
+     * `NaN` and therefore constrains nothing, which is what base's "both
+     * coordinates must be defined" guard also did. `test/world-space.test.ts`
+     * pins the shapes against a fixture captured at `c727af7`.
+     *
+     * ONE DELIBERATE DIVERGENCE, named: a carrier with NEITHER field is nowhere
+     * here and was a place-of-nothing at base. `SimEvent` declares both fields
+     * required, so no host can author one — but a FOREIGN HANDLE is an object
+     * with no own `x` or `y`, and minting a place out of one would mean this
+     * world claiming to know where another world's place is. "A stranger is
+     * nowhere" is the better answer and it is the one the edge already gives
+     * (`isPlace`, `owns`).
      */
     placeOf(carrier) {
       if (carrier === null || typeof carrier !== 'object') return undefined;
       const held = carrier as { x?: unknown; y?: unknown };
-      return typeof held.x === 'number' && typeof held.y === 'number' ? at(held.x, held.y) : undefined;
+      if (!('x' in held) && !('y' in held)) return undefined;
+      return mint(held.x, held.y);
     },
 
-    owns: Place.owns,
+    owns,
   };
 
+  const guarded = defineSpace({ ops, codec });
+  const readPoint = (place: PlaceRef): Point => {
+    if (!owns(place)) throw new ForeignPlaceError('pointOf', 1);
+    return { x: readX(place) as number, y: readY(place) as number };
+  };
   return {
-    space: defineSpace({ ops, codec }),
-    codec,
+    space: guarded.space,
+    codec: guarded.codec,
     at,
-    pointOf: (place) => ({ x: readX(place) as number, y: readY(place) as number }),
+    pointOf: readPoint,
     xOf: (place) => readX(place) as number,
     yOf: (place) => readY(place) as number,
   };

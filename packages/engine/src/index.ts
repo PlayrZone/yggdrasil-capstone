@@ -213,17 +213,24 @@ export {
 } from './contract/actions.js';
 export { WorldGate } from './contract/gate.js';
 export type { WorldGateCounts } from './contract/gate.js';
+export type { PlaceTest } from './contract/actions.js';
 // W1-B4 — where things are, and the only way to ask. `SpaceOps` is the mind's
-// half; `SpaceCodec` is the edges', and it is reached through `codecFor(space)`
-// rather than off the adapter, so nothing a mind holds leads to it.
-export type { PlaceRef, DirectionId, SpaceOps, SpaceCodec, SpaceDefinition } from './contract/space.js';
-export { ForeignPlaceError, codecFor, defineSpace, placeFieldNames } from './contract/space.js';
+// half and it is on the adapter; the edges' half is a CAPABILITY handed out at
+// world construction (`WorldEdges`), never looked up, so nothing a mind holds
+// leads to it. Round 3 exported a `codecFor(space)` registry from here; one
+// cast in a mind directory reopened every route it was meant to close.
+export type { PlaceRef, DirectionId, SpaceOps } from './contract/space.js';
+export { ForeignPlaceError } from './contract/space.js';
+export type { SpaceCodec, SpaceDefinition, GuardedSpace, WorldEdges } from './contract/edges.js';
+export { defineSpace, placeFieldNames } from './contract/edges.js';
 export type { WireIntent, WireOutput, SentThinkInput } from './contract/wire.js';
 export {
   PLACE_FIELD,
   encodeIntent,
   encodePlan,
+  liftPlan,
   encodeOutput,
+  replyWriter,
   encodeThinkInputPlaces,
   decodeThinkInputPlaces,
 } from './contract/wire.js';
@@ -243,15 +250,16 @@ export type {
   Season,
 } from './worlds/forager/types.js';
 export { NEED_PRESSING, NEED_CRITICAL } from './worlds/forager/types.js';
-export { foragerAdapter } from './worlds/forager/adapter.js';
+export { foragerAdapter, foragerEdges, foragerWorld } from './worlds/forager/adapter.js';
+export type { ForagerEdges } from './worlds/forager/adapter.js';
 export { FORAGER_ACTIONS } from './worlds/forager/actions.js';
 export { FORAGER_KINDS } from './worlds/forager/kinds.js';
 // This world's plane, and the two ways in and out of one of its places. A host
 // that is ALREADY in the forager world (the lab, the instrument, a driver) may
 // open a place; a mind never can.
-export { foragerSpace, at, pointOf, xOf, yOf } from './worlds/forager/space.js';
+export { foragerSpace, foragerCodec, at, pointOf, xOf, yOf } from './worlds/forager/space.js';
 export type { Point } from './worlds/forager/space.js';
-export { createPlaneSpace } from './worlds/plane.js';
+export { createPlaneSpace, PLANE_FIELDS } from './worlds/plane.js';
 export type { PlaneSpace } from './worlds/plane.js';
 export { defineForagerWorld } from './worlds/forager/define.js';
 export type { ForagerWorldSpec } from './worlds/forager/define.js';
@@ -425,21 +433,21 @@ export {
   runPilotEstimation,
   wilsonInterval,
   exactBinomialTwoSided,
+  formatP,
   pairedBootstrap,
   signFlipPermutation,
+  signTest,
   minimumPairedSeeds,
   MIN_PAIRED_SEEDS,
+  DECLARED_CONTRAST_FAMILY,
   minimumDetectableEffect,
   minimumDetectableWins,
   pairsForSweep,
   multipleComparisonNote,
-  formatP,
   holmAdjusted,
   normalQuantile,
-  signTest,
   studentTQuantile,
   JUDGE_GATE,
-  DECLARED_CONTRAST_FAMILY,
   JUDGE_GATE_HASH,
   hashJudgeGate,
   judgeGateOverrides,
@@ -522,14 +530,6 @@ export type {
   AggregateOptions,
   ExploratoryGate,
   RunAttestation,
-  Interval,
-  PairedSample,
-  PairedResult,
-  PermutationTest,
-  BootstrapOptions,
-  DesignPower,
-  JudgeDesignPower,
-  JudgeGateRule,
   AttestationBinding,
   AttestationCheck,
   AttestationClaim,
@@ -544,17 +544,25 @@ export type {
   PilotCallTable,
   PilotEstimates,
   PilotRecipe,
+  Interval,
+  PairedSample,
+  PairedResult,
+  PermutationTest,
+  SignTest,
+  BootstrapOptions,
+  DesignPower,
+  JudgeDesignPower,
+  JudgeGateRule,
   JudgeGateConditions,
+  JudgeGateObserved,
   JudgeGatePower,
   JudgeGateDesign,
   MultipleComparisonNote,
-  SignTest,
   AdversarialProfile,
   ArmId,
   ArmFamily,
   AbMode,
   IInterviewee,
-  JudgeGateObserved,
   InterviewRequest,
   TraceMoment,
   MomentOutcome,

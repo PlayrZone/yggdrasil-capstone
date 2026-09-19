@@ -1,5 +1,4 @@
-import type { WorldAdapter } from '../contract/adapter.js';
-import { codecFor } from '../contract/space.js';
+import type { SpaceCodec, WorldEdges } from '../contract/edges.js';
 import type { PlaceRef } from '../contract/space.js';
 import { inlinePlace, liftPlace } from '../contract/wire.js';
 import type {
@@ -44,8 +43,9 @@ import type {
  * reads the stored numbers straight off disk (a miner bucketing needs sees the
  * placeholder `0`, not the NaN the being actually thought under).
  */
-export function serializeThinkInput(input: ThinkInput, world: WorldAdapter): SerializedThinkInput {
+export function serializeThinkInput(input: ThinkInput, edges: WorldEdges): SerializedThinkInput {
   const { relationships, recalledMemories, knowledge, ...rest } = input;
+  const codec = edges.codec;
   const nonFinite: NonFiniteSubstitution[] = [];
   const frozen = freezeJson(
     {
@@ -66,10 +66,10 @@ export function serializeThinkInput(input: ThinkInput, world: WorldAdapter): Ser
       // rather than naming the two fields it rewrites: pulling `snapshot` out
       // and putting it back would move it to the end of the row, and a row's
       // key order is part of what "byte-identical" means.
-      ...withPlacesWritten(rest, world),
+      ...withPlacesWritten(rest, codec),
       knowledge: knowledge.map(serializeKnowledge),
       relationships: [...relationships.entries()],
-      recalledMemories: recalledMemories.map((m) => serializeMemory(m, world)),
+      recalledMemories: recalledMemories.map((m) => serializeMemory(m, codec)),
     } as unknown as SerializedThinkInput,
     (substitution) => nonFinite.push(substitution),
   );
@@ -97,19 +97,20 @@ export function serializeThinkInput(input: ThinkInput, world: WorldAdapter): Ser
  * place — plus every place in `tragedyPlaces`, which nothing checked before and
  * which `wander` reads on the reflex path.
  */
-export function deserializeThinkInput(stored: SerializedThinkInput, world: WorldAdapter): ThinkInput {
+export function deserializeThinkInput(stored: SerializedThinkInput, edges: WorldEdges): ThinkInput {
   // Substitutions are written back in place, so a row that carries any is copied
   // first: a caller's stored record must not be mutated, and replaying the same
   // row twice must find its placeholders where it left them.
+  const codec = edges.codec;
   const source = stored.nonFinite && stored.nonFinite.length > 0 ? snapshotJson(stored) : stored;
   const restored = restoreNonFinite(source);
-  assertReplayable(source, restored, world);
+  assertReplayable(source, restored, edges);
   const { relationships, recalledMemories, nonFinite: _nonFinite, ...rest } = source;
-  const lift = <T>(row: Record<string, unknown>): T => liftPlace<T>(world, row);
+  const lift = <T>(row: Record<string, unknown>): T => liftPlace<T>(codec, row);
   return {
     // Key order kept, as on the way out: a row read and written again is the
     // same row.
-    ...(withPlacesLifted(rest, lift, world) as unknown as Omit<ThinkInput, 'relationships' | 'recalledMemories'>),
+    ...(withPlacesLifted(rest, lift, codec) as unknown as Omit<ThinkInput, 'relationships' | 'recalledMemories'>),
     relationships: new Map(relationships.map(([id, r]) => [id, { ...r }])),
     recalledMemories: recalledMemories.map((m) => deserializeMemory(m, lift)),
   };
@@ -152,9 +153,8 @@ export function peekThinkInput(stored: SerializedThinkInput): UnvalidatedThinkIn
 /** The records of a think input that CARRY a place, with it written out. */
 function withPlacesWritten(
   rest: Omit<ThinkInput, 'relationships' | 'recalledMemories' | 'knowledge'>,
-  world: WorldAdapter,
+  codec: SpaceCodec,
 ): Record<string, unknown> {
-  const codec = codecFor(world.space);
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(rest)) {
     // A STORY'S SITE AND THE PLACES A TRAGEDY SHUNS are places THEMSELVES rather
@@ -165,14 +165,14 @@ function withPlacesWritten(
     // copy of one writes `{}`. So these ask the world like everything else.
     if (key === 'sacredPlace') out[key] = codec.encode(value as PlaceRef);
     else if (key === 'tragedyPlaces') out[key] = (value as PlaceRef[]).map((p) => codec.encode(p));
-    else if (key === 'snapshot') out[key] = inlinePlace(world, value as AgentSnapshot);
+    else if (key === 'snapshot') out[key] = inlinePlace(codec, value as AgentSnapshot);
     else if (key === 'worldView') {
       const seen = value as WorldView;
       out[key] = {
         ...seen,
-        agents: seen.agents.map((a) => inlinePlace(world, a)),
-        resources: seen.resources.map((r) => inlinePlace(world, r)),
-        structures: seen.structures.map((s) => inlinePlace(world, s)),
+        agents: seen.agents.map((a) => inlinePlace(codec, a)),
+        resources: seen.resources.map((r) => inlinePlace(codec, r)),
+        structures: seen.structures.map((s) => inlinePlace(codec, s)),
       };
     } else out[key] = value;
   }
@@ -190,9 +190,8 @@ function withPlacesWritten(
 function withPlacesLifted(
   rest: Record<string, unknown>,
   lift: <T>(row: Record<string, unknown>) => T,
-  world: WorldAdapter,
+  codec: SpaceCodec,
 ): Record<string, unknown> {
-  const codec = codecFor(world.space);
   const asPlace = (stored: unknown): PlaceRef | undefined => {
     if (stored === null || stored === undefined || typeof stored !== 'object') return stored as PlaceRef | undefined;
     return codec.decode(stored as Record<string, unknown>);
@@ -264,9 +263,9 @@ function serializeKnowledge(k: KnowledgeRecord): SerializedKnowledgeRecord {
   return rest;
 }
 
-function serializeMemory(m: MemoryRecord, world: WorldAdapter): SerializedMemoryRecord {
+function serializeMemory(m: MemoryRecord, codec: SpaceCodec): SerializedMemoryRecord {
   const { embedding, ...rest } = m;
-  const written = inlinePlace(world, rest);
+  const written = inlinePlace(codec, rest);
   if (embedding) written['embedding'] = Array.from(embedding);
   return written as unknown as SerializedMemoryRecord;
 }
@@ -390,14 +389,15 @@ function resolvePath(root: object, path: string): { holder: Record<string, numbe
 function assertReplayable(
   stored: SerializedThinkInput,
   restored: ReadonlySet<string>,
-  world: WorldAdapter,
+  edges: WorldEdges,
 ): void {
+  const world = edges.adapter;
   const num = numberChecker(restored);
   // WHICH FIELDS A PLACE IS, AND THEIR ORDER, ARE THE WORLD'S (W1-B4) — the
   // paths are unchanged for the forager plane (`$.snapshot.x`, `$.sacredPlace.y`)
   // because those are the fields it writes a place with. Checked as STORED,
   // because that is the form `nonFinite` names and the form a row is read from.
-  const fields = codecFor(world.space).fields;
+  const fields = edges.codec.fields;
   const placeIn = (row: Record<string, unknown> | undefined, at: string): void => {
     if (!row) return;
     for (const field of fields) num(row[field.id], `${at}.${field.id}`);

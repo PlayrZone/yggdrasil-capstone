@@ -62,3 +62,59 @@ The mind's own types become id-based: `DriveId`, `KindId`, `EventId`, `ContextFe
 - B1–B2 touch nearly every mind file; they must land while no other engine item is in flight in those directories. One engineer at a time on the mind.
 - The prompt is a behavioural surface: B5 must be byte-identical for the forager world or every LLM-path comparison made so far loses its baseline.
 - A too-clever adapter becomes a second engine. Keep it declarative; if a world needs code, that code is a body system on the world side, not a callback the mind invokes.
+
+## B4 — the threat model this step's defence is built on (round 4, 2026-09-19)
+
+Three hostile-verifier rounds were spent re-discovering that a defence written
+down vaguely gets re-litigated. This is the whole claim and the whole of what is
+NOT claimed. The canonical copy is the header of
+`packages/engine/src/contract/space.ts`; if the two disagree, the code wins.
+
+**Not claimed.** Same-process TypeScript cannot sandbox deliberate code. A file
+that WANTS a coordinate and will write `node:inspector`, `eval`, or a patch to
+`contract/space.ts` gets one. Nothing here is an operating-system capability
+boundary and nothing here should be cited as one.
+
+**Claimed.** The mind cannot couple itself to one world's geometry BY ACCIDENT —
+by reaching for the obvious thing, by a convenience import, by a cast written to
+silence the compiler. Three facts hold it:
+
+1. **A held place reveals nothing to any language operation.** A world mints
+   places as instances of its own class whose whole state is ECMAScript
+   `#private` fields; reflection, spread, cloning, serialisation and coercion
+   all come back empty or throw, the prototype is emptied so `constructor` (and
+   with it `new`) is gone, and no error message carries a coordinate.
+2. **No importable function turns places or spaces into coordinates, or numbers
+   into places.** The codec is HANDED OUT at world construction — `defineSpace`
+   returns it, the world factory puts it in `WorldEdges`, the host wiring passes
+   that to the edge components that parse, serialise, gate or instrument. There
+   is no registry to import, so there is nothing for a cast to widen.
+   `test/mind-type-graph.test.ts` proves the negative structurally: the mind's
+   transitive import closure holds no declaration of the codec or of a plane's
+   readers, no dynamic import can escape that closure, the type graph of
+   everything a mind is constructed with reaches neither, and no file in
+   `contract/` may import `contract/edges.ts` except `contract/wire.ts`.
+3. **Ownership is unforgeable, per world INSTANCE.** `#x in value` is an exact
+   brand test only the minting class can perform. Every `SpaceOps` entry point
+   AND every codec entry point that takes a place checks it and throws
+   `ForeignPlaceError{op, argument}`.
+
+**Declared residuals, with owners.** A hole that is written down is cheaper than
+a guard that does not hold:
+
+- `label(place)` renders text a mind can parse (`"900,120"`). Round 3 narrowed
+  it with a static rule and the verifier evaded that five ways without a cast;
+  the rule is DELETED and `test/mind-no-geometry.test.ts` pins the residual as
+  still-yielding, so B5 closing it is a visible change. **Owner: B5.**
+- The wire FIELD NAMES are in the prompt's argument paragraph (`MoveTo{x,y}`),
+  as they always have been. **Owner: B5.**
+- `SimEvent` still carries `x`/`y`. A type surface: no mind file reads one.
+  **Owner: B6.**
+- `node:inspector` reads `#x` directly; out of reach from `src/` only because
+  the engine tsconfig ships no node types. Deliberate code was never in scope.
+- Mind and worlds are one package; the import bans are tests, not a module
+  system. **Owner: W1-C.**
+
+**Cost, measured.** The ownership gate is the price of the W1-C guarantee and it
+is most of the step's tick-rate regression: bypassing `defineSpace`'s wrapper
+puts the tree at parity with `c727af7` (+0.1%). See the round-4 report.

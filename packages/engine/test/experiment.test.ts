@@ -1,3 +1,4 @@
+import { FORAGER_MOCK } from './fixtures/foragerMock.js';
 import { describe, expect, it } from 'vitest';
 import { Experiment } from '../src/runner/Experiment.js';
 import { MockMindBackend, at, foragerAdapter } from '../src/index.js';
@@ -196,7 +197,7 @@ describe('Experiment (headless host)', () => {
     const exp = new Experiment({
       seed: 'latency',
       agentCount: 4,
-      mindBackend: new MockMindBackend({ world: foragerAdapter }),
+      mindBackend: new MockMindBackend({ ...FORAGER_MOCK }),
       now: () => (clock += 7),
     });
     exp.makeConscious(exp.agentIds[0]!);

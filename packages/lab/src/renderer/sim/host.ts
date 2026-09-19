@@ -4,9 +4,9 @@ import {
   TICKS_PER_SEASON,
   TICKS_PER_YEAR,
   encodeThinkInputPlaces,
-  foragerAdapter,
+  foragerEdges,
 } from '@yggdrasil/engine';
-import type { IMindBackend, IntentKind, SimEvent, ThinkInput, ThinkPrompt, WorldAdapter } from '@yggdrasil/engine';
+import type { IMindBackend, IntentKind, SimEvent, ThinkInput, ThinkPrompt, WorldEdges } from '@yggdrasil/engine';
 import {
   ACT_DANGER,
   ACT_DRINKING,
@@ -203,8 +203,10 @@ export class ProxyMindBackend implements IMindBackend {
   constructor(
     readonly modelId: string,
     private readonly port: HostPort,
-    /** The world the engine composed the prompt from — main checks against it. */
-    private readonly world: WorldAdapter,
+    /** The world the engine composed the prompt from — main checks against it.
+     *  ITS EDGES, not just its tables: writing the places out is the codec's,
+     *  and since round 4 a codec is handed over rather than looked up. */
+    private readonly world: WorldEdges,
   ) {}
 
   /**
@@ -224,10 +226,10 @@ export class ProxyMindBackend implements IMindBackend {
    */
   complete(prompt: ThinkPrompt, input: ThinkInput): Promise<string> {
     const reqId = ++this.seq;
-    const sent = encodeThinkInputPlaces(this.world, input);
+    const sent = encodeThinkInputPlaces(this.world.codec, input);
     return new Promise<string>((resolve, reject) => {
       this.pending.set(reqId, { resolve, reject });
-      this.port.post({ kind: 'llm-request', reqId, prompt, input: sent, worldId: this.world.id });
+      this.port.post({ kind: 'llm-request', reqId, prompt, input: sent, worldId: this.world.adapter.id });
     });
   }
 
@@ -490,7 +492,7 @@ export class SimHost {
     // Both lab scenarios — classic and continent — are the forager continent,
     // so its adapter is the one the engine will compose prompts from. When the
     // lab offers a second world this must come from that run's own scenario.
-    this.backend = llm ? new ProxyMindBackend(llm.model, this.port, foragerAdapter) : null;
+    this.backend = llm ? new ProxyMindBackend(llm.model, this.port, foragerEdges) : null;
     const exp = new Experiment({ seed, agentCount: population, ...(this.backend ? { mindBackend: this.backend } : {}) });
     this.exp = exp;
     this.animalKinds = new KindCodec(); // a new world names its own wildlife

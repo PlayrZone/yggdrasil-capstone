@@ -1,3 +1,4 @@
+import { foragerEdges } from '../src/index.js';
 import { describe, expect, it } from 'vitest';
 import { CRAFT_RECIPES } from '../src/body/index.js';
 import {
@@ -15,13 +16,12 @@ import {
 } from '../src/index.js';
 import type { CoreVerb, Intent, PlaceRef } from '../src/index.js';
 import { argumentShapes, wireFieldsOf } from '../src/contract/actions.js';
-import { codecFor } from '../src/contract/space.js';
 // Not through the barrel: `KindParam` is not one of its exports (and adding it
 // belongs to whoever needs it from outside the package, not to a test).
 import type { KindParam } from '../src/contract/actions.js';
 import { WorldGate } from '../src/contract/gate.js';
 import { toyWorld } from './fixtures/toyAdapter.js';
-import { spot } from './fixtures/toySpace.js';
+import { spot, toyCodec } from './fixtures/toySpace.js';
 import {
   WAS_ARG_ORDER,
   WAS_BUILD_KIND_LIST,
@@ -189,7 +189,7 @@ describe('the forager verbs, as they stood before the move', () => {
     expect(foragerAdapter.actions.flatMap((a) => a.params).map((p) => p.id)).not.toContain('x');
     // The WIRE fields are the codec's, not the mind's: `SpaceOps` has no
     // `fields`, because knowing how a place is written is an edge's job.
-    expect(codecFor(foragerAdapter.space).fields.map((f) => `${f.id}:${f.type}`)).toEqual(['x:number', 'y:number']);
+    expect(foragerEdges.codec.fields.map((f) => `${f.id}:${f.type}`)).toEqual(['x:number', 'y:number']);
   });
 
   it('draws each enumerated argument from exactly the old closed list', () => {
@@ -254,7 +254,7 @@ describe('the kinds are the sets this engine already kept', () => {
 });
 
 describe('an intent is held to what the world declares', () => {
-  const every = (intent: Intent): ReturnType<typeof checkIntent> => checkIntent(foragerAdapter, intent);
+  const every = (intent: Intent): ReturnType<typeof checkIntent> => checkIntent(foragerAdapter, intent, foragerEdges.codec.isPlace);
 
   it('admits every act this world’s policy and parser can produce', () => {
     const legal: Intent[] = [
@@ -296,15 +296,15 @@ describe('an intent is held to what the world declares', () => {
   });
 
   it('is a different refusal from a different world’s act, and counts apart', () => {
-    expect(checkIntent(toyWorld, { kind: 'Gather', targetId: 1 })).toBe('undeclared-action');
-    expect(checkIntent(toyWorld, { kind: 'Snaffle', targetId: 1 })).toBeNull();
+    expect(checkIntent(toyWorld, { kind: 'Gather', targetId: 1 }, toyCodec.isPlace)).toBe('undeclared-action');
+    expect(checkIntent(toyWorld, { kind: 'Snaffle', targetId: 1 }, toyCodec.isPlace)).toBeNull();
     // The toy world's body cannot refuse an aimless take, so its edge does.
-    expect(checkIntent(toyWorld, { kind: 'Snaffle' })).toBe('bad-param');
-    expect(checkIntent(toyWorld, { kind: 'Nibble', objectKind: 'crumb' })).toBeNull();
-    expect(checkIntent(toyWorld, { kind: 'Nibble', objectKind: 'lever' })).toBe('bad-param');
+    expect(checkIntent(toyWorld, { kind: 'Snaffle' }, toyCodec.isPlace)).toBe('bad-param');
+    expect(checkIntent(toyWorld, { kind: 'Nibble', objectKind: 'crumb' }, toyCodec.isPlace)).toBeNull();
+    expect(checkIntent(toyWorld, { kind: 'Nibble', objectKind: 'lever' }, toyCodec.isPlace)).toBe('bad-param');
     // …and a bound it declares is a bound the edge keeps.
-    expect(checkIntent(toyWorld, { kind: 'Dawdle', durationTicks: 99 })).toBeNull();
-    expect(checkIntent(toyWorld, { kind: 'Dawdle', durationTicks: 100 })).toBe('bad-param');
+    expect(checkIntent(toyWorld, { kind: 'Dawdle', durationTicks: 99 }, toyCodec.isPlace)).toBeNull();
+    expect(checkIntent(toyWorld, { kind: 'Dawdle', durationTicks: 100 }, toyCodec.isPlace)).toBe('bad-param');
   });
 });
 
@@ -317,8 +317,8 @@ describe('an intent is held to what the world declares', () => {
 describe('the edge refuses an act, and defers an argument', () => {
   it('refuses an act no world declares, wherever it came from', () => {
     const gate = new WorldGate();
-    expect(gate.admitIntent(foragerAdapter, { kind: 'Teleport' })).toBe(false);
-    expect(gate.admitIntent(toyWorld, { kind: 'Gather', targetId: 1 })).toBe(false);
+    expect(gate.admitIntent(foragerAdapter, { kind: 'Teleport' }, foragerEdges.codec.isPlace)).toBe(false);
+    expect(gate.admitIntent(toyWorld, { kind: 'Gather', targetId: 1 }, toyCodec.isPlace)).toBe(false);
     expect(gate.counts.undeclaredAction).toBe(2);
     expect(gate.counts.badParam).toBe(0);
     expect(gate.counts.deferredParam).toBe(0);
@@ -341,7 +341,7 @@ describe('the edge refuses an act, and defers an argument', () => {
       // have dropped — the reflex path and a host can still write one.
       { kind: 'Eat', objectKind: 'berry', wizard: 7 } as unknown as Intent,
     ];
-    for (const intent of strays) expect(gate.admitIntent(foragerAdapter, intent), intent.kind).toBe(true);
+    for (const intent of strays) expect(gate.admitIntent(foragerAdapter, intent, foragerEdges.codec.isPlace), intent.kind).toBe(true);
     expect(gate.counts.deferredParam).toBe(strays.length);
     expect(gate.counts.badParam).toBe(0);
   });
@@ -350,7 +350,7 @@ describe('the edge refuses an act, and defers an argument', () => {
     const gate = new WorldGate();
     const intent = { kind: 'Eat', place: at(1, 2), targetId: 4, objectKind: 'berry' } as unknown as Intent;
     const before = Object.keys(intent);
-    expect(gate.admitIntent(foragerAdapter, intent)).toBe(true);
+    expect(gate.admitIntent(foragerAdapter, intent, foragerEdges.codec.isPlace)).toBe(true);
     expect(Object.keys(intent)).toEqual(before);
     expect(intent).toEqual({ kind: 'Eat', place: at(1, 2), targetId: 4, objectKind: 'berry' });
   });
@@ -367,10 +367,10 @@ describe('the edge refuses an act, and defers an argument', () => {
       { kind: 'Nibble', objectKind: 'lever' },
       { kind: 'Shuffle', place: spot('ridge'), targetId: 3 },
     ];
-    for (const intent of refused) expect(gate.admitIntent(toyWorld, intent), intent.kind).toBe(false);
+    for (const intent of refused) expect(gate.admitIntent(toyWorld, intent, toyCodec.isPlace), intent.kind).toBe(false);
     expect(gate.counts.badParam).toBe(refused.length);
     expect(gate.counts.deferredParam).toBe(0);
-    expect(gate.admitIntent(toyWorld, { kind: 'Snaffle', targetId: 2 })).toBe(true);
+    expect(gate.admitIntent(toyWorld, { kind: 'Snaffle', targetId: 2 }, toyCodec.isPlace)).toBe(true);
   });
 
   it('counts a host’s unusable authored need-change, so the rewrite is not silent', () => {

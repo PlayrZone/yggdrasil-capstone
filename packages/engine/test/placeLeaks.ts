@@ -29,6 +29,8 @@ import ts from 'typescript';
 
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 const SPACE_MODULE = path.join(SRC, 'contract', 'space.ts');
+/** Where the edges' half is declared, and the one module a mind may not reach. */
+const EDGES_MODULE = path.join(SRC, 'contract', 'edges.ts');
 
 /** One thing a mind did to a place that it may not do. */
 export interface PlaceLeak {
@@ -59,16 +61,25 @@ export type PlaceRoute =
   /** Holding the edge-facing codec — `encode`, `decode`, `placeOf`, `fields`. */
   | 'codec'
   /** `eval` / `new Function`, which no static rule can see inside. */
-  | 'eval'
-  /** A `label` result doing anything but going into a sentence. */
-  | 'label text';
+  | 'eval';
 
 /**
  * WHICH QUESTIONS ARE ASKED OF A FILE.
  *
  *  · `mind` — everything. A mind directory may not open a place, may not hold
- *    the codec, may not `eval`, and may not do anything with a `label` result
- *    except splice it into a sentence.
+ *    the codec and may not `eval`.
+ *
+ * THERE IS NO `label` RULE ANY MORE (round 4). There was: a `label` result in a
+ * mind directory had to flow into a template or a `+`. Round 3 walked past it
+ * five ways without a single cast — `const lab = space.label`, `const {label} =
+ * space`, `(0, space.label)(p)`, `Reflect.apply(space.label, space, [p])`, and a
+ * widened `space` — each returning `[748, -311]` after one `.split(',')`. The
+ * rule caught the spelling nobody attacking would use, and the file claimed the
+ * residual was "narrowed" when it was not. A guard that does not hold is worse
+ * than a stated residual, because it buys a claim nothing is checking. It is
+ * gone, `contract/space.ts` states the residual plainly with B5 as its owner,
+ * and `mind-no-geometry.test.ts` PINS the residual as still-yielding, so the
+ * day B5 makes a label a word that test changes and somebody reads why.
  *  · `seam` — the place routes only. `contract/wire.ts` and `record/serialize.ts`
  *    ARE the codec's callers by design; policing them for holding it would be a
  *    dozen allow-list entries saying "the codec file uses the codec".
@@ -135,21 +146,20 @@ export function compilerOptionsFor(tsconfig: string): ts.CompilerOptions {
 export function placeLeaksIn(program: ts.Program, files: readonly string[], scope: LeakScope = 'mind'): PlaceLeak[] {
   const checker = program.getTypeChecker();
 
-  /** Is this type the one `contract/space.ts` declares under `name`? */
-  const declaredInSpace = (type: ts.Type, name: string): boolean => {
+  /** Is this type the one `module` declares under `name`? */
+  const declaredIn = (module: string, type: ts.Type, name: string): boolean => {
     const symbol = type.aliasSymbol ?? type.getSymbol();
     if (symbol?.getName() !== name) return false;
     return (symbol.getDeclarations() ?? []).some(
-      (d) => path.resolve(d.getSourceFile().fileName).toLowerCase() === SPACE_MODULE.toLowerCase(),
+      (d) => path.resolve(d.getSourceFile().fileName).toLowerCase() === module.toLowerCase(),
     );
   };
 
-  const isPlaceRef = (type: ts.Type): boolean => declaredInSpace(type, 'PlaceRef');
+  const isPlaceRef = (type: ts.Type): boolean => declaredIn(SPACE_MODULE, type, 'PlaceRef');
   const isCodec = (type: ts.Type): boolean =>
     type.isUnionOrIntersection()
-      ? type.types.some((t) => declaredInSpace(t, 'SpaceCodec'))
-      : declaredInSpace(type, 'SpaceCodec');
-  const isSpaceOps = (type: ts.Type): boolean => declaredInSpace(type, 'SpaceOps');
+      ? type.types.some((t) => declaredIn(EDGES_MODULE, t, 'SpaceCodec'))
+      : declaredIn(EDGES_MODULE, type, 'SpaceCodec');
 
   /**
    * …or a union with one in it, which is the shape a place is actually held in:
@@ -248,11 +258,13 @@ export function placeLeaksIn(program: ts.Program, files: readonly string[], scop
         if (!from && to) report(node, 'mint');
       }
       if (scope === 'mind') {
-        // THE CODEC, HELD (W1-B4 verifier, round 2, routes 20-22). `encode`,
-        // `decode`, `placeOf` and `fields` are not on the object a mind is given,
-        // so there is no property to reach for — but a file could still IMPORT
-        // `codecFor` and ask. Asked of the TYPE rather than of the name, so an
-        // alias, a re-export and a destructure are all the same finding.
+        // THE CODEC, HELD — the LAST line rather than the first (round 4).
+        // There is nothing in a mind's import closure that produces one any
+        // more, and `test/mind-type-graph.test.ts` proves that structurally, so
+        // this can no longer be the defence. It stays because it is free and it
+        // is honest: if a codec-typed value ever DOES reach a mind file — an
+        // argument threaded in, a field on something new — this says so at the
+        // expression rather than waiting for the closure to notice the import.
         if (
           (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isCallExpression(node)) &&
           !ts.isImportSpecifier(node.parent) &&
@@ -264,19 +276,6 @@ export function placeLeaksIn(program: ts.Program, files: readonly string[], scop
         // see inside a string.
         if (ts.isCallExpression(node) && node.expression.getText() === 'eval') report(node, 'eval');
         if (ts.isNewExpression(node) && node.expression.getText() === 'Function') report(node, 'eval');
-        // A `label` RESULT IS TEXT FOR A SENTENCE, and B5's lexicon is what
-        // finally makes it not a coordinate (`"900,120"` today). Until then the
-        // narrow rule: it may be interpolated or concatenated, and nothing else
-        // — `label(p).split(',').map(Number)` is route 19 and is a leak.
-        if (
-          ts.isCallExpression(node) &&
-          ts.isPropertyAccessExpression(node.expression) &&
-          node.expression.name.text === 'label' &&
-          isSpaceOps(typeOf(node.expression.expression)) &&
-          !intoASentence(node)
-        ) {
-          report(node, 'label text');
-        }
       }
       ts.forEachChild(node, visit);
     };
@@ -289,13 +288,6 @@ export function placeLeaksIn(program: ts.Program, files: readonly string[], scop
 function nothingLiteral(node: ts.Node): boolean {
   const text = node.getText();
   return text === 'undefined' || text === 'null';
-}
-
-/** Is this expression being spliced into a string and nothing else? */
-function intoASentence(node: ts.Node): boolean {
-  const parent = node.parent;
-  if (ts.isTemplateSpan(parent)) return true;
-  return ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.PlusToken;
 }
 
 /**

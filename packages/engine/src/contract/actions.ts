@@ -1,6 +1,5 @@
 import type { WorldAdapter } from './adapter.js';
 import type { ActionId, KindId } from './ids.js';
-import { codecFor } from './space.js';
 import type { Intent } from './types.js';
 
 /**
@@ -137,13 +136,28 @@ export interface RefParam extends ParamBase {
 
 /**
  * WHERE THE ACT IS AIMED. The mind carries one opaque `PlaceRef` here; the wire
- * carries whatever `SpaceOps.fields` says this world writes a place as, in that
- * order — `x`,`y` on the forager plane, a spot id in a world with no plane.
- * The codec between the two is `contract/wire.ts`, at the parser edge and at
- * the body edge, and nowhere in between.
+ * carries whatever this world writes a place as, in that order — `x`,`y` on the
+ * forager plane, a spot id in a world with no plane. The codec between the two
+ * is `contract/wire.ts`, at the parser edge and at the body edge, and nowhere
+ * in between.
+ *
+ * THE FIELDS ARE DECLARED HERE RATHER THAN READ OFF THE CODEC (round 4). They
+ * used to be `codecFor(world.space).fields`, which put a codec lookup inside
+ * `contract/actions.ts` — a module the whole mind imports, and therefore a door
+ * that had to be shut. What the parser and the prompt's argument paragraph
+ * actually need is the NAMES and TYPES of the fields, which is world data like
+ * every other line in a `ParamSchema`; what neither of them may have is the
+ * thing that turns those fields into a place. So the names are declared and the
+ * codec is handed to the edges.
+ *
+ * A planar world writes `PLANE_FIELDS` here (`worlds/plane.ts`), which is the
+ * same constant its codec is built from; `test/world-space.test.ts` pins the
+ * two against each other so a world cannot declare one wire and write another.
  */
 export interface PlaceParam extends ParamBase {
   readonly type: 'place';
+  /** The wire fields a place is written as here, in the order written. */
+  readonly fields: readonly ParamSchema[];
 }
 
 /** One of the world's kinds, optionally only those carrying a tag. */
@@ -177,9 +191,13 @@ export type ParamSchema = PlaceParam | NumberParam | RefParam | KindParam | Enum
  * single field except a place, which is as many fields as this world writes a
  * place with — so the parser, the prompt's argument paragraph and the body all
  * agree about `x,y` without any of them containing the letters.
+ *
+ * The world argument is no longer read — the fields are on the param — and is
+ * kept so that every caller of this reads the same as it did. It is also the
+ * honest signature for a world whose wire ever depends on more than the param.
  */
-export function wireFieldsOf(world: WorldAdapter, param: ParamSchema): readonly ParamSchema[] {
-  return param.type === 'place' ? codecFor(world.space).fields : [param];
+export function wireFieldsOf(_world: WorldAdapter, param: ParamSchema): readonly ParamSchema[] {
+  return param.type === 'place' ? param.fields : [param];
 }
 
 /**
@@ -312,6 +330,20 @@ export function planArguments(world: WorldAdapter): ParamSchema[] {
 export type IntentRefusal = 'undeclared-action' | 'bad-param';
 
 /**
+ * COULD THIS VALUE BE A PLACE IN THIS WORLD? Handed in rather than asked of the
+ * world (round 4), because the only thing that can answer it is the world's
+ * codec and this module is imported by the whole mind — so a lookup here would
+ * be exactly the door `contract/edges.ts` exists to remove. The caller that
+ * holds a gate holds the world's edges (`SimRuntime.applyPlan`) and passes
+ * `edges.codec.isPlace`.
+ *
+ * It is NOT ownership: a world mints non-finite and half-written places of its
+ * own, and this asks whether the act is one the world can act on. See
+ * `SpaceCodec.isPlace` for the distinction.
+ */
+export type PlaceTest = (value: unknown) => boolean;
+
+/**
  * CAN THIS WORLD MEAN THIS INTENT? An action it never declared, an argument
  * that action does not take, a kind it has never heard of, a number it cannot
  * act on: each is something the world's own tables say is not an act of this
@@ -328,13 +360,13 @@ export type IntentRefusal = 'undeclared-action' | 'bad-param';
  * It asks only about what the WORLD says. Whether the act is possible HERE AND
  * NOW — in range, in stock, affordable — stays the body's.
  */
-export function checkIntent(world: WorldAdapter, intent: Intent): IntentRefusal | null {
+export function checkIntent(world: WorldAdapter, intent: Intent, isPlace: PlaceTest): IntentRefusal | null {
   const action = world.actionById.get(intent.kind);
   if (!action) return 'undeclared-action';
   for (const [key, value] of Object.entries(intent)) {
     if (key === 'kind' || value === undefined) continue;
     const param = action.params.find((p) => p.id === key);
-    if (!param || !paramAccepts(world, param, value)) return 'bad-param';
+    if (!param || !paramAccepts(world, param, value, isPlace)) return 'bad-param';
   }
   for (const param of action.params) {
     if (param.required && (intent as unknown as Record<string, unknown>)[param.id] === undefined) return 'bad-param';
@@ -342,12 +374,12 @@ export function checkIntent(world: WorldAdapter, intent: Intent): IntentRefusal 
   return null;
 }
 
-function paramAccepts(world: WorldAdapter, param: ParamSchema, value: unknown): boolean {
+function paramAccepts(world: WorldAdapter, param: ParamSchema, value: unknown, isPlace: PlaceTest): boolean {
   switch (param.type) {
     // Only this world can say whether a place is one of its own, and it is
     // asked about the HANDLE, never about the fields it was written with.
     case 'place':
-      return codecFor(world.space).isPlace(value);
+      return isPlace(value);
     case 'number':
     case 'duration':
     case 'ref': {

@@ -18,7 +18,7 @@ import {
   riverCourse,
   RIVER_COUNT,
 } from '../../world/continent.js';
-import { foragerAdapter } from './adapter.js';
+import { foragerAdapter, foragerEdges } from './adapter.js';
 import { CONTINENT_SCALE } from './scale.js';
 import type { ActivitySettings, Demography, Scenario, ScenarioWorld } from '../../runner/Scenario.js';
 import { ForagerNarrator } from '../../runner/society/Narration.js';
@@ -178,6 +178,7 @@ const CONTINENT_DEMOGRAPHY: Demography = {
  */
 export class ContinentScenario implements Scenario {
   readonly adapter: WorldAdapter = foragerAdapter;
+  readonly edges = foragerEdges;
   readonly geography: WorldGeography = continentGeography;
   readonly scale: BodyScale = CONTINENT_SCALE;
   readonly terrain: TerrainField = continentGeography;

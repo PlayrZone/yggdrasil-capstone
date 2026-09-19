@@ -22,9 +22,10 @@ import { ScaffoldLedger } from '../record/ScaffoldLedger.js';
 import { actionForCore } from '../contract/actions.js';
 import { traitCurveValue } from '../contract/adapter.js';
 import { WorldGate } from '../contract/gate.js';
-import { encodePlan } from '../contract/wire.js';
+import { encodePlan, liftPlan } from '../contract/wire.js';
 import type { WireIntent } from '../contract/wire.js';
 import type { CognitionDefaults, WorldAdapter } from '../contract/adapter.js';
+import type { WorldEdges } from '../contract/edges.js';
 import type { MindOutput, SimEvent, Traits } from '../contract/types.js';
 import { generationOf } from './kinship.js';
 import { runFlagsFrom } from './options.js';
@@ -70,6 +71,14 @@ export class SimRuntime implements RuntimeView, SocietyHost {
   /** What kind of place this is, as data — read by every mind it creates, by
    *  the event pipeline, by the recorder and by the clock. Never mutated. */
   readonly adapter: WorldAdapter;
+  /**
+   * THE SAME WORLD, AS ITS EDGES HOLD IT. The scenario's world factory hands
+   * back two things: the adapter, which every mind reads, and this, which the
+   * handful of components that sit at an edge are handed — the body edge
+   * below, the event pipeline, the recorder. Nothing a mind holds can reach it
+   * (round 4; see contract/edges.ts).
+   */
+  readonly edges: WorldEdges;
   /** The ground this run happens on — read by the body and the instrument,
    *  never by a mind. */
   readonly geography: WorldGeography;
@@ -133,6 +142,7 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     const { seed, agentCount = 100, mindBackend } = options;
     this.seed = seed;
     this.adapter = scenario.adapter;
+    this.edges = scenario.edges;
     this.speakAction = actionForCore(this.adapter, 'Say')?.id;
     this.geography = scenario.geography;
     this.scale = scenario.scale;
@@ -211,6 +221,7 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     });
     installEventPipeline(this, {
       world: this.adapter,
+      edges: this.edges,
       narrator: this.narrator,
       leadership: this.flags.leadership,
       tombstoneRules: this.tombstoneRules,
@@ -306,20 +317,30 @@ export class SimRuntime implements RuntimeView, SocietyHost {
   /**
    * Hand a decision to the body; returns the plan array the body now owns.
    *
-   * THE CODEC'S SECOND SEAM (W1-B4). A mind's plan carries opaque places; the
-   * body executes this world's own physics and has always been handed this
-   * world's own argument fields. `encodeIntent` is where the one becomes the
-   * other — after the gate, so what is admitted is judged on the act the MIND
-   * decided, and before the body, so nothing downstream changed at all.
+   * WHERE A PLAN MEETS ITS WORLD, AND THE ONLY PLACE IT DOES (W1-B4 round 4).
+   * Three things happen here and their order is the whole of the seam:
+   *
+   *  1. `liftPlan` — a model's answer arrives carrying this world's own fields
+   *     (`consciousness/schema.ts` may not hold a codec, so it yields them as
+   *     written); this is the first point in the pipeline that holds the
+   *     world's edges, so this is where they become one opaque place. A plan
+   *     from the reflex path already carries places and passes through
+   *     untouched.
+   *  2. the GATE, which therefore judges the act the MIND decided — a place is
+   *     a place to it, never two loose numbers.
+   *  3. `encodePlan`, which writes them back out, because the body executes
+   *     this world's own physics and has always been handed this world's own
+   *     argument fields. Steps 1 and 3 are exact inverses, so a corpus row is
+   *     the bytes it always was.
    */
   private applyPlan(agentId: number, output: MindOutput): WireIntent[] | null {
     const body = this.agentBody(agentId);
     if (!body) return null;
     const speak = this.speakAction;
-    const composed: MindOutput['plan'] = [
+    const composed: MindOutput['plan'] = liftPlan(this.edges.codec, [
       ...(speak === undefined ? [] : output.utterances.map((utterance) => ({ kind: speak, utterance }))),
       ...output.plan,
-    ];
+    ]);
     // THE OUTBOUND EDGE, named in one place (W1-B3). A plan leaves a mind
     // carrying opaque ids; the body executes this world's own narrow kinds. The
     // adapter is what says the two agree, so every step is held to it here — an
@@ -330,8 +351,9 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     // the plan is handed over exactly as before, and the body still validates
     // every step against physics.
     const gate = this.minds.get(agentId)?.gate;
-    const admitted = gate ? composed.filter((intent) => gate.admitIntent(this.adapter, intent)) : composed;
-    const plan = encodePlan(this.adapter, admitted);
+    const isPlace = this.edges.codec.isPlace;
+    const admitted = gate ? composed.filter((intent) => gate.admitIntent(this.adapter, intent, isPlace)) : composed;
+    const plan = encodePlan(this.edges.codec, admitted);
     this.body.setPlan(body, plan as unknown as BodyIntent[]);
     return plan;
   }

@@ -1,5 +1,5 @@
-import { buildThinkPrompt, codecFor, decodeThinkInputPlaces, foragerAdapter, retryPrompt } from '@yggdrasil/engine';
-import type { SpaceCodec, ThinkInput, ThinkPrompt, WorldAdapter } from '@yggdrasil/engine';
+import { buildThinkPrompt, decodeThinkInputPlaces, foragerEdges, retryPrompt } from '@yggdrasil/engine';
+import type { SpaceCodec, ThinkInput, ThinkPrompt, WorldEdges } from '@yggdrasil/engine';
 import { guardLlmComplete, type Check, type PlacePredicate, type RateLimiter, type ThinkPromptShape } from './ipcGuards.js';
 
 const OK: Check = { ok: true };
@@ -19,10 +19,10 @@ const fail = (reason: string): Check => ({ ok: false, reason });
  * continent, so there is one entry today. A second world adds a line here and
  * cannot reach this endpoint until it does.
  */
-const WORLDS: ReadonlyMap<string, WorldAdapter> = new Map([[foragerAdapter.id, foragerAdapter]]);
+const WORLDS: ReadonlyMap<string, WorldEdges> = new Map([[foragerEdges.adapter.id, foragerEdges]]);
 
 /** The one place a renderer-supplied id becomes a world, or stays nothing. */
-function resolveWorld(worldId: unknown): WorldAdapter | undefined {
+function resolveWorld(worldId: unknown): WorldEdges | undefined {
   return typeof worldId === 'string' ? WORLDS.get(worldId) : undefined;
 }
 
@@ -144,7 +144,7 @@ export function bindPromptToInput(prompt: ThinkPromptShape, input: unknown, worl
     // it did not mint, so the decode is what keeps the rebuild possible at all —
     // and a field the world cannot read as a place yields no place, a prompt
     // that does not match, and a refusal, which is the right answer.
-    built = buildThinkPrompt(decodeThinkInputPlaces(world, input), world);
+    built = buildThinkPrompt(decodeThinkInputPlaces(world.codec, input), world.adapter);
   } catch {
     // An input the structural validator tolerates but the builder cannot render
     // is one no legitimate prompt could have come from — the same refusal, and
@@ -197,7 +197,7 @@ export async function llmComplete(
   worldId: unknown,
 ): Promise<string> {
   const world = resolveWorld(worldId);
-  const gate = guardLlmComplete(rate, prompt, input, { isPlace: world && placeAt(codecFor(world.space)) });
+  const gate = guardLlmComplete(rate, prompt, input, { isPlace: world && placeAt(world.codec) });
   if (!gate.ok) throw new Error(gate.code === 'RATE_LIMITED' ? 'RATE_LIMITED' : `${gate.code}: ${gate.reason}`);
   const bound = bindPromptToInput(gate.prompt, input, worldId);
   if (!bound.ok) throw new Error(`BAD_THINK_PROMPT: ${bound.reason}`);
