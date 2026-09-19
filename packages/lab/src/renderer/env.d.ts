@@ -4,6 +4,7 @@ import type { BandPromise, FrameCandidate, ZoomBand } from './beings.js';
 import type { MatchCount, FilterState } from './filters.js';
 import type { RosterRow } from './roster.js';
 import type { MixSegment } from './crowd.js';
+import type { HealthReport } from './health.js';
 
 /**
  * A read-only handle on the 3D view, for automated drivers and for scoring a
@@ -17,26 +18,71 @@ import type { MixSegment } from './crowd.js';
  * `null` wherever the current band promises nothing. Scoring a reader against
  * a distinction the frame never drew is marking them wrong for the view's
  * honesty.
+ *
+ * ## One coordinate frame
+ *
+ * **Every screen coordinate in this namespace is a CLIENT coordinate** — the
+ * frame a `PointerEvent` carries, `document.elementFromPoint` takes and
+ * `getBoundingClientRect` returns. That holds for `screenPositionOf`,
+ * `markScreenPositionOf`, `bodyScreenPositionOf`, `pickAtScreen`,
+ * `markGeometry`, `chipsOnScreen`, `clustersShown`, `countAudit().chips` and
+ * `hoverCardFor().mark`. A driver may take any point from any of them and send
+ * the mouse straight to it.
+ *
+ * Round eight had two frames in one namespace: the being probes in client
+ * coordinates and the chip probes in canvas-local ones. A reviewer drove the
+ * real mouse to a chip's own reported point, landed 113 px away — exactly the
+ * canvas origin — and opened nothing at all.
  */
 export interface WorldProbe {
+  /**
+   * Whether this renderer is WELL, and the first read a session should make.
+   *
+   * All three counts must be zero. A shipped shader failed to compile on every
+   * boot for four rounds and no round caught it, because three writes a compile
+   * failure to `console.error`, which `pageerror` does not raise, and the frame
+   * then draws without that program — every hut a black box at midnight, and
+   * nothing anywhere saying so. Any non-zero count means every other number
+   * here is a measurement of a broken instrument.
+   */
+  health(): HealthReport;
   drawnIds(): number[];
   /**
-   * The beings a reader could actually FIND in this frame: in the frustum,
-   * drawn big enough to call, not folded into a crowd's number, and not lost
-   * behind the land. The only honest population for a stranger test to draw
-   * targets from — round four drew them from `drawnIds()` and sixteen of
-   * twenty-nine targets turned out to have three body pixels or fewer.
+   * The beings a reader could actually FIND in this frame — and "find" is
+   * DEFINED by the picker, not argued for beside it: `id` is here if and only
+   * if `pickAtScreen(screenPositionOf(id))` hands back `id`.
+   *
+   * The cheap conditions still come first (in the frustum, big enough to call,
+   * not folded into a crowd's number, not lost behind the land), because a
+   * being drawn at three pixels is not a target however pointable it is. But
+   * the last word is the picker's, so "offered" and "the mouse picks it" are
+   * one statement rather than two implementations that agreed most of the time.
+   * Round eight ran a second geometry here and handed a reviewer four beings in
+   * a hundred and forty-eight that the real mouse picked somebody else at.
    */
   visibleIds(): number[];
   /**
-   * Whether this being is readable, and which of the five ways it is not — the
-   * fifth being that somebody is standing in FRONT of it. Bodies are opaque
-   * and drawn in depth order, so a being behind another being is not in the
-   * picture at the point this view reports it at; `coveredBy` names who is.
+   * Whether this being is readable, and which of the ways it is not.
+   *
+   * `coveredBy` is the picker's answer and nothing else: whoever
+   * `pickAtScreen` puts first at this being's own reported point, when that is
+   * not this being. `reason` names the case — `"behind another being"` when
+   * somebody else is drawn there, and `"nothing is drawn where the view reports
+   * it"` in the case that should never happen and is now reported rather than
+   * silently offered.
    */
   visibilityOf(id: number): {
     visible: boolean; markPx: number; bodyPx: number; inFrame: boolean; collapsed: boolean;
-    behindLand: boolean; coveredBy: number | null; reason: string;
+    behindLand: boolean; coveredBy: number | null;
+    /**
+     * The cluster whose chip is this being's LABEL — the occupants of a hut
+     * have their rings, badges, arrows and names taken off so the building is
+     * not a scribble, and the number on its roof speaks for all of them. Still
+     * pointable, still `visible`; simply not owed a name of its own, which is
+     * the one exception to NEAR's "nearest first" and is printed on the strip.
+     */
+    carriedBy: number | null;
+    reason: string;
   } | null;
   /**
    * Where the thing DRAWN for this being is, in client coordinates — the point
@@ -85,14 +131,32 @@ export interface WorldProbe {
   /** The names floating over the world right now — only ones actually drawn. */
   labelsShown(): string[];
   /**
-   * The naming claim, measured rather than asserted: the radius the frame
-   * reached in the whole metres the strip prints, how many beings stand inside
-   * it (all of them named), how many names the budgeter placed, and how many
-   * are drawn. One meaning for `within` in every band — it used to count a
-   * population at NEAR and the drawn names everywhere else, and no reader could
-   * tell which claim to believe.
+   * The naming, measured rather than asserted.
+   *
+   * At NEAR the rule is one sentence: the names go to the k NEAREST nameable
+   * beings, in order, and the first one that cannot be labelled ends the list —
+   * a nearer being keeps its priority and the one behind it loses its name. So
+   * `claim` is the strip's own text letter for letter, `withinM` is how far the
+   * furthest name reached (the number printed in it), `expected` and `shown`
+   * are the placed and the drawn names and are equal, `within` is how many
+   * nameable beings that reach covers and is also equal, and `violations` — a
+   * nameable being left unnamed while somebody further away was named — is 0.
+   *
+   * "Nameable" is readable AND not `carriedBy` a building's chip. The occupants
+   * of a hut are labelled by the number on its roof and by nothing else, which
+   * is what stops a shelter filling with a scribble; `carried` is how many of
+   * them there are, and the strip prints it ("… · 71 more counted on their
+   * huts") so the exception is on the screen rather than in a doc.
+   *
+   * Outside NEAR the band promises names "found and selected first, then
+   * nearest" and says so, which owes nobody a name: `violations` is 0 there by
+   * definition and `outOfOrder` — the same measurement without the promise
+   * applied — says what the weaker promise actually costs.
    */
-  labelAudit(): { claim: string; withinM: number; expected: number; shown: number; within: number };
+  labelAudit(): {
+    claim: string; withinM: number; expected: number; shown: number; within: number;
+    violations: number; outOfOrder: number; carried: number;
+  };
   /**
    * The scale bar, as drawn: a round span in METRES, the pixels it covers, the
    * words printed over it, and the metres-per-pixel it was measured from at the
@@ -245,13 +309,19 @@ export interface WorldProbe {
   chipSummary(cluster: number): {
     cluster: number; count: number; matched: number; inside: boolean;
     mix: MixSegment[]; activities: { word: string; count: number }[]; ids: number[];
+    /** Who they are. A shelter's occupants have no name drawn, so this is where theirs are. */
+    names: { id: number; name: string }[];
   } | null;
   /**
-   * Where the crowd chips are on the canvas, how big each is drawn, and whether
-   * it found a spot covering nothing — a chip may never sit on a pin, and
-   * `clear: false` is the view admitting it had to shrink and fade one instead.
+   * Where the crowd chips are, how big each is drawn, and whether it found a
+   * spot covering nothing — a chip may never sit on a pin, and `clear: false`
+   * is the view admitting it had to shrink and fade one instead.
+   *
+   * CLIENT coordinates: `x`, `y` is where the mouse has to go to open this
+   * chip's card. `inside` marks the chips that are a BUILDING speaking for the
+   * people in it rather than a crowd on open ground.
    */
-  chipsOnScreen(): { cluster: number; x: number; y: number; count: number; halfW: number; halfH: number; clear: boolean }[];
+  chipsOnScreen(): { cluster: number; x: number; y: number; count: number; halfW: number; halfH: number; clear: boolean; inside: boolean }[];
   /** Every being under the cursor, in the order the disambiguation list offers them. */
   hoverCandidates(): number[];
   /**
@@ -267,7 +337,8 @@ export interface WorldProbe {
   /**
    * Where every drawn mark is and how far it reaches, with whether it was
    * allowed to keep its pictogram and arrow — so the suppression rule can be
-   * checked against the picture instead of taken on trust.
+   * checked against the picture instead of taken on trust. CLIENT coordinates:
+   * `x`, `y` is the same point `screenPositionOf` returns.
    */
   markGeometry(): { id: number; x: number; y: number; r: number; clear: boolean }[];
   /**

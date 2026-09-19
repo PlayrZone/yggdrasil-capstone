@@ -262,11 +262,16 @@ export function labelClearanceFor(band: ZoomBand, bandPx: number): number {
  *
  * NEAR's was 52 px, which refused every slot past the second one — and with
  * eighteen beings in the street competing for the air over each other's heads,
- * refusing the third slot is refusing the name. Eighty is still well short of
- * the metre-long leaders that made round three's label web.
+ * refusing the third slot is refusing the name.
+ *
+ * Ninety rather than eighty, and the nine pixels matter: the two side slots sit
+ * at 80.4 px, so eighty refused them by a rounding error and left six usable
+ * places. Under NEAR's nearest-first rule the first being that finds no slot
+ * ENDS the list, so two more places for the nearest being is two more names for
+ * the frame. Still well short of the metre-long leaders of round three's web.
  */
 export function maxLeaderFor(band: ZoomBand): number {
-  return band === 'near' ? 80 : 150;
+  return band === 'near' ? 90 : 150;
 }
 
 /**
@@ -1470,51 +1475,118 @@ function chipCoverage(
  * thing, and a reviewer called it — correctly — three statements that cannot
  * all be true.
  */
-export function nameClaimFor(band: ZoomBand, withinM: number, shown: number): string {
-  if (band === 'near') return `names within ${Math.floor(Math.max(0, withinM))} m · ${shown} shown`;
+export function nameClaimFor(band: ZoomBand, withinM: number, shown: number, carried = 0): string {
+  // The people a BUILDING's chip is speaking for are named on the chip and
+  // nowhere else, and that is the one exception to "nearest first". An
+  // exception a reader cannot see is a lie, so the strip counts them out loud.
+  const housed = carried > 0 ? ` · ${carried} more counted on their huts` : '';
+  if (band === 'near') {
+    return shown === 0
+      ? `0 named · nearest first${housed}`
+      : `${shown} named · nearest first · out to ${withinM.toFixed(2)} m${housed}`;
+  }
   if (bandPromise(band).names === 'found') return `only the selected being is named · ${shown} shown`;
-  return `names where there is room, nearest first · ${shown} shown`;
+  return `${shown} named · found and selected first, then nearest${housed}`;
 }
 
 /** One being, as the naming rule sees it: how far off, readable, and named. */
 export interface NameSubject {
-  /** Metres from the eye. */
+  /**
+   * Metres from the ground point under the camera's target — the ONE metric
+   * this view quotes, and the same one the hover card and the roster print.
+   */
   distance: number;
-  /** Whether the frame drew a mark for it at all — an unreadable being is not a broken promise. */
+  /** Whether the frame drew enough of it to hang a name on — an unreadable being is not a broken promise. */
   readable: boolean;
+  /**
+   * Whether a BUILDING's chip is its label: the occupants of a hut have their
+   * rings, badges, arrows and names taken off so the hut is not a scribble, and
+   * the chip on its roof speaks for all of them. They are not owed a name of
+   * their own, and the strip says how many of them there are.
+   */
+  carried: boolean;
   /** Whether a name was actually placed over it this frame. */
   named: boolean;
 }
 
+/** How far the names reached, how many beings that covers, and whether it lied. */
+export interface NamePlan {
+  /**
+   * The distance of the FARTHEST named being, rounded up to the centimetre —
+   * the number the strip prints, so the strip and the audit are one number.
+   */
+  withinM: number;
+  /**
+   * How many nameable beings the names reached. It equals the number of names
+   * drawn wherever the band promises nearest-first, or the rule is broken.
+   */
+  within: number;
+  /**
+   * Nameable beings left unnamed while a being FURTHER AWAY was named — the
+   * band's promise, counted against itself. At NEAR the promise IS nearest
+   * first, so this is 0 or the strip is lying. In the other bands the promise
+   * is "found and selected first, then nearest, where there is room", which
+   * owes nobody a name, so it is 0 there by definition and `outOfOrder` is the
+   * raw measurement.
+   */
+  violations: number;
+  /**
+   * The raw count, in every band: nameable, unnamed, and nearer than a name.
+   * Reported whether or not the band promised anything, so a reader can see
+   * exactly what the weaker promise costs.
+   */
+  outOfOrder: number;
+  /** Readable beings a BUILDING's chip is speaking for — named there, not here. */
+  carried: number;
+}
+
 /**
- * The radius the frame reached, and how many beings are inside it.
+ * What the naming actually did, measured — not a radius argued for afterwards.
  *
- * Both halves in one place because a reviewer found them disagreeing: a strip
- * saying "names within 12 m · 13 shown" over an audit reporting
- * `{withinM: 12.25, shown: 13, within: 1}`, with `within` meaning one thing at
- * NEAR and "however many names are drawn" at every other band. Three readings,
- * no two of them about the same population.
+ * Round eight measured a radius by finding the nearest readable being that went
+ * unnamed and printing everything strictly inside it. Every word of that was
+ * true and the result was useless: the budgeter was still choosing who to name
+ * by RANK, so it named people it called unreadable out to 17 m while leaving a
+ * readable one at 4.12 m unnamed, the measured radius collapsed to nothing, and
+ * a reviewer was shown "NAMES WITHIN 0 M · 4 SHOWN".
  *
- * So there is one rule. The radius is the distance to the nearest READABLE
- * being that went unnamed, FLOORED to the metre the strip prints — rounding it
- * up would claim a metre of ground the frame did not name — and `within` is how
- * many readable beings stand inside that printed radius. Every one of them is
- * named, by construction, and `within <= named` always holds.
+ * So the claim became the true one. At NEAR the names go to the k nearest
+ * readable beings, nearest first, and the moment one of them cannot be labelled
+ * the list stops there — a nearer being keeps its priority and the further one
+ * loses its name. Then there is nothing left to measure: `withinM` is simply
+ * how far the last name reached, `within` is how many readable beings that
+ * covers, and `violations` is the invariant, counted rather than asserted.
  */
-export function nameRadius(subjects: readonly NameSubject[], cap: number): { withinM: number; within: number } {
-  // The bound: nothing readable and unnamed is nearer than this.
-  let bound = Number.POSITIVE_INFINITY;
+export function namePlan(subjects: readonly NameSubject[], strict = true): NamePlan {
+  let reach = 0;
+  let named = 0;
+  let carried = 0;
   for (const s of subjects) {
-    if (!s.readable || s.named) continue;
-    if (s.distance < bound) bound = s.distance;
+    if (s.readable && s.carried) carried++;
+    if (!s.named) continue;
+    named++;
+    if (s.distance > reach) reach = s.distance;
   }
-  // The largest whole metre STRICTLY inside that bound — a being standing at
-  // exactly the printed radius must be one the frame named.
-  const reached = Number.isFinite(bound) ? Math.ceil(bound) - 1 : Math.floor(cap);
-  const withinM = Math.max(0, Math.min(reached, Math.floor(cap)));
+  if (named === 0) return { withinM: 0, within: 0, violations: 0, outOfOrder: 0, carried };
   let within = 0;
-  for (const s of subjects) if (s.readable && s.distance <= withinM) within++;
-  return { withinM, within };
+  let outOfOrder = 0;
+  for (const s of subjects) {
+    // A being whose hut is speaking for it is not owed a name and is not
+    // counted as one the frame reached: it is counted on the chip, and the
+    // strip prints how many of those there are.
+    if (!s.readable || s.carried) continue;
+    // Measured against the RAW reach, so the centimetre the printed number is
+    // rounded up by can never move a being in or out of the count.
+    if (s.distance <= reach) within++;
+    if (!s.named && s.distance < reach) outOfOrder++;
+  }
+  return {
+    withinM: Math.ceil(reach * 100) / 100,
+    within,
+    violations: strict ? outOfOrder : 0,
+    outOfOrder,
+    carried,
+  };
 }
 
 export interface LabelCandidate {
@@ -1556,7 +1628,9 @@ export function labelWidth(text: string): number {
   return Math.round(text.length * 6.1) + 16;
 }
 
-const LABEL_H = 17;
+/** How tall a name pill is drawn, in CSS pixels — the room one needs above a head. */
+export const LABEL_HEIGHT_PX = 17;
+const LABEL_H = LABEL_HEIGHT_PX;
 /**
  * Tried in order: straight up, higher, then out to the sides — in multiples of
  * the clearance the band asks for. At NEAR a being is two hundred pixels tall
@@ -1604,6 +1678,13 @@ function segmentsCross(
  * And a slot whose line would CROSS one already drawn is refused too: the
  * moment two leaders cross, which name belongs to which being stops being
  * something the picture says.
+ *
+ * `strict` is NEAR's rule and it changes both ends. The candidates are taken in
+ * the order they were handed over — nearest first — rather than re-sorted by
+ * rank, and the first one that cannot be placed ENDS the list. That is what
+ * makes "the k nearest readable beings are named" a property of the frame
+ * rather than a hope: a nearer being that loses a slot to a collision keeps its
+ * priority, and the one behind it loses its name rather than jumping the queue.
  */
 export function placeLabels(
   candidates: readonly LabelCandidate[],
@@ -1613,8 +1694,11 @@ export function placeLabels(
   obstacles: readonly LabelObstacle[] = [],
   clearance = 12,
   maxLeader = Number.POSITIVE_INFINITY,
+  strict = false,
 ): PlacedLabel[] {
-  const ordered = [...candidates].sort((a, b) => (a.rank === b.rank ? a.id - b.id : a.rank - b.rank));
+  const ordered = strict
+    ? [...candidates]
+    : [...candidates].sort((a, b) => (a.rank === b.rank ? a.id - b.id : a.rank - b.rank));
   const taken: LabelObstacle[] = [...obstacles];
   const out: PlacedLabel[] = [];
   const leaders: number[] = []; // ax, ay, x, y per placed leader
@@ -1664,6 +1748,10 @@ export function placeLabels(
       break;
     }
     if (placed) out.push(placed);
+    // Nearest first means nearest first even when it costs a name: the frame
+    // stops here rather than skipping over somebody to label the person behind
+    // them.
+    else if (strict) break;
   }
   return out;
 }
@@ -1830,18 +1918,22 @@ export const CHIP_NOTE = 'the number is ALL of them, including the ones behind t
 export const CROWD_NOTE = 'two marks close enough to touch are BOTH dropped rather than point at the wrong person — the chip says how many';
 
 /**
- * What NEAR says about names, pointing at the one place the answer is measured.
+ * What NEAR says about names — and it is now the rule itself, not a pointer at
+ * a measurement of it.
  *
- * The band used to promise names for everyone you could walk to while the audit
- * behind it reported a radius, a count of who was inside it, and a different
- * count of what was drawn — three statements that could not all be true. There
- * is now one source: the budgeter places the names, the view measures how far
- * out it got every readable being named, and the chip over the frame prints
- * that radius and the number of names on screen. This sentence points there
- * and claims nothing of its own.
+ * Every earlier wording described a RADIUS, and the radius was always measured
+ * after the fact from a budgeter that chose who to name by rank. So the frame
+ * named people it called unreadable out at 17 m while a readable one stood
+ * unnamed at 4 m, the measured radius collapsed, and a reviewer was shown
+ * "NAMES WITHIN 0 M · 4 SHOWN". The rule changed instead of the sentence: the
+ * names go to the nearest readable beings, in order, and stop.
  */
-export const NAME_NOTE = 'every being nearer than the radius the chip over the frame prints is named — '
-  + 'the chip prints that radius, and how many names are on screen';
+export const NAME_NOTE = 'the nearest beings are named, in order — nobody is named while somebody nearer is not, '
+  + 'and the chip over the frame says how many and how far they reach';
+
+/** What a shelter's chip is, since the people inside it have no marks of their own. */
+export const INSIDE_NOTE = 'people INSIDE a building are counted by one number on its roof, on a line to the door — '
+  + 'their rings, badges, arrows and names come off so the hut is not a scribble · hover it for who they are, click it to frame them';
 
 /** What the reader should do instead, out where marks say least. */
 export const ASK_NOTE ='hover any pin for name, age, condition, activity and plan · the roster below lists everyone, and the chips filter them';
@@ -1953,6 +2045,7 @@ export function legendFor(band: ZoomBand): LegendSection[] {
     detail.push({
       name: '',
       items: [
+        { kind: 'chip', label: `inside a hut — ${INSIDE_NOTE}` },
         { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
         { kind: 'swatch', color: SPEECH_HEX, round: true, label: 'spoke, threaded to who heard' },
         { kind: 'note', label: NAME_NOTE, quiet: true },
@@ -1965,6 +2058,7 @@ export function legendFor(band: ZoomBand): LegendSection[] {
       name: '',
       items: [
         { kind: 'chip', label: `a crowd, and how many are in it — ${CHIP_NOTE}` },
+        { kind: 'chip', label: `inside a hut — ${INSIDE_NOTE}` },
         { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
         { kind: 'swatch', color: SPEECH_HEX, round: true, label: 'spoke, threaded to who heard' },
         { kind: 'note', label: GHOST_NOTE, quiet: true },

@@ -25,6 +25,7 @@ import {
   conditionHue,
   conditionWord,
   COUNT_NOTE,
+  INSIDE_NOTE,
   describeState,
   designationFor,
   displayName,
@@ -51,7 +52,7 @@ import {
   maxLeaderFor,
   movingFor,
   nameClaimFor,
-  nameRadius,
+  namePlan,
   NAME_NOTE,
   NEAR_LABEL_M,
   PICTO_MAX_OF_FIGURE,
@@ -699,9 +700,11 @@ describe('the legend describes the band it is in, and nothing else', () => {
   /**
    * "Every being in frame is named" could not be made true — at NEAR the far
    * side of the valley is in frame and half a pixel wide — and round four
-   * printed it over nineteen beings and four names. The claim is now a RADIUS,
-   * the view measures how far it actually reached, and the legend points the
-   * reader at that number instead of asserting one.
+   * printed it over nineteen beings and four names. Round eight replaced it
+   * with a measured RADIUS, which was true and useless: the budgeter still
+   * chose by rank, so the radius collapsed to nothing under four drawn names
+   * and a reviewer read "NAMES WITHIN 0 M · 4 SHOWN". The RULE is the claim
+   * now — nearest first, and nobody named past somebody nearer who is not.
    */
   it('scopes the NEAR naming claim to something the picture can keep', () => {
     expect(bandPromise('near').namesWithinM).toBe(NEAR_LABEL_M);
@@ -710,14 +713,15 @@ describe('the legend describes the band it is in, and nothing else', () => {
     }
     const note = legendFor('near').flatMap((s) => s.items)
       .filter((i) => i.kind === 'note').map((n) => n.label).join(' ');
-    // The legend makes NO claim of its own any more. It points at the chip,
-    // which prints the measured radius and the number of names on screen —
-    // round six had the legend, the chip and the audit saying three different
-    // things, and a reviewer proved no two could both be true.
     expect(note).toContain(NAME_NOTE);
-    expect(NAME_NOTE).toContain('the chip over the frame prints');
+    // The legend states the ORDER, which is the whole of what the band
+    // promises, and the chip prints what that order reached.
+    expect(NAME_NOTE).toContain('nobody is named while somebody nearer is not');
     expect(note).not.toContain('every being in frame is named');
     expect(note).not.toContain('everyone you could walk to');
+    // And it no longer describes a radius, which is the thing three rounds of
+    // wording could not keep true.
+    expect(NAME_NOTE).not.toContain('radius');
     expect(bandPromise('near').says).not.toContain('named');
     expect(bandPromise('near').says).not.toContain('every name');
   });
@@ -1585,9 +1589,21 @@ describe('every being in the frame is a pin or part of a number, never both', ()
       const chips = items.filter((i) => i.kind === 'chip');
       expect(chips).toHaveLength(1);
       expect(chips[0]!.label).toMatch(/no (pin|dot) is drawn inside/);
+      // A building's occupants chip is only drawn where the band draws detail,
+      // so out here it must not be in the key either.
+      expect(chips.some((c) => c.label.includes(INSIDE_NOTE))).toBe(false);
     }
-    // NEAR draws no chips at all, so it must not print one in the key.
-    expect(legendFor('near').flatMap((s) => s.items).some((i) => i.kind === 'chip')).toBe(false);
+    // MID and NEAR draw no CROWD chips — the band promises no count and says
+    // to pull back for one. They DO draw a shelter's occupants chip, which is
+    // not a count of the frame, and round eight drew it in both bands with
+    // nothing in either key saying what it was: a reviewer met an unexplained
+    // number over a roof and read it as "a crowd of 18 behind that tree".
+    for (const band of ['mid', 'near'] as ZoomBand[]) {
+      const chips = legendFor(band).flatMap((s) => s.items).filter((i) => i.kind === 'chip');
+      expect(chips.some((c) => c.label.includes(INSIDE_NOTE))).toBe(true);
+      expect(chips.some((c) => /no (pin|dot) is drawn inside/.test(c.label))).toBe(band === 'mid');
+    }
+    expect(legendFor('near').flatMap((s) => s.items).filter((i) => i.kind === 'chip')).toHaveLength(1);
   });
 });
 
@@ -1948,98 +1964,171 @@ describe('a crowd’s number sits outside its ring and off every being', () => {
 // ── One sentence about names ─────────────────────────────────────────────────
 
 describe('the naming claim is one sentence, and it is the one the chip prints', () => {
-  it('prints the measured radius and the number of names actually drawn', () => {
-    expect(nameClaimFor('near', 13.4, 6)).toBe('names within 13 m · 6 shown');
-    expect(nameClaimFor('near', 0, 0)).toBe('names within 0 m · 0 shown');
-  });
-
-  it('never promises a radius in a band that does not scope one', () => {
-    expect(nameClaimFor('default', 0, 4)).not.toContain('within');
-    expect(nameClaimFor('far', 0, 1)).toContain('only the selected being');
-    for (const band of BAND_ORDER) expect(nameClaimFor(band, 12, 3)).toContain('3 shown');
+  /**
+   * Round eight printed "NAMES WITHIN 0 M · 4 SHOWN", and every word of it was
+   * true. The radius was measured honestly — the distance to the nearest
+   * readable being the frame had not named — while the budgeter chose who to
+   * name by RANK, so it named people it called unreadable out at 13–17 m and
+   * left a readable one unnamed at 4.12 m, which collapsed the radius to
+   * nothing under four drawn names.
+   *
+   * So the rule changed rather than the sentence. The claim is now the true
+   * one: the k nearest readable beings, nearest first, and how far that reached.
+   */
+  it('says how many were named, in what order, and how far that reached', () => {
+    expect(nameClaimFor('near', 13.4, 6)).toBe('6 named · nearest first · out to 13.40 m');
+    expect(nameClaimFor('near', 0, 0)).toBe('0 named · nearest first');
+    // The exact sentence round eight printed, and can no longer: a radius is
+    // not what this band claims any more, so there is no radius to collapse.
+    for (const shown of [0, 4, 18]) expect(nameClaimFor('near', 0, shown)).not.toContain('within');
   });
 
   /**
-   * Round two: a NEAR strip reading "names within 12 m · 13 shown" over an
-   * audit reporting `{withinM: 12.25, expected: 13, shown: 13, within: 1}` —
-   * and the same `within` field equal to `shown` at MID. A reviewer could not
-   * tell which of the three readings was the wrong one, and they were right not
-   * to. `nameRadius` is the one rule all three now come from.
+   * The one exception to "nearest first", printed rather than documented: the
+   * people inside a hut are labelled by the number on its roof and by nothing
+   * else. A reader standing among seventy of them must not have to work out why
+   * none of them has a name.
    */
-  it('quotes a radius the frame actually kept, and counts the beings inside THAT', () => {
+  it('counts the people a hut is speaking for, out loud, in the strip', () => {
+    expect(nameClaimFor('near', 21.54, 5, 71)).toBe('5 named · nearest first · out to 21.54 m · 71 more counted on their huts');
+    expect(nameClaimFor('near', 0, 0, 12)).toBe('0 named · nearest first · 12 more counted on their huts');
+    expect(nameClaimFor('near', 9, 3, 0)).not.toContain('huts');
+    expect(nameClaimFor('mid', 0, 4, 22)).toContain('22 more counted on their huts');
+  });
+
+  it('does not owe a name to somebody their hut is already speaking for', () => {
+    const housed = [
+      { distance: 2.0, readable: true, carried: true, named: false },
+      { distance: 3.0, readable: true, carried: true, named: false },
+      { distance: 9.0, readable: true, carried: false, named: true },
+    ];
+    const plan = namePlan(housed);
+    expect(plan.violations).toBe(0);
+    expect(plan.outOfOrder).toBe(0);
+    expect(plan.carried).toBe(2);
+    expect(plan.within).toBe(1);
+    // And an unhoused being nearer than a name is still the violation it was.
+    expect(namePlan([...housed, { distance: 4.0, readable: true, carried: false, named: false }]).violations).toBe(1);
+  });
+
+  /**
+   * MID and DEFAULT promise "found and selected first, then nearest, where
+   * there is room", which owes nobody a name — so `violations` is 0 there by
+   * definition, and `outOfOrder` reports the same measurement anyway rather
+   * than hiding what the weaker promise costs.
+   */
+  it('separates the band s promise from the raw measurement', () => {
+    const frame = [
+      { distance: 4, readable: true, carried: false, named: false },
+      { distance: 30, readable: true, carried: false, named: true },
+    ];
+    expect(namePlan(frame, true).violations).toBe(1);
+    expect(namePlan(frame, false).violations).toBe(0);
+    expect(namePlan(frame, false).outOfOrder).toBe(1);
+    expect(namePlan(frame, true).outOfOrder).toBe(1);
+  });
+
+  it('never promises a radius in a band that does not name nearest-first', () => {
+    expect(nameClaimFor('default', 0, 4)).not.toContain('out to');
+    expect(nameClaimFor('mid', 0, 4)).toContain('then nearest');
+    expect(nameClaimFor('far', 0, 1)).toContain('only the selected being');
+  });
+
+  it('reads the reach off the names that were actually drawn', () => {
     const subjects = [];
     for (let i = 0; i < 120; i++) {
-      // Everyone inside 12.25 m is named; the nearest unnamed being stands at
-      // exactly the awkward distance that produced the contradiction.
       const distance = 0.4 + i * 0.35;
-      subjects.push({ distance, readable: i % 9 !== 0, named: distance < 12.25 && i % 9 !== 0 });
+      subjects.push({ distance, readable: i % 9 !== 0, carried: false, named: false });
     }
-    const reach = nameRadius(subjects, NEAR_LABEL_M);
-    expect(reach.withinM).toBe(12);
-    expect(Number.isInteger(reach.withinM)).toBe(true);
-    // The strip prints the same whole metre the audit reports — no rounding
-    // between them, because there is only one number.
-    expect(nameClaimFor('near', reach.withinM, 7)).toBe(`names within ${reach.withinM} m · 7 shown`);
-    // And `within` is the population inside it, every one of them named.
-    const inside = subjects.filter((s) => s.readable && s.distance <= reach.withinM);
-    expect(reach.within).toBe(inside.length);
-    expect(inside.every((s) => s.named)).toBe(true);
-    expect(reach.within).toBeGreaterThan(20);
+    // The NEAR rule: the nearest readable beings, in order, and stop.
+    let named = 0;
+    for (const s of subjects.slice().sort((a, b) => a.distance - b.distance)) {
+      if (!s.readable || named >= 14) continue;
+      s.named = true;
+      named++;
+    }
+    const plan = namePlan(subjects);
+    expect(plan.violations).toBe(0);
+    expect(plan.within).toBe(14);
+    expect(plan.within).toBe(subjects.filter((s) => s.named).length);
+    // The strip prints the audit's own number, to the digit.
+    expect(nameClaimFor('near', plan.withinM, plan.within))
+      .toBe(`14 named · nearest first · out to ${plan.withinM.toFixed(2)} m`);
   });
 
-  it('never quotes a metre it did not reach, over three hundred crowded frames', () => {
+  /**
+   * The invariant, as a property over three hundred crowded frames: no readable
+   * being is left unnamed while somebody FURTHER AWAY has a name. That is the
+   * whole of what NEAR claims, and `violations` is the view counting it against
+   * itself rather than asserting it.
+   */
+  it('leaves nobody readable unnamed inside a name further out', () => {
     for (let seed = 1; seed <= 320; seed++) {
       const next = rng(seed);
-      const subjects = [];
-      for (let i = 0; i < 40; i++) {
-        const distance = next() * 30;
-        subjects.push({ distance, readable: next() > 0.15, named: next() > 0.45 });
+      const people = [];
+      // A quarter of the readable ones are inside a hut, so the exception the
+      // shelter chips carve out is under the property too.
+      for (let i = 0; i < 60; i++) people.push({ distance: next() * 40, readable: next() > 0.2, carried: next() < 0.25, named: false });
+      const budget = 1 + Math.floor(next() * 17);
+      // The rule, including the part that costs a name: the first candidate
+      // that cannot be placed ENDS the list.
+      let placed = 0;
+      for (const p of people.slice().sort((a, b) => a.distance - b.distance)) {
+        if (!p.readable || p.carried) continue;
+        if (placed >= budget || next() < 0.08) break;
+        p.named = true;
+        placed++;
       }
-      const reach = nameRadius(subjects, NEAR_LABEL_M);
-      expect(reach.withinM).toBeLessThanOrEqual(NEAR_LABEL_M);
-      expect(reach.withinM).toBeGreaterThanOrEqual(0);
-      // The claim, checked against every being it is about: nothing readable
-      // and unnamed stands inside the radius the strip prints.
-      for (const s of subjects) {
-        if (s.readable && !s.named) expect(s.distance).toBeGreaterThan(reach.withinM);
+      const plan = namePlan(people);
+      expect(plan.violations).toBe(0);
+      expect(plan.within).toBe(placed);
+      expect(plan.carried).toBe(people.filter((p) => p.readable && p.carried).length);
+      if (placed > 0) {
+        // The printed number never understates the reach, so no being the frame
+        // named stands outside the distance the strip quotes.
+        for (const p of people) if (p.named) expect(p.distance).toBeLessThanOrEqual(plan.withinM);
+      } else {
+        expect(plan.withinM).toBe(0);
       }
-      expect(reach.within).toBe(subjects.filter((s) => s.readable && s.distance <= reach.withinM).length);
     }
   });
 
   /**
-   * Round seven's NEAR defect, as a property: the radius and the choice of who
-   * to name have to be measured in the SAME metres.
-   *
-   * The strip measured from the eye while the card, the roster and the naming
-   * order measured from what the camera is looking at, and on an orbit those
-   * are hundreds of metres apart — so three of five frames printed a radius
-   * with nothing readable inside it above eight drawn names, every name true
-   * and the sentence under them false. Naming nearest-first in one metric and
-   * quoting the radius in that same metric cannot produce that frame: if
-   * anything readable was named, something readable is inside.
+   * And the failure the rule is against, stated directly: rank-first naming —
+   * a selected being out at 13 m, a nearer readable one with nothing — is
+   * exactly what `violations` counts, so the test that passes for the new rule
+   * fails for the old one.
    */
-  it('prints a radius that contains names, whenever names were placed nearest-first', () => {
-    for (let seed = 1; seed <= 200; seed++) {
-      const next = rng(seed);
-      const budget = 4 + Math.floor(next() * 14);
-      const people = [];
-      for (let i = 0; i < 60; i++) people.push({ distance: next() * 40, readable: next() > 0.2 });
-      // The budgeter's own order, in the distance the claim is made in.
-      const order = people.filter((p) => p.readable).sort((a, b) => a.distance - b.distance);
-      const named = new Set(order.slice(0, budget));
-      const subjects = people.map((p) => ({ ...p, named: named.has(p) }));
-      const reach = nameRadius(subjects, 25);
-      const shown = subjects.filter((s) => s.named).length;
-      if (shown === 0) continue;
-      // A radius with names drawn over it holds at least one of them — the
-      // reading a reviewer takes off the picture and the strip together.
-      expect(reach.within).toBeGreaterThan(0);
-      expect(reach.within).toBeLessThanOrEqual(shown);
-      for (const s of subjects) {
-        if (s.readable && s.distance <= reach.withinM) expect(s.named).toBe(true);
-      }
-    }
+  it('counts a name drawn past a nearer readable being as the violation it is', () => {
+    const rankFirst = [
+      { distance: 4.12, readable: true, carried: false, named: false }, // the reviewer's Marosh
+      { distance: 13.14, readable: true, carried: false, named: true }, // the reviewer's Selur
+    ];
+    expect(namePlan(rankFirst).violations).toBe(1);
+    const nearestFirst = [
+      { distance: 4.12, readable: true, carried: false, named: true },
+      { distance: 13.14, readable: true, carried: false, named: false },
+    ];
+    expect(namePlan(nearestFirst).violations).toBe(0);
+    expect(namePlan(nearestFirst).withinM).toBeCloseTo(4.12, 6);
+  });
+
+  /**
+   * The placement half of the same rule. `strict` takes the candidates in the
+   * order they were handed over and stops at the first one it cannot place, so
+   * a nearer being that loses a slot to a collision keeps its priority and the
+   * being behind it loses its name instead of jumping the queue.
+   */
+  it('stops the list at the first name it cannot place, rather than skipping over it', () => {
+    const cands = [0, 1, 2, 3].map((i) => ({ id: i + 1, x: 120 + i * 200, y: 300, rank: i, text: `B${i}` }));
+    // A wall of obstacle across every slot the SECOND candidate could use.
+    const wall = [{ x0: cands[1]!.x - 200, y0: 0, x1: cands[1]!.x + 200, y1: 600 }];
+    const strict = placeLabels(cands, 1200, 700, 8, wall, 14, 200, true);
+    expect(strict.map((p) => p.id)).toEqual([1]);
+    // Without it, the frame happily labels the two behind the one it skipped —
+    // which is a picture that names people past somebody it did not name.
+    const loose = placeLabels(cands, 1200, 700, 8, wall, 14, 200, false);
+    expect(loose.map((p) => p.id)).toEqual([1, 3, 4]);
   });
 
   it('bounds a figure by what was DRAWN, lean and all', () => {

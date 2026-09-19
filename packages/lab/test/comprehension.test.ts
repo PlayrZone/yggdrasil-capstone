@@ -34,12 +34,10 @@ import {
 } from '../src/renderer/roster.js';
 import {
   conditionMix,
-  coveringBodies,
-  coveringBody,
   cycleCandidate,
   groupByActivity,
+  offerAudit,
   orderCandidates,
-  type BodyBox,
   PICK_BODY,
   PICK_FIGURE,
   PICK_HIDDEN,
@@ -78,6 +76,15 @@ import {
  * it is checked in the booted app against the probes. What is here is what can
  * be wrong silently.
  */
+
+/** A deterministic stream, so a property test fails the same way twice. */
+function rng(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
 
 function row(over: Partial<RosterRow> & { id: number }): RosterRow {
   return {
@@ -587,6 +594,114 @@ describe('a selected row stays where the reader put it', () => {
   });
 });
 
+/**
+ * Round eight: a real mouse selected one row and then no other — three clicks
+ * in four left `.rrow.sel` and the selection bar reading the FIRST being, and a
+ * fourth left nothing selected at all. `ui.select` passed four times out of
+ * four, so it was never the selection: it was the pointer.
+ *
+ * The cause is two things that only fail together. A `click` is dispatched only
+ * on the element that saw both the press and the release — anywhere else it
+ * lands on their common ancestor, which here is the table body and selects
+ * nobody. And the table was moving under the pointer: picking a row centres the
+ * camera on that being, beings walk out of the frame the "in frame" box scopes
+ * the table to, the freeze held their ORDER but let them leave the SET, and
+ * everything below slid up one row per departure.
+ *
+ * So the order is sealed while the pointer is inside the table — nothing
+ * appears, departs or moves — and a row is picked on POINTERDOWN, which is one
+ * event on one element.
+ */
+describe('the table holds still while a hand is on it', () => {
+  const four = [
+    row({ id: 1, distance: 10 }),
+    row({ id: 2, distance: 20 }),
+    row({ id: 3, distance: 30 }),
+    row({ id: 4, distance: 40 }),
+  ];
+
+  it('seals on the pointer entering, and holds every row in place', () => {
+    const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3, 4] });
+    expect(sealed.sealed).toBe(true);
+    expect(sealed.frozen).toEqual([1, 2, 3, 4]);
+    expect(sealed.anchor).toBeNull();
+  });
+
+  /**
+   * The defect itself, as arithmetic. Two beings leave the frame; the reader is
+   * pressing on row 4. Frozen-only, row 4 becomes row 2 — a 48 px jump under a
+   * pointer that has not moved. Sealed, it is still row 4.
+   */
+  it('does not slide a row up when a being ahead of it leaves the frame', () => {
+    const inFrame = four.filter((r) => r.id === 3 || r.id === 4);
+    const frozen = orderReduce(FREE_ORDER, { kind: 'pick', id: 4, order: [1, 2, 3, 4] });
+    expect(indexOfRow(applyOrder(inFrame, frozen, four), 4)).toBe(1);
+    const sealed = orderReduce(frozen, { kind: 'enter', order: [1, 2, 3, 4] });
+    const held = applyOrder(inFrame, sealed, four);
+    expect(held.map((r) => r.id)).toEqual([1, 2, 3, 4]);
+    expect(indexOfRow(held, 4)).toBe(3);
+  });
+
+  it('holds through a re-sort the camera caused, which is the sort that moves under a hand', () => {
+    const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3, 4] });
+    // Centring drives the picked being's distance to zero and a live sort takes
+    // it to the top of three hundred rows.
+    const moved = four.map((r) => (r.id === 3 ? row({ id: 3, distance: 0 }) : r));
+    const resorted = sortRows(moved, { key: 'distance', dir: 1 });
+    expect(resorted.map((r) => r.id)).toEqual([3, 1, 2, 4]);
+    expect(applyOrder(resorted, sealed, moved).map((r) => r.id)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('lets nothing NEW in either, so a row never appears under the cursor', () => {
+    const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3] });
+    const arrived = [...four, row({ id: 9, distance: 1 })];
+    expect(applyOrder(sortRows(arrived, { key: 'distance', dir: 1 }), sealed, arrived).map((r) => r.id))
+      .toEqual([1, 2, 3]);
+  });
+
+  it('still drops a being that has died — the one row that may leave', () => {
+    const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3, 4] });
+    const alive = four.filter((r) => r.id !== 2);
+    expect(applyOrder(alive, sealed, alive).map((r) => r.id)).toEqual([1, 3, 4]);
+  });
+
+  it('picking inside a seal keeps the seal, so the next click is on a still table', () => {
+    const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3, 4] });
+    const first = orderReduce(sealed, { kind: 'pick', id: 2, order: [1, 2, 3, 4] });
+    const second = orderReduce(first, { kind: 'pick', id: 4, order: [4, 3, 2, 1] });
+    expect(second.sealed).toBe(true);
+    expect(second.frozen).toEqual([1, 2, 3, 4]);
+    expect(second.anchor).toBe(4);
+  });
+
+  it('thaws on the pointer leaving, unless a pick is holding a row', () => {
+    const browsing = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3, 4] });
+    expect(orderReduce(browsing, { kind: 'leave' })).toBe(FREE_ORDER);
+    const picked = orderReduce(browsing, { kind: 'pick', id: 2, order: [1, 2, 3, 4] });
+    const left = orderReduce(picked, { kind: 'leave' });
+    expect(left.sealed).toBe(false);
+    expect(left.anchor).toBe(2); // the row somebody chose stays where they can see it
+    expect(left.frozen).toEqual([1, 2, 3, 4]);
+  });
+
+  it('thaws for anything the reader deliberately asked for, seal and all', () => {
+    const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2, 3, 4] });
+    for (const kind of ['sort', 'scroll', 'filter', 'clear'] as const) {
+      expect(orderReduce(sealed, { kind })).toBe(FREE_ORDER);
+    }
+  });
+
+  it('does not seal an empty table, which would then never fill', () => {
+    expect(orderReduce(FREE_ORDER, { kind: 'enter', order: [] })).toBe(FREE_ORDER);
+  });
+
+  it('is a no-op on a free table, so a pointer crossing it re-renders nothing twice', () => {
+    expect(orderReduce(FREE_ORDER, { kind: 'leave' })).toBe(FREE_ORDER);
+    const sealed = orderReduce(FREE_ORDER, { kind: 'enter', order: [1, 2] });
+    expect(orderReduce(sealed, { kind: 'enter', order: [2, 1] })).toBe(sealed);
+  });
+});
+
 // ── Picking is about what is DRAWN at that pixel ─────────────────────────────
 
 /**
@@ -639,141 +754,72 @@ describe('a pick offers what is drawn at that pixel', () => {
   });
 });
 
-// ── A being standing behind a being is not in the picture ────────────────────
+// ── What the view OFFERS is what the picker answers ──────────────────────────
 
 /**
- * The other half of round six's 3/10 identification score, and the half that
- * was not the picking. `visibleIds()` offered beings whose reported position
- * belonged to somebody standing in front of them; a reviewer pointed a real
- * mouse at each one and got a card about the being that WAS drawn there —
- * correctly. Bodies are opaque and drawn in depth order, so the probe has to
- * say so.
+ * Three rounds ran a second geometry beside the picker — boxes, depth order, an
+ * overlap fraction — and asked it "is anybody standing in front of this being".
+ * It was wrong about four beings sharing one pixel in round six, two in a
+ * hundred in round seven, and four in a hundred and forty-eight in round eight.
+ * Each tightening left a smaller residue and never none, because two
+ * implementations of one question is a bug with a maintenance schedule.
+ *
+ * `offerAudit` is not a better rule. It is the definition: a being is offered
+ * if and only if the picker, asked at the point the view reports it at, hands
+ * back that being. The test a reviewer runs is the rule the view is using, so a
+ * mispick is not unlikely — it is not expressible.
  */
-describe('the probes do not offer a being somebody else is standing in front of', () => {
-  const box = (id: number, x: number, y: number, depth: number, w = 20, h = 60): BodyBox =>
-    ({
-      id, x, y, x0: x - w / 2, y0: y - h / 2, x1: x + w / 2, y1: y + h / 2, depth,
-      mx: x, my: y, mr: 0, hasBody: true,
-    });
-
-  /** A being drawn too small to be a figure: its mark is all there is of it. */
-  const pin = (id: number, x: number, y: number, depth: number, r = 11): BodyBox =>
-    ({ id, x, y, x0: x, y0: y, x1: x, y1: y, depth, mx: x, my: y, mr: r, hasBody: false });
-
-  it('names whoever is in front at the very point the view reports', () => {
-    const boxes = [box(1, 100, 100, 30), box(2, 104, 104, 12)];
-    expect(coveringBody(boxes, 1)).toBe(2);
-    expect(coveringBody(boxes, 2)).toBeNull();
+describe('a being is offered exactly when the picker returns it', () => {
+  it('offers the being the picker returns, and nobody else', () => {
+    const audit = offerAudit([
+      { id: 1, first: 1 },
+      { id: 2, first: 1 },
+      { id: 3, first: 3 },
+    ]);
+    expect(audit.offered).toEqual([1, 3]);
+    expect(audit.coveredBy.get(2)).toBe(1);
+    expect(audit.coveredBy.has(1)).toBe(false);
   });
 
-  it('leaves a being standing in the open alone', () => {
-    expect(coveringBody([box(1, 100, 100, 30), box(2, 400, 100, 12)], 1)).toBeNull();
+  it('does not offer a being the picker finds nothing at', () => {
+    // The case no earlier rule had a word for: the view believes it drew
+    // something there and the mouse lands on empty air. Round eight would have
+    // offered it, because its cover rule only knew about other beings.
+    const audit = offerAudit([{ id: 7, first: null }]);
+    expect(audit.offered).toEqual([]);
+    expect(audit.coveredBy.get(7)).toBeNull();
   });
 
-  it('resolves two beings at the same depth to exactly one, rather than to neither', () => {
-    // Round two's rule gave the pair a half-metre of depth slack and left BOTH
-    // reporting `coveredBy: null` — which is how a reviewer found four beings
-    // sharing one pixel, all four still offered by `visibleIds()` while the
-    // picker correctly returned one of them. Two figures three pixels apart are
-    // one drawn body and one behind it, whatever the depths say; the nearer one
-    // is visible and the other names it.
-    const boxes = [box(1, 100, 100, 30), box(2, 103, 101, 29.8)];
-    expect(coveringBody(boxes, 2)).toBeNull();
-    expect(coveringBody(boxes, 1)).toBe(2);
-  });
-
-  it('leaves exactly one being visible out of a stack of 2, 4 or 10', () => {
-    for (const n of [2, 4, 10]) {
-      const boxes = [];
-      for (let i = 0; i < n; i++) boxes.push(box(i + 1, 100 + i * 0.5, 100 + i * 0.4, 20 + i * 0.1));
-      const cover = coveringBodies(boxes);
-      const visible = boxes.filter((b) => !cover.has(b.id));
-      expect(visible).toHaveLength(1);
-      expect(visible[0]!.id).toBe(1); // nearest to the eye — the picker's own order
-      // …and nobody is covered by somebody who is themselves covered.
-      for (const b of boxes) {
-        if (!cover.has(b.id)) continue;
-        expect(cover.get(b.id)).toBe(1);
-      }
+  it('cannot produce a mispick, over four hundred random frames', () => {
+    for (let seed = 1; seed <= 400; seed++) {
+      const next = rng(seed);
+      const ids: number[] = [];
+      for (let i = 0; i < 40; i++) ids.push(100 + i);
+      // An arbitrary, adversarial picker: sometimes itself, sometimes a
+      // neighbour, sometimes nothing at all.
+      const first = (id: number): number | null => {
+        const roll = next();
+        return roll < 0.45 ? id : roll < 0.9 ? ids[Math.floor(next() * ids.length)]! : null;
+      };
+      const answers = ids.map((id) => ({ id, first: first(id) }));
+      const audit = offerAudit(answers);
+      const byId = new Map(answers.map((a) => [a.id, a.first]));
+      // The whole property: every offered being is one the picker returns at
+      // its own point, and every being the picker returns at its own point is
+      // offered. No sampling, no threshold, no residue.
+      for (const id of audit.offered) expect(byId.get(id)).toBe(id);
+      for (const a of answers) expect(audit.offered.includes(a.id)).toBe(a.first === a.id);
+      expect(audit.offered.length + audit.coveredBy.size).toBe(answers.length);
     }
   });
 
-  it('breaks an exact depth tie the way the picker does — by id', () => {
-    const boxes = [box(9, 100, 100, 20), box(2, 100, 100, 20), box(5, 100, 100, 20)];
-    const cover = coveringBodies(boxes);
-    expect(cover.get(2)).toBeUndefined();
-    expect(cover.get(5)).toBe(2);
-    expect(cover.get(9)).toBe(2);
-  });
-
-  it('is a threshold, not a touch: a shoulder-clip is still two beings', () => {
-    // 20 × 60 boxes, side by side, the front one's edge just clear of the back
-    // one's own reported point — so only the area rule can fire. Overlap is
-    // measured as a fraction of the BACK being's figure: how much of IT is
-    // hidden.
-    const under = [box(1, 100, 100, 30), box(2, 111, 100, 10)]; // 45% of #1 covered
-    expect(coveringBodies(under).get(1)).toBeUndefined();
-    const over = [box(1, 100, 100, 30), box(2, 110.3, 100, 10)]; // 48.5%, point still clear
-    expect(coveringBodies(over).get(1)).toBe(2);
-    // Vertically, for the same reason: a head over a shoulder is two people.
-    expect(coveringBodies([box(1, 100, 100, 30), box(2, 100, 132, 10, 20, 60)]).get(1)).toBeUndefined();
-  });
-
-  it('says nothing about scenery: a being behind a ghosted hut is still visible', () => {
-    // Only BEINGS are in this list — `bodyBoxes()` builds it from the drawn
-    // figures and nothing else — because anything else standing in front of a
-    // being is ghosted by construction and the being is drawn through it. A
-    // hut's box would have hidden a being the picture does show.
-    const alone = [box(1, 100, 100, 30)];
-    expect(coveringBodies(alone).size).toBe(0);
-    expect(coveringBody(alone, 1)).toBeNull();
-  });
-
-  it('names the NEAREST of several in front, which is the one actually drawn', () => {
-    const boxes = [box(1, 100, 100, 30), box(2, 100, 100, 20), box(3, 100, 100, 9)];
-    expect(coveringBody(boxes, 1)).toBe(3);
-  });
-
-  it('says nothing about a being that is not in the frame at all', () => {
-    expect(coveringBody([box(2, 100, 100, 10)], 99)).toBeNull();
-  });
-
-  it('is exact at the edge of a body — a point on the boundary is covered', () => {
-    const boxes = [box(1, 100, 100, 30), box(2, 110, 100, 10, 20, 60)];
-    expect(coveringBody(boxes, 1)).toBe(2); // 100 is the left edge of #2
-    expect(coveringBody([box(1, 100, 100, 30), box(2, 111, 100, 10, 20, 60)], 1)).toBeNull();
-  });
-
-  /**
-   * Round seven's residual: two beings of a hundred and one still offered while
-   * `pickAtScreen` at their own reported point answered somebody else. A being
-   * is drawn as a body AND as a mark, and out where the body is a few pixels
-   * the mark is the whole of it — which is the layer the picker then decides on
-   * by depth.
-   */
-  it('covers a mark-only being standing under somebody else s pin', () => {
-    const boxes = [pin(1, 100, 100, 30), pin(2, 104, 103, 12)];
-    expect(coveringBody(boxes, 1)).toBe(2);
-    expect(coveringBody(boxes, 2)).toBeNull();
-    // Just outside the front mark's disc is still two pins a reader can tell
-    // apart, which is what the FAR and DEFAULT counts are made of.
-    expect(coveringBody([pin(1, 100, 100, 30), pin(2, 112, 100, 12)], 1)).toBeNull();
-  });
-
-  it('never lets a MARK cover a being that has a figure of its own', () => {
-    // The picker offers a body before any mark, whatever the depths: a ring
-    // drawn round somebody's feet does not stop them being pointable. Marks
-    // overlap constantly in a settlement, and treating that as cover would
-    // empty `visibleIds()` of most of a crowd.
-    const boxes = [box(1, 100, 100, 30), pin(2, 100, 100, 5, 40)];
-    expect(coveringBody(boxes, 1)).toBeNull();
-  });
-
-  it('still resolves a stack of pins to exactly one', () => {
-    const boxes = [pin(1, 100, 100, 20), pin(2, 101, 101, 21), pin(3, 99, 102, 22)];
-    const cover = coveringBodies(boxes);
-    expect([...boxes].filter((b) => !cover.has(b.id))).toHaveLength(1);
-    expect(cover.get(2)).toBe(1);
-    expect(cover.get(3)).toBe(1);
+  it('names whoever the picker put there instead, so the reader can be sent to them', () => {
+    // The reviewer's four: 1846 offered, 1977 picked. The view now says so
+    // rather than offering 1846 and letting the mouse discover it.
+    const audit = offerAudit([{ id: 1846, first: 1977 }, { id: 1977, first: 1977 }]);
+    expect(audit.offered).toEqual([1977]);
+    expect(audit.coveredBy.get(1846)).toBe(1977);
   });
 });
+
+// ── A being standing behind a being is not in the picture ────────────────────

@@ -119,7 +119,10 @@ export function RosterDock({
   const scoped = useMemo(() => (inFrameOnly ? rows.filter((r) => r.inFrame) : rows), [rows, inFrameOnly]);
   const count = useMemo(() => countMatches(rows, filter), [rows, filter]);
   const sorted = useMemo(() => sortRows(filterRows(scoped, filter), sort), [scoped, filter, sort]);
-  const shown = useMemo(() => applyOrder(sorted, order), [sorted, order]);
+  // `rows` — every being, not the scoped slice — is what a SEALED order looks
+  // its frozen ids up in, so a being walking out of frame cannot pull the row
+  // under the pointer up by twenty-four pixels mid-click. See `applyOrder`.
+  const shown = useMemo(() => applyOrder(sorted, order, rows), [sorted, order, rows]);
   const win = useMemo(
     () => windowFor(scrollTop, viewportH, ROW_H, shown.length),
     [scrollTop, viewportH, shown.length],
@@ -147,6 +150,25 @@ export function RosterDock({
     },
     [onPick],
   );
+
+  // The pointer being over the table is what seals it. Sealing on ENTER rather
+  // than on the first press is deliberate: the press is already too late — the
+  // row has to have been standing still since before the reader aimed at it.
+  const [pointerIn, setPointerIn] = useState(false);
+  const enter = useCallback(() => setPointerIn(true), []);
+  const leave = useCallback(() => {
+    setPointerIn(false);
+    setOrder((o) => orderReduce(o, { kind: 'leave' }));
+    onLeave();
+  }, [onLeave]);
+  // Re-sealed after anything the reader asked for — a header, a scroll, a new
+  // question — thaws it, on whatever order that request produced. The table
+  // re-sorts once, deliberately, and then stands still again for as long as the
+  // pointer is on it.
+  useEffect(() => {
+    if (!pointerIn || order.sealed) return;
+    setOrder((o) => orderReduce(o, { kind: 'enter', order: shownRef.current.map((r) => r.id) }));
+  }, [pointerIn, order, shown]);
 
   // The selected row stays where the reader can see it — the other half of
   // freezing the order. A selection made from the WORLD scrolls the table to
@@ -231,7 +253,7 @@ export function RosterDock({
   }
 
   return (
-    <div className="roster" onMouseLeave={onLeave}>
+    <div className="roster" onPointerEnter={enter} onPointerLeave={leave}>
       <div className="rbar-top">
         <button type="button" className="rtoggle" onClick={() => onOpen(false)} aria-expanded>
           Roster
@@ -328,7 +350,12 @@ export function RosterDock({
                   aria-rowindex={at + 1}
                   aria-selected={r.id === selectedId}
                   onMouseEnter={() => { setFocus(at); onHoverRow(r.id); }}
-                  onClick={() => pick(r.id)}
+                  // POINTERDOWN, not click. A `click` is only dispatched on the
+                  // element that saw both the press and the release, and on
+                  // anything else it lands on their common ancestor — this
+                  // table body, which selects nobody. A row is picked the
+                  // instant the reader presses it, on the row they pressed.
+                  onPointerDown={(e) => { if (e.button === 0) pick(r.id); }}
                 >
                   <span className={`c-name${r.selfChosen ? ' named' : ''}`}>{r.name}</span>
                   <span className="c-stage">{r.stageWord}</span>

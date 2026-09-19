@@ -117,13 +117,34 @@ export interface OrderState {
   frozen: number[] | null;
   /** The row the freeze exists to protect. */
   anchor: number | null;
+  /**
+   * SEALED: the frozen list is the whole table — no row appears in it, leaves
+   * it, or moves within it.
+   *
+   * A freeze alone holds the ORDER and still lets rows drop out of the set,
+   * which is what round eight's roster did: the camera glides onto the being
+   * you just picked, beings walk out of the frame the "in frame" box scopes the
+   * table to, `applyOrder` compacts them out, and everything below slides up a
+   * row per departure. A reader pressing the mouse on row six let it go over
+   * row five, and a `click` whose down and up land on different elements is
+   * dispatched on their common ancestor — the table body, which selects
+   * nothing. Three real clicks in four selected nobody at all.
+   *
+   * So while the pointer is inside the table, the table holds absolutely still.
+   * The values in the rows keep updating; the rows themselves do not move.
+   */
+  sealed: boolean;
 }
 
-export const FREE_ORDER: OrderState = { frozen: null, anchor: null };
+export const FREE_ORDER: OrderState = { frozen: null, anchor: null, sealed: false };
 
 export type OrderEvent =
   /** A row was chosen — by click, by Enter, or by the world. `order` is what is on screen now. */
   | { kind: 'pick'; id: number; order: readonly number[] }
+  /** The pointer entered the table. `order` is what is on screen now. */
+  | { kind: 'enter'; order: readonly number[] }
+  /** The pointer left it. */
+  | { kind: 'leave' }
   /** A column header was clicked: the reader asked for a new order. */
   | { kind: 'sort' }
   /** The reader scrolled the table themselves. */
@@ -138,13 +159,30 @@ export function orderReduce(state: OrderState, event: OrderEvent): OrderState {
     case 'pick':
       // Re-picking inside an existing freeze keeps the order that is on screen;
       // re-snapshotting it would be harmless but pointless churn.
-      if (state.frozen !== null) return state.anchor === event.id ? state : { frozen: state.frozen, anchor: event.id };
-      return { frozen: [...event.order], anchor: event.id };
+      if (state.frozen !== null) {
+        return state.anchor === event.id ? state : { frozen: state.frozen, anchor: event.id, sealed: state.sealed };
+      }
+      return { frozen: [...event.order], anchor: event.id, sealed: state.sealed };
+    case 'enter':
+      if (state.sealed) return state;
+      // An empty table has nothing to hold still, and sealing one would keep it
+      // empty for as long as the pointer stayed on it.
+      if (state.frozen === null && event.order.length === 0) return state;
+      return { frozen: state.frozen ?? [...event.order], anchor: state.anchor, sealed: true };
+    case 'leave':
+      if (!state.sealed) return state;
+      // The seal was the pointer's, and the pointer has gone. A freeze a PICK
+      // put there outlives it — the row somebody chose still has to stay where
+      // they can see it.
+      return state.anchor === null ? FREE_ORDER : { frozen: state.frozen, anchor: state.anchor, sealed: false };
     case 'sort':
     case 'scroll':
     case 'filter':
     case 'clear':
-      return state.frozen === null ? state : FREE_ORDER;
+      // Everything here is the reader asking for something new, and a reader
+      // who has asked is a reader who is no longer mid-click. A seal is broken
+      // by an intention, never by the table changing under one.
+      return state.frozen === null && !state.sealed ? state : FREE_ORDER;
     default:
       return state;
   }
@@ -157,9 +195,28 @@ export function orderReduce(state: OrderState, event: OrderEvent): OrderState {
  * has appeared since — a being that walked into frame, or one a filter let back
  * in — follows in the order the sort put it, so new rows are never hidden and
  * old ones never jump.
+ *
+ * SEALED is the stronger promise, and it is the one a mouse needs: the table is
+ * exactly the frozen list, looked up in `all` — every being the view holds,
+ * whatever the current scope and sort would do to it — so a row can only leave
+ * by the being dying. Nothing appears, nothing departs, nothing moves.
  */
-export function applyOrder(rows: readonly RosterRow[], state: OrderState): RosterRow[] {
+export function applyOrder(
+  rows: readonly RosterRow[],
+  state: OrderState,
+  all: readonly RosterRow[] = rows,
+): RosterRow[] {
   if (state.frozen === null) return rows.slice();
+  if (state.sealed) {
+    const byId = new Map<number, RosterRow>();
+    for (const row of all) byId.set(row.id, row);
+    const out: RosterRow[] = [];
+    for (const id of state.frozen) {
+      const row = byId.get(id);
+      if (row) out.push(row);
+    }
+    return out;
+  }
   const at = new Map<number, number>();
   for (let i = 0; i < state.frozen.length; i++) at.set(state.frozen[i]!, i);
   const held: RosterRow[] = [];

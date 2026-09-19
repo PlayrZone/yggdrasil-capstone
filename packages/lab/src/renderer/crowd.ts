@@ -168,108 +168,52 @@ export interface BodyBox {
   y1: number;
   /** Metres from the eye. */
   depth: number;
-  /**
-   * The being's drawn MARK — its ground ring or its pin — as a disc on screen.
-   *
-   * A figure is not the only thing drawn for a being, and out where the body is
-   * a few pixels it is not the thing a reader sees at all. `mr` is 0 for a
-   * being whose mark this frame is suppressed (inside a hut's chip), and
-   * `hasBody` is false for one drawn too small to be a figure — which is
-   * exactly when the mark is all there is to point at.
-   */
-  mx: number;
-  my: number;
-  mr: number;
-  hasBody: boolean;
+}
+
+// ── 2b. What the view OFFERS ─────────────────────────────────────────────────
+
+/**
+ * What one being's own point answers when the real picker is asked at it.
+ *
+ * `first` is whoever the picker puts at the head of its list there — the being
+ * a click would choose — or `null` when the picker finds nothing at all.
+ */
+export interface OfferAnswer {
+  id: number;
+  first: number | null;
+}
+
+export interface OfferAudit {
+  /** The beings a reader can point at: the picker returns them at their own point. */
+  offered: number[];
+  /** For everyone else, who the picker returns there instead — `null` for nobody. */
+  coveredBy: Map<number, number | null>;
 }
 
 /**
- * How much of a being's own figure another one has to cover before the picture
- * stops being about it: a fraction of ITS box, not of the pair.
+ * Who this frame OFFERS, DEFINED by the picker.
  *
- * Just under a half, and that is where it belongs. Past a half the nearer body
- * necessarily holds this one's own reported point and the first rule has
- * already fired; this is the sliver below that, where a figure is nearly gone
- * and the pixel a driver would aim at is a fraction of one away from the body
- * drawn over it. Two figures merely clipping each other's shoulders are a
- * crowd, and both of them are there to be pointed at.
+ * This is deliberately not a rule. Three rounds ran a second geometry beside
+ * the picker — boxes, depth order, an overlap fraction — and asked it "is
+ * anybody standing in front of this being". It was wrong about four beings
+ * sharing one pixel in round six, two in a hundred in round seven, and four in
+ * a hundred and forty-eight in round eight; every time it was tightened it
+ * agreed more often and still disagreed, because two implementations of one
+ * question is a bug with a maintenance schedule.
+ *
+ * So "offered" now MEANS: ask the picker at the point the view would send the
+ * mouse to, and see whether it hands back this being. A mispick is not unlikely
+ * any more, it is not expressible: the test a reviewer runs is the definition
+ * the view is using.
  */
-export const COVER_OVERLAP = 0.48;
-
-/**
- * Who is drawn where each being is — the front-most one for every stack on
- * screen, and `null` for whoever that front-most one is.
- *
- * Bodies are opaque and painted in depth order, so out of any pile of figures
- * sharing a patch of screen exactly ONE is in the picture. Round two's probe
- * asked a narrower question — is the point this being is reported at inside
- * somebody else's box, and is that somebody at least half a metre nearer — and
- * a reviewer duly found four beings sharing one pixel, all four reporting
- * `coveredBy: null` and all four offered by `visibleIds()` while the picker
- * correctly returned one of them. The depth slack was the bug: in a real crowd
- * the people standing on each other's line of sight are a pace apart, not a
- * metre.
- *
- * So the order is the PICKER's order — nearest to the eye, `id` breaking an
- * exact tie, exactly what `orderCandidates` does inside one layer — and the
- * rule is greedy against what is already known to be drawn: a being is covered
- * by the first being in front of it that either holds the point the view
- * reports it at or covers `minOverlap` of its figure. Nothing is ever covered
- * by a being that is itself covered, so a stack of ten resolves to one visible
- * being and nine that name it.
- *
- * Round three of the rule adds the other half of what is DRAWN. A being whose
- * body is too small to be a figure is carried by its mark alone, and the picker
- * offers it on the mark layer — where a nearer being's mark over the same pixel
- * wins on depth. So a mark-only being standing under somebody else's ring is
- * covered by it, and a being with a figure of its own never is: its own body is
- * drawn at its own point, which is what the picker's body layer says.
- */
-export function coveringBodies(boxes: readonly BodyBox[], minOverlap = COVER_OVERLAP): Map<number, number> {
-  const out = new Map<number, number>();
-  const order = boxes.slice().sort((a, b) => a.depth - b.depth || a.id - b.id);
-  const front: BodyBox[] = [];
-  for (const b of order) {
-    let by: BodyBox | null = null;
-    for (const f of front) {
-      if (coversBox(f, b, minOverlap)) { by = f; break; }
-    }
-    if (by === null) front.push(b);
-    else out.set(b.id, by.id);
+export function offerAudit(answers: readonly OfferAnswer[]): OfferAudit {
+  const offered: number[] = [];
+  const coveredBy = new Map<number, number | null>();
+  for (const a of answers) {
+    if (a.first === a.id) offered.push(a.id);
+    else coveredBy.set(a.id, a.first);
   }
-  return out;
-}
-
-/** Whether `front` is what is drawn where `back` is. */
-function coversBox(front: BodyBox, back: BodyBox, minOverlap: number): boolean {
-  // The point the view REPORTS this being at — where a driver aims — inside the
-  // other one's figure. This fires for a small being behind a large one whose
-  // boxes share little area, and it is the case round one of this rule caught.
-  if (front.hasBody && back.x >= front.x0 && back.x <= front.x1 && back.y >= front.y0 && back.y <= front.y1) return true;
-  // The same question about the other thing a being is drawn as. Only for a
-  // being with no figure of its own: with one, its own body is what is drawn at
-  // its own point, and the picker says so.
-  if (!back.hasBody && front.mr > 0) {
-    const dx = back.x - front.mx;
-    const dy = back.y - front.my;
-    if (dx * dx + dy * dy <= front.mr * front.mr) return true;
-  }
-  if (!front.hasBody || !back.hasBody) return false;
-  const w = Math.min(front.x1, back.x1) - Math.max(front.x0, back.x0);
-  if (w <= 0) return false;
-  const h = Math.min(front.y1, back.y1) - Math.max(front.y0, back.y0);
-  if (h <= 0) return false;
-  const area = Math.max(1e-6, (back.x1 - back.x0) * (back.y1 - back.y0));
-  return (w * h) / area >= minOverlap;
-}
-
-/**
- * Who is standing in front of this ONE being, or `null` when the picture at
- * that patch of screen is its own. The whole frame's answer, read off once —
- * `coveringBodies` is what a caller asking about every being should use.
- */
-export function coveringBody(boxes: readonly BodyBox[], id: number, minOverlap = COVER_OVERLAP): number | null {
-  return coveringBodies(boxes, minOverlap).get(id) ?? null;
+  return { offered, coveredBy };
 }
 
 /** Step through a disambiguation list, wrapping — the arrow keys' whole behaviour. */

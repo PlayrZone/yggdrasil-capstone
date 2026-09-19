@@ -183,10 +183,18 @@ export function HoverCard({
   );
 }
 
+/** How many occupants a shelter's card names before it stops listing. */
+const CHIP_NAMES_MAX = 24;
+
 /**
  * What a crowd chip is made of, shown where the chip is. The same three
  * answers the card gives for one being, for a group: how many, in what state,
  * doing what.
+ *
+ * A SHELTER's chip also names them. The people inside a building have had
+ * their rings, badges and arrows taken away so the hut does not fill with a
+ * scribble, and they are not given names over the world either — the chip is
+ * their one label, so the chip has to be able to say who they are.
  */
 export function ChipCard({
   summary,
@@ -200,11 +208,19 @@ export function ChipCard({
     inside?: boolean;
     mix: { word: string; count: number; color: string }[];
     activities: { word: string; count: number }[];
+    /** Who they are — listed only for a shelter, whose occupants have no names drawn. */
+    names?: { id: number; name: string }[];
   };
   at: { x: number; y: number };
 }): React.ReactElement {
+  const names = summary.inside ? (summary.names ?? []).slice(0, CHIP_NAMES_MAX) : [];
+  const more = summary.inside ? (summary.names ?? []).length - names.length : 0;
   return (
-    <div className="hovercard chipcard" style={placeCard(at, 30 + summary.mix.length * 17 + summary.activities.length * 17)} role="tooltip">
+    <div
+      className="hovercard chipcard"
+      style={placeCard(at, 30 + summary.mix.length * 17 + summary.activities.length * 17 + (names.length > 0 ? 34 + Math.ceil(names.length / 2) * 15 : 0))}
+      role="tooltip"
+    >
       <div className="hhead">
         <b>{summary.count}{summary.inside ? ' inside this shelter' : ' together'}</b>
         {summary.filtering && <span>{summary.matched} match</span>}
@@ -219,6 +235,15 @@ export function ChipCard({
           <li key={a.word}>{a.word}<b>{a.count}</b></li>
         ))}
       </ul>
+      {names.length > 0 && (
+        <div className="hwho">
+          <label>who is in here</label>
+          <ul>
+            {names.map((n) => <li key={n.id}>{n.name}</li>)}
+            {more > 0 && <li className="hmore">+{more} more</li>}
+          </ul>
+        </div>
+      )}
       <div className="hfoot"><span>click to frame them</span></div>
     </div>
   );

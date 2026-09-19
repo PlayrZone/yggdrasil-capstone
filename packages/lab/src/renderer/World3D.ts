@@ -23,7 +23,6 @@ import {
 } from './sim/protocol.js';
 import {
   conditionMix,
-  coveringBodies,
   groupByActivity,
   orderCandidates,
   suppressOverlaps,
@@ -65,12 +64,13 @@ import {
   labelBudgetFor,
   labelClearanceFor,
   LABEL_BUDGET_MAX,
+  LABEL_HEIGHT_PX,
   figurePxAt,
   maxOrbitDistance,
   maxLeaderFor,
   movingFor,
   nameClaimFor,
-  nameRadius,
+  namePlan,
   NEAR_LABEL_M,
   octantDistance,
   placeCountChip,
@@ -122,6 +122,8 @@ import {
   type Subject,
 } from './legibility.js';
 import { buildGlyphAtlas, PICTO_STUB_AT } from './glyphs.js';
+import { ghostCommonChunk, ghostFragmentChunk, ghostVertexChunk } from './shading.js';
+import { createHealth, onConsoleError, type Health, type HealthReport } from './health.js';
 
 // ── The world's own scale ────────────────────────────────────────────────────
 
@@ -928,6 +930,16 @@ interface FadeUniforms {
  *
  * Nothing is discarded and nothing is stippled: round one's 4×4 screen door
  * read as dead pixels under magnification, and it deserved to.
+ *
+ * The GLSL itself lives in `shading.ts`, and the reason is round eight's worst
+ * defect. The rim term was written inline here, guarded by `uRim > 0.0`, and
+ * reached for `transformedNormal` — which only a LIT material's vertex program
+ * declares. GLSL compiles both arms of an `if`, so the lit-windows material (a
+ * `MeshBasicMaterial`, rim permanently zero) failed to compile on every boot for
+ * four rounds and every hut was a black box at midnight. Nobody saw it because
+ * three writes a compile failure to `console.error`, which `pageerror` does not
+ * raise. The rim is now a BUILD-time choice, its normal comes from `normal` and
+ * `normalMatrix`, and `window.__ygg.health()` counts what `onShaderError` sees.
  */
 function applyGhostFade(
   material: THREE.Material,
@@ -965,91 +977,13 @@ function applyGhostFade(
     Object.assign(shader.uniforms, u);
     out.push(u);
     shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-        uniform float uFadeNear;
-        uniform float uFadeFar;
-        uniform vec3 uSel;
-        uniform float uSelR;
-        uniform float uFadeFloor;
-        uniform float uGhostFloor;
-        uniform float uThick;
-        uniform float uThickY;
-        uniform float uCentreY;
-        uniform float uRim;
-        uniform int uSubjectN;
-        uniform vec4 uSubject[${SUBJECT_SLOTS}];
-        varying float vGhostA;`,
-      )
-      .replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>
-        {
-          vec4 fadeAnchor = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-          vec3 fadeWorld = (modelMatrix * fadeAnchor).xyz;
-          float scale = length(instanceMatrix[0].xyz);
-          // The THING's middle, not this mesh's own origin. A tree is two
-          // meshes with two anchors five metres apart, and testing each where
-          // it happens to be pinned ghosts the crown and leaves the trunk — a
-          // black bar standing in front of somebody with a ghost over it.
-          vec3 fadeUp = (modelViewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
-          vec3 fadeView = (modelViewMatrix * fadeAnchor).xyz + fadeUp * (uCentreY * scale);
-          float fadeDepth = -fadeView.z;
-          // Pressed against the lens: a trunk eleven metres off the glass is a
-          // black bar across a third of the frame whoever is behind it.
-          float lens = smoothstep(uFadeNear, uFadeFar, fadeDepth);
-          float block = 0.0;
-          float rx = uThick * scale;
-          float ry = uThickY * scale;
-          if (fadeDepth > 0.05) {
-            for (int k = 0; k < ${SUBJECT_SLOTS}; k++) {
-              if (k >= uSubjectN) break;
-              vec4 sj = uSubject[k];
-              float sd = -sj.z;
-              // Its NEAR FACE, not its middle: a being standing inside a hut is
-              // behind the hut's front wall and in front of its back one, and
-              // the middle of the hut says neither.
-              if (sd <= 0.05 || fadeDepth - max(rx, ry) >= sd - 0.2) continue;
-              // Screen overlap, done as the projection does it: x over depth.
-              vec2 o = fadeView.xy / fadeDepth;
-              vec2 s = sj.xy / sd;
-              vec2 reach = vec2(rx, ry) / fadeDepth + vec2(sj.w / sd);
-              float d = length((o - s) / reach);
-              block = max(block, 1.0 - smoothstep(0.62, 1.02, d));
-            }
-          }
-          float sel = uSelR > 0.0 ? 1.0 - smoothstep(uSelR * 0.55, uSelR * 1.6, distance(fadeWorld, uSel)) : 0.0;
-          float g = max(block, sel);
-          // A ghosted BUILDING keeps its edges. A hut faded evenly to a fifth
-          // is a glass vitrine — a reviewer's word — with grey slabs in it and
-          // no doorway: the one object in the frame that does not read as what
-          // it is. So the surfaces turned away from the eye hold their opacity
-          // while the flat panels drop, which leaves the silhouette, the eaves,
-          // the ridge and the jambs of the door drawn, and lets the people
-          // inside show through the walls exactly as before. Off (uRim = 0) for
-          // foliage: a tree's edge is not a frame, it is more tree.
-          float floorA = uGhostFloor;
-          if (uRim > 0.0) {
-            vec4 rimView = modelViewMatrix * instanceMatrix * vec4(transformed, 1.0);
-            float grazing = 1.0 - abs(dot(normalize(transformedNormal), normalize(-rimView.xyz)));
-            floorA = clamp(uGhostFloor + uRim * smoothstep(0.30, 0.90, grazing), 0.0, 1.0);
-          }
-          vGhostA = min(mix(uFadeFloor, 1.0, lens), mix(1.0, floorA, g));
-        }`,
-      );
+      .replace('#include <common>', ghostCommonChunk(SUBJECT_SLOTS))
+      // Off for foliage: a tree's edge is not a frame, it is more tree — and
+      // off for anything unlit, which has no normal to take a rim from.
+      .replace('#include <begin_vertex>', ghostVertexChunk(SUBJECT_SLOTS, rim > 0));
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying float vGhostA;')
-      .replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>
-        if (vGhostA < 0.015) discard;
-        // A ghost is not a faint tree, it is a tree drawn as vapour: pulled
-        // toward the pale end so its edges still describe the shape at a fifth
-        // of the opacity, which a merely dimmed dark green does not.
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.70, 0.76, 0.80), (1.0 - vGhostA) * 0.55);
-        diffuseColor.a *= vGhostA;`,
-      );
+      .replace('#include <color_fragment>', ghostFragmentChunk());
   };
 }
 
@@ -1322,15 +1256,21 @@ export class World3D {
   private specimenGround: THREE.Mesh | null = null;
 
   /**
-   * How far out the view managed to keep the NEAR naming promise this frame:
-   * every VISIBLE being nearer than this has a name drawn. Measured from the
-   * placement, never assumed — see `updateLabels`.
+   * How far the furthest name reached this frame, in metres from the ground the
+   * camera is looking at. Measured from the placement, never assumed — see
+   * `auditNames`.
    */
   private namedWithin = 0;
   /** How many names the budgeter placed this frame — the same list the DOM got. */
   private namesExpected = 0;
-  /** How many beings stand inside `namedWithin` — every one of them named. */
+  /** How many READABLE beings stand inside `namedWithin` — every one of them named. */
   private namesWithin = 0;
+  /** Nameable beings left unnamed while somebody further away was named. Zero at NEAR. */
+  private nameViolations = 0;
+  /** The same count without the band's promise applied — the raw measurement. */
+  private namesOutOfOrder = 0;
+  /** Readable beings a building's chip is the label for. */
+  private namesCarried = 0;
   /** Reused: whose name went up this frame, for the audit above. */
   private readonly placedIds = new Set<number>();
   /** Reused: the frame's beings as the naming rule sees them. */
@@ -1340,13 +1280,6 @@ export class World3D {
   private boxes: BodyBox[] = [];
   private readonly boxById = new Map<number, BodyBox>();
   private boxFrame = -1;
-  /**
-   * And who is drawn where each of them stands — the whole frame's occlusion,
-   * resolved in one pass beside the boxes it is read off. `visibleIds()` asks
-   * per being; a rule that walked every box per question would be a quadratic
-   * probe over three hundred people.
-   */
-  private coverById = new Map<number, number>();
 
   /** The scale bar, as last measured off the ground under the view centre. */
   private scaleMetres = 0;
@@ -1382,8 +1315,12 @@ export class World3D {
   private insideAny = false;
   /** How many of the leading clusters are OCCUPANTS chips — see `planInside`. */
   private insideCount = 0;
-  /** Where each of those hangs, in scene units: over its own building's ridge. */
+  /** Where each of those hangs, in scene units: on its own building's roof apex. */
   private readonly insideAnchors: number[] = [];
+  /** And where its leader runs to: the middle of that building's doorway. */
+  private readonly insideDoors: number[] = [];
+  /** Which occupants chip is a being's label, by id — `visibilityOf` reports it. */
+  private readonly insideChipOf = new Map<number, number>();
   private clusters: Cluster[] = [];
   /** The leader from a chip back to the outline it counts. */
   private readonly chipLeadNodes: HTMLElement[] = [];
@@ -1450,6 +1387,29 @@ export class World3D {
   private readonly onPointerMove: (e: PointerEvent) => void;
   private readonly onPointerLeave: () => void;
   private readonly onWheel: () => void;
+  /** Shader compiles, console errors and lost contexts — see `health.ts`. */
+  private readonly health: Health = createHealth();
+  private readonly dropHealthTap: () => void;
+  private readonly onContextLost: (e: Event) => void;
+  /**
+   * The canvas rectangle, read once a frame.
+   *
+   * Everything that converts between canvas and CLIENT coordinates needs it,
+   * and the cover rule now asks the picker about every readable being in the
+   * frame — which, with a `getBoundingClientRect` per ask, is a hundred forced
+   * layouts inside one probe call.
+   */
+  private rect: DOMRect | null = null;
+  private rectFrame = -1;
+  /**
+   * Per frame: what the picker hands back at each drawn being's own point.
+   *
+   * The whole of "who can a reader point at" — see `offersAtOwnPoint`. Cached
+   * against `rendered` because `visibleIds()` and `rosterRows()` both walk the
+   * population and neither may pay for the picker twice in one frame.
+   */
+  private readonly offerFirst = new Map<number, number | null>();
+  private offerFrame = -1;
   /**
    * When the camera was last driven, and where it stood at the last drawn
    * frame. Between them they answer "is anything about to look different?",
@@ -1484,6 +1444,26 @@ export class World3D {
     canvas.parentElement?.appendChild(layer);
     this.labelLayer = layer;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // Health, before anything is built: the materials compile on the first
+    // frame, and a program that fails then has to be counted then. See
+    // `health.ts` — three writes a compile failure to `console.error`, which no
+    // page-level error handler ever sees, and four rounds shipped one.
+    this.renderer.debug.onShaderError = (gl, program, vs, fs): void => {
+      const shaderLog = (s: WebGLShader | null): string => (s ? gl.getShaderInfoLog(s) ?? '' : '');
+      const text = `${gl.getProgramInfoLog(program) ?? ''} ${shaderLog(vs)} ${shaderLog(fs)}`.replace(/\s+/g, ' ').trim();
+      this.health.noteShaderError(text || 'a program failed to compile');
+      // Loud as well as counted: a reader with devtools open should see it, and
+      // the console tap below turns that into a second non-zero count. Both
+      // have to be zero, so raising both is not double-reporting a fault — it
+      // is the fault being visible from both directions.
+      console.error('THREE.WebGLProgram: shader error (see __ygg.health())');
+    };
+    this.dropHealthTap = onConsoleError(console, (text) => this.health.noteConsoleError(text));
+    this.onContextLost = (e: Event): void => {
+      e.preventDefault();
+      this.health.noteContextLost('webglcontextlost');
+    };
+    canvas.addEventListener('webglcontextlost', this.onContextLost);
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     // Without tone mapping, sunlight plus sky light drives the ground past 1.0
     // and the whole continent clips to a pale wash — and a bone-white being on
@@ -3116,7 +3096,14 @@ export class World3D {
       // carries the colour at full strength. Pushed well past its own value: a
       // lit body next to an unlit ring reads as a grey pin inside a white hoop
       // unless it is lifted to meet it.
-      mesh.setColorAt(at, this.color.setHex(bodyTint(hue)).multiplyScalar(match ? 1.45 : 1.45 * DIM_BODY));
+      //
+      // Except inside a shelter, where there IS no ring beside it — the chip on
+      // the roof carries them all — so the lift has nothing to meet and only
+      // blows the figures out. Eighteen people in a hut, each at 1.45, fused
+      // into one white mass a reviewer read as one or two; at their own value
+      // they are shaded figures that overlap, which is what they are.
+      const lift = inside ? 1 : 1.45;
+      mesh.setColorAt(at, this.color.setHex(bodyTint(hue)).multiplyScalar(match ? lift : lift * DIM_BODY));
 
       if (!detail || inside) continue;
       // In a crowd, no pictogram either — and for the same reason as the
@@ -3622,6 +3609,9 @@ export class World3D {
    * Where every drawn mark is and how far it reaches, so the suppression rule
    * can be checked against the picture rather than taken on trust: no two
    * beings that BOTH still show a facing may have overlapping marks.
+   *
+   * CLIENT coordinates, like everything else in this namespace — `x`, `y` is
+   * the same point `screenPositionOf` returns and `pickAtScreen` takes.
    */
   markGeometry(): { id: number; x: number; y: number; r: number; clear: boolean }[] {
     const out: { id: number; x: number; y: number; r: number; clear: boolean }[] = [];
@@ -3632,7 +3622,8 @@ export class World3D {
       // array claiming ink that is not on the screen.
       if (this.isCollapsed(i) || this.beingInside[i] === 1) continue;
       const p = this.screenPoints[k]!;
-      out.push({ id: p.id, x: p.x, y: p.y, r: this.markRadiusOf(i), clear: this.beingMarkClear[i] === 1 });
+      const at = this.toClient(p.x, p.y);
+      out.push({ id: p.id, x: at.x, y: at.y, r: this.markRadiusOf(i), clear: this.beingMarkClear[i] === 1 });
     }
     return out;
   }
@@ -3806,7 +3797,7 @@ export class World3D {
    * say "4 here" instead of quietly choosing one of them.
    */
   pickAt(clientX: number, clientY: number): PickCandidate[] {
-    const rect = this.canvas.getBoundingClientRect();
+    const rect = this.canvasRect();
     const px = clientX - rect.left;
     const py = clientY - rect.top;
     if (px < 0 || py < 0 || px > rect.width || py > rect.height) return [];
@@ -4146,6 +4137,7 @@ export class World3D {
       // Each group is anchored in the WORLD, so its outline follows the orbit
       // smoothly between the ten times a second the grouping itself is redone.
       this.beingCrowded.fill(0, 0, this.instanceCount);
+      this.insideChipOf.clear();
       this.clusterIds = [];
       for (let c = 0; c < this.clusters.length; c++) {
         const cl = this.clusters[c]!;
@@ -4176,6 +4168,9 @@ export class World3D {
           const i = this.screenIndex[m]!;
           this.beingCrowded[i] = 1;
           ids.push(this.ids[i]!);
+          // Which chip is speaking for this being — the one a reader has to
+          // hover to learn its name.
+          if (c < this.insideCount) this.insideChipOf.set(this.ids[i]!, c);
           cx += this.beingPos[i * 3]!;
           cy += this.beingPos[i * 3 + 1]!;
           cz += this.beingPos[i * 3 + 2]!;
@@ -4212,35 +4207,70 @@ export class World3D {
         if (lead.style.display !== 'none') lead.style.display = 'none';
         continue;
       }
+      const housed = c < this.insideCount;
       this.probe.set(this.clusterWorld[c * 4]!, this.clusterWorld[c * 4 + 1]!, this.clusterWorld[c * 4 + 2]!);
       const dNow = this.camera.position.distanceTo(this.probe);
       this.probe.project(this.camera);
-      const px = ((this.probe.x + 1) / 2) * w;
-      const py = ((1 - this.probe.y) / 2) * h;
+      const behind = this.probe.z > 1;
+      let px = ((this.probe.x + 1) / 2) * w;
+      let py = ((1 - this.probe.y) / 2) * h;
       const zoom = dNow > 0 ? this.clusterWorld[c * 4 + 3]! / dNow : 1;
       // An ellipse drawn on a bounding box leaves the corners of the group
       // outside itself, and a being outside the outline that counts it is a
-      // being the reader counts twice.
-      const rx = Math.max(14, cl.rx * zoom * 1.22);
-      const ry = Math.max(12, cl.ry * zoom * 1.22);
-      if (this.probe.z > 1 || px < -rx || px > w + rx || py < -ry || py > h + ry) {
+      // being the reader counts twice. An OCCUPANTS chip has no ellipse at all:
+      // the building is its outline, already drawn, with a footprint on the
+      // ground — and the dashed hull round the people inside it was the thing
+      // whose lower arc crossed the roof.
+      const rx = housed ? 7 : Math.max(14, cl.rx * zoom * 1.22);
+      const ry = housed ? 7 : Math.max(12, cl.ry * zoom * 1.22);
+      if (behind || (!housed && (px < -rx || px > w + rx || py < -ry || py > h + ry))) {
         hull.style.display = 'none';
         count.style.display = 'none';
         lead.style.display = 'none';
         continue;
       }
-      hull.style.display = 'block';
-      const cls = collapses ? 'whull full' : 'whull';
-      if (hull.className !== cls) hull.className = cls;
-      hull.style.width = `${Math.round(rx * 2)}px`;
-      hull.style.height = `${Math.round(ry * 2)}px`;
-      hull.style.transform = `translate(-50%, -50%) translate(${Math.round(px)}px, ${Math.round(py)}px)`;
+      // A roof apex a little above the top of the frame is still a hut full of
+      // people standing in it, so the number is held on screen rather than
+      // dropped — the beings it counts have had their own marks taken away and
+      // would be in neither term of the count.
+      if (housed) {
+        px = Math.min(Math.max(px, 4), w - 4);
+        py = Math.min(Math.max(py, 4), h - 4);
+      }
+      if (housed) {
+        if (hull.style.display !== 'none') hull.style.display = 'none';
+      } else {
+        hull.style.display = 'block';
+        const cls = collapses ? 'whull full' : 'whull';
+        if (hull.className !== cls) hull.className = cls;
+        hull.style.width = `${Math.round(rx * 2)}px`;
+        hull.style.height = `${Math.round(ry * 2)}px`;
+        hull.style.transform = `translate(-50%, -50%) translate(${Math.round(px)}px, ${Math.round(py)}px)`;
+      }
       const text = String(cl.count);
       const parts = this.countParts[c];
       if (parts && parts.num.textContent !== text) parts.num.textContent = text;
       count.style.display = 'block';
-      if (parts) this.paintChip(parts, cl);
-      this.placeChip(c, count, lead, px, py, rx, ry, text.length * 3.5 + 7, w, h, cl.region);
+      if (parts) this.paintChip(parts, cl, housed);
+      // The leader home: to the DOORWAY for a shelter, to the outline for a
+      // crowd on open ground.
+      let door: { x: number; y: number } | null = null;
+      if (housed) {
+        this.probe.set(this.insideDoors[c * 3]!, this.insideDoors[c * 3 + 1]!, this.insideDoors[c * 3 + 2]!);
+        this.probe.project(this.camera);
+        if (this.probe.z <= 1) {
+          door = {
+            x: Math.min(Math.max(((this.probe.x + 1) / 2) * w, 0), w),
+            y: Math.min(Math.max(((1 - this.probe.y) / 2) * h, 0), h),
+          };
+        }
+      }
+      // Brushing, the third direction: a roster row for somebody inside a hut
+      // has no mark in the picture to light up, so the chip that speaks for
+      // them lights up instead.
+      const brushed = housed && this.hoveredId !== null
+        && cl.members.some((m) => this.ids[this.screenIndex[m]!] === this.hoveredId);
+      this.placeChip(c, count, lead, px, py, rx, ry, this.chipHalfWidth(text, housed), w, h, cl.region, door, brushed);
     }
   }
 
@@ -4276,6 +4306,10 @@ export class World3D {
     if (!bandShowsDetail(this.band)) return [];
     const out: Cluster[] = [];
     const reach = SHELTER_FOOTPRINT / 2 + 0.5;
+    const measure = shelterMeasure();
+    // The doorway's own middle, in the hut's local frame: the front wall is at
+    // +z, and `rebuildStructures` turns the whole building by `yaw` about y.
+    const doorZ = SHELTER.room / 2 - SHELTER.wallThickness / 2;
     for (let s = 0; s < this.structures.length && out.length < INSIDE_CHIPS_MAX; s++) {
       if (this.structures[s]!.kind !== 'shelter') continue;
       const hx = this.structureAt[s * 3]!;
@@ -4319,9 +4353,22 @@ export class World3D {
         y1 = Math.max(y1, p.y + r);
         this.beingInside[this.screenIndex[m]!] = 1;
       }
-      this.insideAnchors[out.length * 3] = hx;
-      this.insideAnchors[out.length * 3 + 1] = hy + SHELTER.ridge * 0.92;
-      this.insideAnchors[out.length * 3 + 2] = hz;
+      // The ROOF APEX, exactly — not nine tenths of the way up it. Round eight
+      // hung the number off the top of an ellipse drawn round the people's own
+      // screen positions, which put it in empty sky with the ellipse's lower arc
+      // crossing the roof and its leader running into the tree behind: a
+      // reviewer's first blind reading was "a crowd of 18 somewhere behind that
+      // tree". The number belongs to the BUILDING, so it hangs on the building.
+      const yaw = hash2(this.structures[s]!.id, this.structures[s]!.builtBy) * Math.PI * 2;
+      const at = out.length;
+      this.insideAnchors[at * 3] = hx;
+      this.insideAnchors[at * 3 + 1] = hy + measure.ridge;
+      this.insideAnchors[at * 3 + 2] = hz;
+      // And the leader runs to the DOOR, which is the one part of a hut that
+      // says "people go in here".
+      this.insideDoors[at * 3] = hx + Math.sin(yaw) * doorZ;
+      this.insideDoors[at * 3 + 1] = hy + SHELTER.doorHeight / 2;
+      this.insideDoors[at * 3 + 2] = hz + Math.cos(yaw) * doorZ;
       out.push({
         count: members.length,
         x: (x0 + x1) / 2,
@@ -4384,12 +4431,28 @@ export class World3D {
    * never do. `chipsOnScreen()` reports the box and whether it landed clear, so
    * the invariant is checkable against `markGeometry()`.
    */
+  /**
+   * How wide a chip is drawn, in half-pixels — the box the placement search
+   * keeps off the people and the box `chipsOnScreen` reports.
+   *
+   * An occupants chip is drawn bigger, because it is the ONLY thing said about
+   * everyone inside that building: a reviewer read three people out of twelve,
+   * two out of eighteen and three out of twenty-two off the bodies, and the
+   * number is what has to carry them.
+   */
+  private chipHalfWidth(text: string, housed: boolean): number {
+    return housed ? text.length * 5.4 + 11 : text.length * 3.5 + 7;
+  }
+
   private placeChip(
     c: number, count: HTMLElement, lead: HTMLElement,
     px: number, py: number, rx: number, ry: number, halfW: number, w: number, h: number,
     region: number | undefined,
+    leadTo: { x: number; y: number } | null = null,
+    brushed = false,
   ): void {
-    const halfH = CHIP_HALF_H;
+    const housed = c < this.insideCount;
+    const halfH = housed ? CHIP_HALF_H + 5 : CHIP_HALF_H;
     // The crowd's OWN quarter of the frame, not the quarter its projected
     // centre happens to land in: the hull follows the orbit between plans and
     // the number must not drift across a line its people are not on.
@@ -4401,7 +4464,10 @@ export class World3D {
     const shrink = at.clear ? 1 : CHIP_SHY_SCALE;
     count.style.transform = `translate(-50%, -50%) translate(${at.x}px, ${at.y}px)`
       + (at.clear ? '' : ` scale(${CHIP_SHY_SCALE})`);
-    const cls = at.clear ? 'wcount' : 'wcount shy';
+    // An occupants chip is a different object from a crowd chip and says so:
+    // bigger, with a roof drawn over the number, because it is the only thing
+    // the picture says about everybody inside that building.
+    const cls = `wcount${housed ? ' inside' : ''}${at.clear ? '' : ' shy'}${brushed ? ' brush' : ''}`;
     if (count.className !== cls) count.className = cls;
     this.chipAt[c * 2] = at.x;
     this.chipAt[c * 2 + 1] = at.y;
@@ -4414,9 +4480,10 @@ export class World3D {
       x1: at.x + halfW * shrink, y1: at.y + halfH * shrink,
     });
     // A short line home, so a number sitting outside its ring still obviously
-    // belongs to it.
-    const dx = at.anchorX - at.x;
-    const dy = at.anchorY - at.y;
+    // belongs to it — and for a shelter, a line to the DOOR, which is the one
+    // part of a hut that says people go in here.
+    const dx = (leadTo?.x ?? at.anchorX) - at.x;
+    const dy = (leadTo?.y ?? at.anchorY) - at.y;
     const run = Math.hypot(dx, dy);
     if (run > 3) {
       lead.style.display = 'block';
@@ -4453,8 +4520,16 @@ export class World3D {
    * light-to-dark. With a filter on, the badge says how many of this crowd
    * answer it, which is the only way a count out at FAR can mean anything
    * while most of the frame is dimmed.
+   *
+   * The bar is ALWAYS drawn. Round eight hid it whenever the crowd was of one
+   * condition, on the reasoning that a flat bar says nothing a reader needs —
+   * and a reviewer measured both shelter chips' bars at 0 × 0 px and recorded
+   * that the chip "says how many and nothing about how they are". A flat cream
+   * bar says twenty-two people and every one of them well, which is a fact
+   * about a hut, and a bar that is sometimes there and sometimes not is a
+   * channel a reader cannot rely on at all.
    */
-  private paintChip(parts: { num: HTMLElement; badge: HTMLElement; mix: HTMLElement; seg: HTMLElement[] }, cl: Cluster): void {
+  private paintChip(parts: { num: HTMLElement; badge: HTMLElement; mix: HTMLElement; seg: HTMLElement[] }, cl: Cluster, housed = false): void {
     const members: { cond: number; act: number }[] = [];
     let matched = 0;
     for (const m of cl.members) {
@@ -4476,9 +4551,7 @@ export class World3D {
       bar.style.width = `${(seg.count / total) * 100}%`;
       if (bar.style.background !== seg.color) bar.style.background = seg.color;
     }
-    // A crowd of one condition is a flat bar, which says nothing a reader
-    // needs; the chip keeps its number and drops the ornament.
-    parts.mix.style.display = mix.length > 1 ? 'flex' : 'none';
+    parts.mix.style.display = 'flex';
     const chip = parts.num.parentElement;
     if (this.highlight === null) {
       if (parts.badge.style.display !== 'none') parts.badge.style.display = 'none';
@@ -4505,11 +4578,14 @@ export class World3D {
     const h = this.canvas.clientHeight;
     const budget = labelBudgetFor(this.band);
 
-    // The candidate set is re-chosen a few times a second, not every frame: a
-    // set that churns at 60 Hz is a set nobody can read. Only beings that are
-    // ON SCREEN and not behind a hill are considered — round one ranked purely
-    // by camera distance, reported seven names, and drew none of them.
-    if (now - this.lastLabelPick > 240 || (this.hoveredId !== null && !this.labelPicked.includes(this.hoveredId))) {
+    // NEAR is re-chosen every frame and every other band a few times a second.
+    // A set that churns at 60 Hz is a set nobody can read — but NEAR's claim is
+    // now "the k NEAREST readable beings", and a claim measured from a list
+    // that is a quarter of a second out of date is a claim about where people
+    // used to be. At NEAR there are at most a few score beings in frame and the
+    // list is a sort; everywhere else the old cadence stands.
+    const nearest = this.band === 'near';
+    if (nearest || now - this.lastLabelPick > 240 || (this.hoveredId !== null && !this.labelPicked.includes(this.hoveredId))) {
       this.lastLabelPick = now;
       // Nearest to WHAT THE VIEW IS LOOKING AT, which is the distance the card,
       // the roster and the printed radius are all in. Ranking by the eye and
@@ -4524,51 +4600,71 @@ export class World3D {
         const dz = this.beingPos[i * 3 + 2]! - aim.z;
         near.push({ k, d: dx * dx + dy * dy + dz * dz });
       }
-      // Rank first, distance second. Sorting by distance alone and then taking
-      // the head of the list loses the selected being the moment it is not one
-      // of the nearest — which is most of the time, and is the one name that
-      // must never be missing.
-      // A being that answers the filter's question outranks the rest of the
-      // frame: "find the elder who is speaking" is answered by a halo you can
-      // see and a name you can read, not by a halo you then have to hover.
-      const rankOf = (id: number): number => (id === this.selectedId ? 0
-        : id === this.hoveredId ? 1
-          : this.kinSet.has(id) || this.bondSet.has(id) ? 2
-            : this.highlight?.has(id) ? 3 : 4);
-      near.sort((a, b) => {
-        const ra = rankOf(this.ids[this.screenIndex[a.k]!]!);
-        const rb = rankOf(this.ids[this.screenIndex[b.k]!]!);
-        return ra === rb ? a.d - b.d : ra - rb;
-      });
       this.labelCandidates = [];
-      // At NEAR, only the beings you are standing among. A reviewer's frame had
-      // fifteen names in it, most of them belonging to people on the far side
-      // of the valley — every one of them true, and together a web of leader
-      // lines over a picture of six people. The selected being, the hovered one
-      // and their kin keep their names wherever they are; everyone else has to
-      // be within walking distance.
-      const nearOnly = this.band === 'near' ? NEAR_LABEL_M * NEAR_LABEL_M : 0;
-      for (const { k, d } of near) {
-        if (this.labelCandidates.length >= budget * 2 + 6) break;
-        const i = this.screenIndex[k]!;
-        const id = this.ids[i]!;
-        // The specimen is read with the probes and nothing else. A name over a
-        // synthetic being would hand the reader the answer to the question the
-        // specimen exists to ask.
-        if (isSpecimenId(id)) continue;
-        const rank = rankOf(id);
-        // At FAR the contract is how many, where, and which one is selected.
-        // A handful of names scattered over a continent is not an answer to
-        // any of those, and the legend out there does not offer one.
-        if (this.band === 'far' && rank > 1) continue;
-        if (nearOnly > 0 && rank === 4 && d > nearOnly) continue;
-        // A name over a being the view has folded into a crowd's number points
-        // at ground where nothing is drawn — and that stays true of a match,
-        // which draws no halo inside a chip either.
-        if (rank >= 3 && bandCountsBeings(this.band) && this.beingCrowded[i] === 1) continue;
-        const top = this.beingTop[i]!;
-        if (rank === 4 && this.terrainHides(this.beingPos[i * 3]!, top, this.beingPos[i * 3 + 2]!)) continue;
-        this.labelCandidates.push({ id, x: this.screenPoints[k]!.x, y: this.screenPoints[k]!.y, rank, text: this.labelTextFor(i, id) });
+      if (nearest) {
+        // NEAR's whole rule, and there is nothing else in it: the k nearest
+        // READABLE beings, in order, out to the furthest the band ever looks.
+        // No rank, no exceptions — not the selected being, not the hovered one,
+        // not a filter match. Every exception was a name drawn past a nearer
+        // person who had none, and five of those in one frame is what made
+        // round eight's naming strip a lie. The selected being has a gold ring,
+        // a beam, the selection bar and its own row; it does not also need to
+        // break the one sentence this band prints.
+        const reach = NEAR_LABEL_M * NEAR_LABEL_M;
+        near.sort((a, b) => a.d - b.d || this.ids[this.screenIndex[a.k]!]! - this.ids[this.screenIndex[b.k]!]!);
+        for (const { k, d } of near) {
+          if (this.labelCandidates.length >= budget) break;
+          if (d > reach) break;
+          const i = this.screenIndex[k]!;
+          if (!this.nameReadable(i) || this.nameCarried(i)) continue;
+          const id = this.ids[i]!;
+          this.labelCandidates.push({
+            id, x: this.screenPoints[k]!.x, y: this.screenPoints[k]!.y,
+            rank: this.labelCandidates.length, text: this.labelTextFor(i, id),
+          });
+        }
+      } else {
+        // Rank first, distance second. Sorting by distance alone and then
+        // taking the head of the list loses the selected being the moment it is
+        // not one of the nearest — which is most of the time, and is the one
+        // name that must never be missing out here, where the band promises
+        // names "where there is room" and says so.
+        // A being that answers the filter's question outranks the rest of the
+        // frame: "find the elder who is speaking" is answered by a halo you can
+        // see and a name you can read, not by a halo you then have to hover.
+        const rankOf = (id: number): number => (id === this.selectedId ? 0
+          : id === this.hoveredId ? 1
+            : this.kinSet.has(id) || this.bondSet.has(id) ? 2
+              : this.highlight?.has(id) ? 3 : 4);
+        near.sort((a, b) => {
+          const ra = rankOf(this.ids[this.screenIndex[a.k]!]!);
+          const rb = rankOf(this.ids[this.screenIndex[b.k]!]!);
+          return ra === rb ? a.d - b.d : ra - rb;
+        });
+        for (const { k } of near) {
+          if (this.labelCandidates.length >= budget * 2 + 6) break;
+          const i = this.screenIndex[k]!;
+          const id = this.ids[i]!;
+          // The specimen is read with the probes and nothing else. A name over
+          // a synthetic being would hand the reader the answer to the question
+          // the specimen exists to ask.
+          if (isSpecimenId(id)) continue;
+          const rank = rankOf(id);
+          // At FAR the contract is how many, where, and which one is selected.
+          // A handful of names scattered over a continent is not an answer to
+          // any of those, and the legend out there does not offer one.
+          if (this.band === 'far' && rank > 1) continue;
+          // A name over a being the view has folded into a crowd's number
+          // points at ground where nothing is drawn — and that stays true of a
+          // match, which draws no halo inside a chip either.
+          if (rank >= 3 && bandCountsBeings(this.band) && this.beingCrowded[i] === 1) continue;
+          // And a being whose ring a shelter's chip is carrying has no mark of
+          // its own to point at: the chip over the roof is its one label.
+          if (this.beingInside[i] === 1 && rank > 1) continue;
+          const top = this.beingTop[i]!;
+          if (rank === 4 && this.terrainHides(this.beingPos[i * 3]!, top, this.beingPos[i * 3 + 2]!)) continue;
+          this.labelCandidates.push({ id, x: this.screenPoints[k]!.x, y: this.screenPoints[k]!.y, rank, text: this.labelTextFor(i, id) });
+        }
       }
       this.labelPicked = this.labelCandidates.map((c) => c.id);
     }
@@ -4622,6 +4718,7 @@ export class World3D {
       this.labelCandidates, w, h, budget, this.bodyRects,
       labelClearanceFor(this.band, this.bandPx),
       maxLeaderFor(this.band),
+      nearest,
     );
     this.labelShown.length = 0;
     this.placedIds.clear();
@@ -4657,37 +4754,70 @@ export class World3D {
   }
 
   /**
-   * How far out the NEAR promise actually reached this frame.
+   * Whether a reader could READ this being off the frame well enough for the
+   * naming rule to owe it a name.
    *
-   * The band claims every being you could walk to is named. Round four printed
-   * "every being in frame is named" over nineteen beings and four names, which
-   * is the kind of claim that makes every other claim suspect. So the view
-   * MEASURES it: find the nearest readable being that did NOT get a name, and
-   * the promise is everything inside that. The chip over the canvas prints the
-   * number, the legend points at the chip, and the claim is therefore true by
-   * construction — and shrinks, visibly, when the frame is too crowded to keep
-   * it.
+   * One definition, used by the rule that CHOOSES the names and by the audit
+   * that scores them — which is the whole point. Round eight chose candidates
+   * by rank and audited them against a cheaper readability test, and the two
+   * populations disagreed so badly that a frame could name four people while
+   * reporting that its radius contained none of them.
    *
-   * Readability here is the cheap test — on screen, not inside a chip, big
-   * enough — because this runs every frame and the terrain march does not. A
-   * being hidden by a hill that goes unnamed pulls the radius in, which is the
-   * safe direction to be wrong in.
+   * A being whose ring a shelter's chip is carrying is not readable HERE, on
+   * purpose: it has no mark of its own, the chip over the roof is its one
+   * label, and a name pointing into a hut full of people names nobody.
+   */
+  private nameReadable(i: number): boolean {
+    if (this.beingOnScreen[i] !== 1) return false;
+    if (isSpecimenId(this.ids[i]!)) return false;
+    if (this.isCollapsed(i)) return false;
+    if (this.markerPixelsOf(i) < READABLE_MARK_PX) return false;
+    if (this.terrainHides(this.beingPos[i * 3]!, this.beingTop[i]!, this.beingPos[i * 3 + 2]!)) return false;
+    return this.nameAnchorRoom(i);
+  }
+
+  /**
+   * Whether there is anywhere on the canvas to PUT this being's name.
+   *
+   * A name hangs off the head, and at NEAR a being is two hundred pixels tall —
+   * the one standing closest to the camera often has its head above the top
+   * edge, or its feet below the bottom one. With "nearest first, and the first
+   * one that cannot be labelled ends the list", such a being would end every
+   * list at zero: seven NEAR frames in eight came back with no names at all.
+   *
+   * That is not the collision the rule is about. A being whose name has nowhere
+   * on the frame to go is not one this frame can name, so it is not one the
+   * frame OWES a name — and the being behind it is named instead. A collision
+   * with another label or another body still stops the list, which is the rule.
+   */
+  private nameAnchorRoom(i: number): boolean {
+    this.probe.set(this.beingPos[i * 3]!, this.beingTop[i]!, this.beingPos[i * 3 + 2]!).project(this.camera);
+    if (this.probe.z > 1) return false;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    const x = ((this.probe.x + 1) / 2) * w;
+    const y = ((1 - this.probe.y) / 2) * h;
+    // One label's height plus the band's own clearance above the head, and a
+    // name's half-width to either side.
+    const up = labelClearanceFor(this.band, this.bandPx) + LABEL_HEIGHT_PX;
+    return x > 30 && x < w - 30 && y > up + 2 && y < h - 2;
+  }
+
+  /** Whether a BUILDING's chip is this being's label this frame. */
+  private nameCarried(i: number): boolean {
+    return this.beingInside[i] === 1;
+  }
+
+  /**
+   * What the naming actually did this frame — see `namePlan`.
+   *
+   * Nothing here decides anything. The rule is in `updateLabels`, the
+   * invariant is `violations`, and this reads the result off the DOM list the
+   * budgeter produced, so the strip, the probe and the picture are three
+   * readings of one act rather than three claims about it.
    */
   private auditNames(): void {
-    // One number the budgeter decided, and it is the list that went to the DOM.
-    // `expected` used to be a different population from `shown` — how many
-    // beings were inside the radius, against how many names were drawn — and a
-    // reviewer read the two as a contradiction, correctly: three statements
-    // about naming, no two of them about the same thing.
     this.namesExpected = this.placedIds.size;
-    // Measured in every band, on one rule, because `within` meaning "beings
-    // inside the radius" at NEAR and "however many names are drawn" everywhere
-    // else was itself the contradiction: a reviewer read
-    // `{withinM: 12.25, shown: 13, within: 1}` under a strip saying "names
-    // within 12 m · 13 shown" and could not tell which of the three was wrong.
-    // `nameRadius` floors the radius to the metre the strip prints and counts
-    // the beings inside THAT, so the strip, the audit and the DOM are three
-    // readings of one number.
     this.nameSubjects.length = 0;
     for (let k = 0; k < this.screenPoints.length; k++) {
       const i = this.screenIndex[k]!;
@@ -4695,25 +4825,20 @@ export class World3D {
       if (isSpecimenId(id)) continue;
       this.nameSubjects.push({
         // From the ground the camera is LOOKING at — the same metres the card
-        // and the roster print, and the same ones `updateLabels` chooses
-        // candidates by. Measuring the radius from the eye while choosing who
-        // to name from the target is how a true radius came to contain none of
-        // the names drawn over it.
+        // and the roster print, and the same ones `updateLabels` orders the
+        // candidates by. One metric, everywhere.
         distance: this.aimDistanceTo(i),
-        readable: this.markerPixelsOf(i) >= READABLE_MARK_PX && !this.isCollapsed(i),
+        readable: this.nameReadable(i),
+        carried: this.nameCarried(i),
         named: this.placedIds.has(id),
       });
     }
-    const reach = nameRadius(this.nameSubjects, this.band === 'near' ? NEAR_LABEL_M : this.farthestOnScreen());
-    this.namedWithin = reach.withinM;
-    this.namesWithin = reach.within;
-  }
-
-  /** How far the furthest being in frame stands — the cap outside NEAR, where the rule looks at the whole frame. */
-  private farthestOnScreen(): number {
-    let out = 0;
-    for (const s of this.nameSubjects) if (s.distance > out) out = s.distance;
-    return out;
+    const plan = namePlan(this.nameSubjects, this.band === 'near');
+    this.namedWithin = plan.withinM;
+    this.namesWithin = plan.within;
+    this.nameViolations = plan.violations;
+    this.namesOutOfOrder = plan.outOfOrder;
+    this.namesCarried = plan.carried;
   }
 
   /**
@@ -4722,26 +4847,32 @@ export class World3D {
    * different things.
    */
   private nameClaim(): string {
-    return nameClaimFor(this.band, this.namedWithin, this.labelShown.length);
+    return nameClaimFor(this.band, this.namedWithin, this.labelShown.length, this.namesCarried);
   }
 
   /**
-   * The naming claim, measured. `claim` is the band chip's own words; `expected`
-   * is how many names the budgeter placed and `shown` is how many are on screen
-   * — they are the same number or the view is lying. `withinM` is the radius
-   * the frame reached, in the whole metres the strip prints, and `within` is how
-   * many beings stand inside it — all of them named, which is what the radius
-   * means. The same two fields in every band: `within` counted one population
-   * at NEAR and a different one at MID, and a reviewer could not tell which
-   * reading to believe.
+   * The naming, measured. `claim` is the band chip's own words, letter for
+   * letter; `expected` is how many names the budgeter placed and `shown` is how
+   * many are on screen — they are the same number or the view is lying.
+   * `withinM` is how far the furthest name reached, in the metres the strip
+   * prints, and `within` is how many READABLE beings that covers — the same
+   * number as `shown` at NEAR, because at NEAR the names go to the nearest
+   * readable beings and stop. `violations` is the invariant itself: readable
+   * beings left unnamed while somebody further away was named.
    */
-  labelAudit(): { claim: string; withinM: number; expected: number; shown: number; within: number } {
+  labelAudit(): {
+    claim: string; withinM: number; expected: number; shown: number; within: number;
+    violations: number; outOfOrder: number; carried: number;
+  } {
     return {
       claim: this.nameClaim(),
       withinM: this.namedWithin,
       expected: this.namesExpected,
       shown: this.labelShown.length,
       within: this.namesWithin,
+      violations: this.nameViolations,
+      outOfOrder: this.namesOutOfOrder,
+      carried: this.namesCarried,
     };
   }
 
@@ -4884,24 +5015,31 @@ export class World3D {
   chipSummary(cluster: number): {
     cluster: number; count: number; matched: number; inside: boolean;
     mix: MixSegment[]; activities: { word: string; count: number }[]; ids: number[];
+    names: { id: number; name: string }[];
   } | null {
     const cl = this.clusters[cluster];
     if (!cl) return null;
     const members: { cond: number; act: number; actWord: string }[] = [];
     const ids: number[] = [];
+    const names: { id: number; name: string }[] = [];
     let matched = 0;
     for (const m of cl.members) {
       const i = this.screenIndex[m];
       if (i === undefined) continue;
       const act = this.beingAct[i]!;
+      const id = this.ids[i]!;
       members.push({ cond: this.beingCond[i]!, act, actWord: activityWord(act) });
-      ids.push(this.ids[i]!);
-      if (this.highlight?.has(this.ids[i]!)) matched++;
+      ids.push(id);
+      names.push({ id, name: displayName(id, this.names.get(id)).text });
+      if (this.highlight?.has(id)) matched++;
     }
     return {
       cluster,
       count: cl.count,
       matched,
+      // Who they are, in the order the chip counts them — the occupants of a
+      // shelter have no name drawn over them, so this is where their names are.
+      names,
       // Whether this chip is a crowd on open ground or the people inside a
       // building — the card says which, because "6 together" and "6 in this
       // shelter" are different facts about the same picture.
@@ -4960,20 +5098,28 @@ export class World3D {
   /**
    * Where the chips are on screen right now, with enough on each to draw a
    * badge beside it — what the shell needs to put a hover target over one.
+   *
+   * CLIENT coordinates: this point is where a mouse has to go to open the
+   * chip's card. Round eight returned canvas-local ones from here while
+   * `pickAtScreen` and `screenPositionOf` were client, and a reviewer driving
+   * the real mouse to the chip's own reported point landed 113 px away — the
+   * canvas origin — and opened nothing at all.
    */
-  chipsOnScreen(): { cluster: number; x: number; y: number; count: number; halfW: number; halfH: number; clear: boolean }[] {
-    const out: { cluster: number; x: number; y: number; count: number; halfW: number; halfH: number; clear: boolean }[] = [];
+  chipsOnScreen(): { cluster: number; x: number; y: number; count: number; halfW: number; halfH: number; clear: boolean; inside: boolean }[] {
+    const out: { cluster: number; x: number; y: number; count: number; halfW: number; halfH: number; clear: boolean; inside: boolean }[] = [];
     for (let c = 0; c < this.clusters.length; c++) {
       const node = this.countNodes[c];
       if (!node || node.style.display === 'none') continue;
+      const at = this.toClient(this.chipAt[c * 2]!, this.chipAt[c * 2 + 1]!);
       out.push({
         cluster: c,
-        x: this.chipAt[c * 2]!,
-        y: this.chipAt[c * 2 + 1]!,
+        x: at.x,
+        y: at.y,
         count: this.clusters[c]!.count,
         halfW: this.chipHalf[c * 2]!,
         halfH: this.chipHalf[c * 2 + 1]!,
         clear: this.chipClear[c] === 1,
+        inside: c < this.insideCount,
       });
     }
     return out;
@@ -5013,10 +5159,19 @@ export class World3D {
    * the ghosting misses the x-ray silhouette carries. If a reviewer finds a
    * being on this list with no pixels, the bug is here and the probe is wrong —
    * which is exactly the failure this is built to make visible.
+   *
+   * The fifth way is no longer a RULE. `coveredBy` used to come from a second
+   * geometry — boxes, depth order, an overlap fraction — run beside the picker
+   * and asked the same question in different words. It disagreed with the
+   * picker about four beings on one pixel in round six, two in a hundred in
+   * round seven and four in a hundred and forty-eight in round eight, and every
+   * tightening left a smaller residue rather than none. So the picker IS the
+   * answer now: this being is offered if and only if `pickAtScreen` at the
+   * point this view reports it at hands back this being. See `offersAtOwnPoint`.
    */
   visibilityOf(id: number): {
     visible: boolean; markPx: number; bodyPx: number; inFrame: boolean; collapsed: boolean;
-    behindLand: boolean; coveredBy: number | null; reason: string;
+    behindLand: boolean; coveredBy: number | null; carriedBy: number | null; reason: string;
   } | null {
     const i = this.indexOf(id);
     if (i < 0) return null;
@@ -5035,23 +5190,62 @@ export class World3D {
     // wide the pin carries the being instead, and the pin is drawn over the
     // world rather than inside it.
     const carried = !bandShowsDetail(this.band) || bodyPx >= XRAY_MIN_BODY_PX;
-    // And whether somebody is standing in front of it. Bodies are opaque and
-    // drawn in depth order, so out of any pile of figures sharing a patch of
-    // screen exactly one is in the picture — which is exactly where a driver
-    // points the mouse, and what the picker already answers.
-    let coveredBy: number | null = null;
-    if (inFrame && !collapsed && bandShowsBodies(this.band)) {
-      this.bodyBoxes();
-      coveredBy = this.coverById.get(id) ?? null;
-    }
-    const reason = !inFrame ? 'out of frame'
+    const drawnReason = !inFrame ? 'out of frame'
       : collapsed ? 'counted by a crowd chip'
         : markPx < READABLE_MARK_PX ? 'drawn too small to read'
           : tooSmallForDetail ? 'smaller than the band draws detail at'
             : behindLand && !carried ? 'behind the land, too small to x-ray'
-              : coveredBy !== null ? 'behind another being'
-                : 'visible';
-    return { visible: reason === 'visible', markPx, bodyPx, inFrame, collapsed, behindLand, coveredBy, reason };
+              : null;
+    // And then the picker, which is the last word. `null` here means it handed
+    // back this being; a number means it handed back somebody else first; and a
+    // being the picker finds nothing at is not offered either, whatever the
+    // view believes it drew.
+    let coveredBy: number | null = null;
+    let unpointable = false;
+    if (drawnReason === null) {
+      const first = this.offersAtOwnPoint().get(id);
+      if (first === undefined || first === null) unpointable = true;
+      else if (first !== id) coveredBy = first;
+    }
+    const reason = drawnReason
+      ?? (coveredBy !== null ? 'behind another being'
+        : unpointable ? 'nothing is drawn where the view reports it'
+          : 'visible');
+    // Pointable and NOT owed a name: a building's chip is this being's label,
+    // and the naming rule's "nearest first" is over the beings that are not on
+    // one. A reader checking that invariant has to be able to tell which those
+    // are, and the band strip prints how many there are.
+    const carriedBy = this.insideChipOf.get(id) ?? null;
+    return { visible: reason === 'visible', markPx, bodyPx, inFrame, collapsed, behindLand, coveredBy, carriedBy, reason };
+  }
+
+  /**
+   * What the PICKER answers at every drawn being's own reported point — one
+   * pass, cached for the frame it was measured in.
+   *
+   * This is the definition of "offered", not a check on it. A driver asks
+   * `visibleIds()` for targets and then drives the mouse to `screenPositionOf`
+   * of each; both ends of that sentence are now the same call, so the two
+   * cannot disagree.
+   *
+   * Only beings the frame already says it DREW are probed — a being folded into
+   * a chip or drawn at four pixels is refused before the picker is bothered, so
+   * the cost is the readable population and not the frustum.
+   */
+  private offersAtOwnPoint(): Map<number, number | null> {
+    if (this.offerFrame === this.rendered) return this.offerFirst;
+    this.offerFrame = this.rendered;
+    this.offerFirst.clear();
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const i = this.screenIndex[k]!;
+      if (this.isCollapsed(i)) continue;
+      if (this.markerPixelsOf(i) < READABLE_MARK_PX) continue;
+      if (bandShowsDetail(this.band) && this.bodyPixelsOf(i) < DETAIL_MIN_PX) continue;
+      const p = this.screenPoints[k]!;
+      const at = this.toClient(p.x, p.y);
+      this.offerFirst.set(p.id, this.pickAt(at.x, at.y)[0]?.id ?? null);
+    }
+    return this.offerFirst;
   }
 
   /**
@@ -5096,17 +5290,10 @@ export class World3D {
         x1: hasBody ? p.x + halfW : p.x,
         y1: hasBody ? feet + bodyPx * 0.06 : feet,
         depth,
-        mx: p.x,
-        my: this.beingInside[i] === 1 ? feet : p.y,
-        mr: this.beingInside[i] === 1 ? 0 : this.markRadiusOf(i),
-        hasBody,
       };
       this.boxes.push(box);
       this.boxById.set(box.id, box);
     }
-    // One pass for the whole frame, in the picker's own order, beside the boxes
-    // it is read off — see `coveringBodies`.
-    this.coverById = coveringBodies(this.boxes);
     return this.boxes;
   }
 
@@ -5341,12 +5528,17 @@ export class World3D {
     counts: boolean;
     quadrants: { region: number; pins: number; chips: number; counted: number; beings: number; reconciles: boolean }[];
   } {
-    const rect = this.canvas.getBoundingClientRect();
     const chips: { n: number; x: number; y: number }[] = [];
     for (let c = 0; c < this.clusters.length; c++) {
       const cl = this.clusters[c]!;
       if (this.countNodes[c]?.style.display === 'none') continue;
-      chips.push({ n: cl.count, x: rect.left + cl.x, y: rect.top + cl.y });
+      // Where the NUMBER sits, in client coordinates — the point a reader reads
+      // it at and the point `quadrantAudit` bins it by. Round eight reported the
+      // outline's centre here and binned by the disc, so a reviewer checking the
+      // quadrant arithmetic with this array was reconciling two different
+      // placements.
+      const at = this.toClient(this.chipAt[c * 2]!, this.chipAt[c * 2 + 1]!);
+      chips.push({ n: cl.count, x: at.x, y: at.y });
     }
     return {
       pinsDrawn: this.pinsDrawn,
@@ -5598,14 +5790,17 @@ export class World3D {
     return out;
   }
 
-  /** The crowds the view has put a number on, and what those numbers say. */
+  /**
+   * The crowds the view has put a number on, what those numbers say, and where
+   * the number is — client coordinates, the same point `chipsOnScreen` gives.
+   */
   clustersShown(): { count: number; x: number; y: number }[] {
-    const rect = this.canvas.getBoundingClientRect();
     const out: { count: number; x: number; y: number }[] = [];
     for (let c = 0; c < this.clusters.length; c++) {
       const cl = this.clusters[c]!;
-      if (this.hullNodes[c]?.style.display === 'none') continue;
-      out.push({ count: cl.count, x: rect.left + cl.x, y: rect.top + cl.y });
+      if (this.countNodes[c]?.style.display === 'none') continue;
+      const at = this.toClient(this.chipAt[c * 2]!, this.chipAt[c * 2 + 1]!);
+      out.push({ count: cl.count, x: at.x, y: at.y });
     }
     return out;
   }
@@ -5847,13 +6042,39 @@ export class World3D {
     return -1;
   }
 
+  /**
+   * The canvas's rectangle, read at most once per drawn frame.
+   *
+   * Every probe here answers in CLIENT coordinates — the ones a pointer event
+   * carries and `document.elementFromPoint` takes — and the conversion needs
+   * this rectangle. Round eight had two frames in one namespace: `pickAtScreen`
+   * and `screenPositionOf` in client coordinates, `chipsOnScreen` and
+   * `markGeometry` in canvas-local ones, and a reviewer who drove the mouse to a
+   * chip's own reported point landed 113 px below it and opened nothing.
+   *
+   * Cached because the cover rule now asks the PICKER about every readable
+   * being in the frame, and `getBoundingClientRect` per ask is a hundred forced
+   * layouts inside one probe call.
+   */
+  private canvasRect(): DOMRect {
+    if (this.rect === null || this.rectFrame !== this.rendered) {
+      this.rect = this.canvas.getBoundingClientRect();
+      this.rectFrame = this.rendered;
+    }
+    return this.rect;
+  }
+
+  /** Canvas pixels to CLIENT pixels — the one conversion in this file. */
   private toClient(x: number, y: number): { x: number; y: number } {
-    const rect = this.canvas.getBoundingClientRect();
-    return { x: rect.left + x * (rect.width / Math.max(1, this.canvas.clientWidth)), y: rect.top + y * (rect.height / Math.max(1, this.canvas.clientHeight)) };
+    const rect = this.canvasRect();
+    return {
+      x: rect.left + x * (rect.width / Math.max(1, this.canvas.clientWidth)),
+      y: rect.top + y * (rect.height / Math.max(1, this.canvas.clientHeight)),
+    };
   }
 
   private toNdcClient(): { x: number; y: number } {
-    const rect = this.canvas.getBoundingClientRect();
+    const rect = this.canvasRect();
     return {
       x: rect.left + ((this.probe.x + 1) / 2) * rect.width,
       y: rect.top + ((1 - this.probe.y) / 2) * rect.height,
@@ -5977,10 +6198,12 @@ export class World3D {
     this.updateScaleBar(bar);
     const px = this.bandPx;
     const size = px >= 10 ? `a being is ${Math.round(px)} px` : `a being is under a pixel · pins are ${Math.round(this.annotPx * RING_OUTER * 2)} px`;
-    // At NEAR the naming claim is whatever the budgeter actually did, in the
-    // budgeter's own words — `labelAudit().claim` IS this string, so the chip,
-    // the probe and the legend cannot drift into three different promises.
-    const reach = this.band === 'near' ? ` · ${this.nameClaim()}` : '';
+    // The naming claim is whatever the budgeter actually did, in the budgeter's
+    // own words — `labelAudit().claim` IS this string, so the chip, the probe
+    // and the legend cannot drift into three different promises. In EVERY band
+    // that draws a name: round eight printed it at NEAR only, so a reviewer
+    // reading `labelAudit()` at MID was handed a `claim` the frame never made.
+    const reach = ` · ${this.nameClaim()}`;
     // Exactly how many beings are standing too close together for the picture
     // to say what they are doing or which way they face. It is the one number
     // that tells a reader when to stop reading and start asking, and it is
@@ -6083,12 +6306,22 @@ export class World3D {
     if (this.xrayMat) this.xrayMat.uniforms['uWorldPerPx']!.value = this.worldPerPx;
   }
 
+  /**
+   * Whether this renderer is WELL — and the only read-out that has to be zero
+   * before any other number here means anything. See `health.ts`.
+   */
+  healthReport(): HealthReport {
+    return this.health.report();
+  }
+
   dispose(): void {
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerleave', this.onPointerLeave);
     this.canvas.removeEventListener('wheel', this.onWheel);
+    this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
+    this.dropHealthTap();
     this.ro?.disconnect();
     this.ro = null;
     this.controls.dispose();

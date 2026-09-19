@@ -83,8 +83,37 @@ body {
    than a name's leader — it crosses air the chip was pushed out of. */
 .wleader.chiplead { background: linear-gradient(90deg, rgba(200, 216, 228, 0.55), rgba(200, 216, 228, 0.16)); }
 .wcount .wnum { font-style: normal; font-variant-numeric: tabular-nums; }
-.wcount .wmix { display: flex; height: 3px; margin: 3px -2px 0; border-radius: 2px; overflow: hidden; }
-.wcount .wmix i { display: block; height: 100%; }
+/* Always drawn, and never zero-sized. A bar the chip sometimes has and
+   sometimes does not is a channel a reader cannot rely on; a reviewer measured
+   both shelter chips' bars at 0 x 0 px and read the chip as saying how many and
+   nothing about how they are. A flat cream bar says "and all of them well". */
+.wcount .wmix {
+  display: flex; height: 3px; min-height: 3px; min-width: 22px;
+  margin: 3px -2px 0; border-radius: 2px; overflow: hidden;
+  background: rgba(120, 140, 155, 0.35);
+}
+.wcount .wmix i { display: block; height: 100%; min-height: 3px; }
+/* The people INSIDE a building. It is the ONLY thing the picture says about
+   any of them — their rings, badges and arrows come off so the hut does not
+   fill with a scribble — so it is drawn as its own kind of object: bigger,
+   warmer, with a roof line over the number and a leader down to the doorway. */
+.wcount.inside {
+  font-size: 15px; font-weight: 700; padding: 3px 8px 4px;
+  border-color: rgba(242, 220, 174, 0.78); background: rgba(24, 19, 12, 0.93);
+  color: #f6ecd6; border-radius: 10px; border-top-width: 3px;
+}
+.wcount.inside .wmix { min-width: 30px; height: 4px; min-height: 4px; }
+.wcount.inside:hover { border-color: #f2dcae; background: rgba(30, 24, 15, 0.96); }
+/* Brushed from the roster: the row you are on belongs to this hut, and the
+   chip is that being's one label, so the chip is what lights up. */
+.wcount.brush { outline: 2px solid var(--found); outline-offset: 1px; }
+/* Who is inside the hut. Two columns, because a list of twenty-two names in one
+   column is a card taller than the window. */
+.chipcard .hwho { margin-top: 5px; border-top: 1px solid rgba(120, 140, 155, 0.24); padding-top: 4px; }
+.chipcard .hwho label { display: block; font-size: 9.5px; letter-spacing: .5px; text-transform: uppercase; color: #8c9aa4; margin-bottom: 2px; }
+.chipcard .hwho ul { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; margin: 0; padding: 0; list-style: none; }
+.chipcard .hwho li { font-size: 10.5px; line-height: 15px; color: #d6e1e8; white-space: nowrap; }
+.chipcard .hwho li.hmore { color: #8c9aa4; }
 /* How many of this crowd answer the current question. Only ever present while
    something is being asked. */
 .wcount .wmatch {

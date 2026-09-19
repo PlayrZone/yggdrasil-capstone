@@ -434,6 +434,10 @@ export function App(): React.ReactElement {
         // A read-only handle for drivers and reviewers: what the view drew, so a
         // screenshot can be scored against the ground truth behind it.
         window.__ygg = {
+          // Before anything else here means anything: is this renderer WELL?
+          // A shader that never compiled shipped for four rounds because the
+          // three ways a WebGL view breaks are all silent to `pageerror`.
+          health: () => world.healthReport(),
           drawnIds: () => world.drawnIds(),
           visibleIds: () => world.visibleIds(),
           visibilityOf: (id) => world.visibilityOf(id),
