@@ -1,7 +1,19 @@
 import type { WorldAdapter } from './adapter.js';
-import { placeFieldNames } from './space.js';
-import type { PlaceRef } from './space.js';
-import type { Goal, Intent, MindOutput, Utterance } from './types.js';
+import { codecFor, placeFieldNames } from './space.js';
+import type { PlaceRef, SpaceCodec } from './space.js';
+import type {
+  AgentSnapshot,
+  Goal,
+  Intent,
+  MemoryRecord,
+  MindOutput,
+  ObservedAgent,
+  ObservedResource,
+  ObservedStructure,
+  ThinkInput,
+  Utterance,
+  WorldView,
+} from './types.js';
 
 /**
  * THE CODEC AT THE EDGES (W1-B4).
@@ -64,10 +76,26 @@ export interface WireOutput {
  * that memory just as surely as refusing it at the gate did.
  */
 export function encodeIntent(world: WorldAdapter, intent: Intent): WireIntent {
+  return writeIntent(codecFor(world.space), intent);
+}
+
+/**
+ * The same, with the codec already in hand. Every plan the body is handed goes
+ * through here on every tick of every run, so the world's codec is looked up
+ * once per PLAN rather than once per act (round 3: the indirection is what the
+ * verifier's −14.4% was made of, and this is one strand of it).
+ */
+function writeIntent(codec: SpaceCodec, intent: Intent): WireIntent {
+  // AN ACT WITH NO PLACE IS ALREADY WRITTEN. Half this world's verbs take no
+  // place at all (`Eat`, `Idle`, `Craft`, `Sleep`), and every plan the body is
+  // handed passes through here on every tick of every run — so the copy is
+  // skipped rather than made and thrown away. Identical by construction: with no
+  // place to expand, the loop below copies each key to itself in order.
+  if (intent.place === undefined || intent.place === null) return intent as unknown as WireIntent;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(intent)) {
     if (key === PLACE_FIELD && value !== undefined && value !== null) {
-      Object.assign(out, world.space.encode(value as PlaceRef));
+      Object.assign(out, codec.encode(value as PlaceRef));
     } else {
       out[key] = value;
     }
@@ -77,16 +105,19 @@ export function encodeIntent(world: WorldAdapter, intent: Intent): WireIntent {
 
 /** A whole decision, written out — its own key order kept. */
 export function encodeOutput(world: WorldAdapter, output: MindOutput): WireOutput {
+  const codec = codecFor(world.space);
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(output)) {
-    out[key] = key === 'plan' ? (value as Intent[]).map((intent) => encodeIntent(world, intent)) : value;
+    out[key] = key === 'plan' ? (value as Intent[]).map((intent) => writeIntent(codec, intent)) : value;
   }
   return out as unknown as WireOutput;
 }
 
 /** A plan, written out. */
 export function encodePlan(world: WorldAdapter, plan: readonly Intent[]): WireIntent[] {
-  return plan.map((intent) => encodeIntent(world, intent));
+  if (plan.length === 0) return [];
+  const codec = codecFor(world.space);
+  return plan.map((intent) => writeIntent(codec, intent));
 }
 
 /**
@@ -109,7 +140,7 @@ export function inlinePlace<T extends object>(world: WorldAdapter, row: T): Reco
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) {
     if (key === PLACE_FIELD && value !== undefined && value !== null) {
-      Object.assign(out, world.space.encode(value as PlaceRef));
+      Object.assign(out, codecFor(world.space).encode(value as PlaceRef));
     } else out[key] = value;
   }
   return out;
@@ -121,7 +152,8 @@ export function inlinePlace<T extends object>(world: WorldAdapter, row: T): Reco
  * row that is read and written again comes back byte-identical.
  */
 export function liftPlace<T>(world: WorldAdapter, row: Record<string, unknown>): T {
-  const fields = placeFieldNames(world.space);
+  const codec = codecFor(world.space);
+  const fields = placeFieldNames(codec);
   const carried: Record<string, unknown> = {};
   let present = false;
   for (const field of fields) {
@@ -131,7 +163,7 @@ export function liftPlace<T>(world: WorldAdapter, row: Record<string, unknown>):
     }
   }
   if (!present) return row as T;
-  const place = world.space.decode(carried);
+  const place = codec.decode(carried);
   const out: Record<string, unknown> = {};
   let placed = false;
   for (const [key, value] of Object.entries(row)) {
@@ -144,4 +176,119 @@ export function liftPlace<T>(world: WorldAdapter, row: Record<string, unknown>):
     if (place !== undefined) out[PLACE_FIELD] = place;
   }
   return out as T;
+}
+
+// ─── A ThinkInput across a process boundary ──────────────────────────────────
+
+/**
+ * A `ThinkInput` AS IT CROSSES TO ANOTHER PROCESS — every opaque place replaced,
+ * AT ITS OWN KEY, by the fields this world writes one as.
+ *
+ * A place is now an instance whose whole state is private, so `structuredClone`
+ * — which is what `postMessage` and Electron's IPC do — copies own enumerable
+ * properties and arrives with `{}`. Before W1-B4 a place WAS its `{x, y}`, so
+ * the crossing worked by accident; the lab's sim worker posts a `ThinkInput` to
+ * the renderer, which forwards it to main, which rebuilds the prompt from it and
+ * bills a call against the match. So the codec has to run at the edge, and this
+ * is that edge's half of it.
+ *
+ * THE BYTES ARE THE BYTES THAT ALWAYS CROSSED: `{x, y}` under `place`, in the
+ * record's own key order, which is exactly what the clone used to produce. The
+ * IPC gate's questions (`snapshot.place is a place in this world`) are unchanged
+ * and so is every stored trace of the paid path.
+ */
+export type SentThinkInput = Omit<ThinkInput, 'snapshot' | 'worldView' | 'recalledMemories' | 'sacredPlace' | 'tragedyPlaces'> & {
+  snapshot: Omit<AgentSnapshot, 'place'> & { place: Record<string, unknown> };
+  worldView: Omit<WorldView, 'agents' | 'resources' | 'structures'> & {
+    agents: (Omit<ObservedAgent, 'place'> & { place: Record<string, unknown> })[];
+    resources: (Omit<ObservedResource, 'place'> & { place: Record<string, unknown> })[];
+    structures: (Omit<ObservedStructure, 'place'> & { place: Record<string, unknown> })[];
+  };
+  recalledMemories: (Omit<MemoryRecord, 'place'> & { place?: Record<string, unknown> })[];
+  sacredPlace?: Record<string, unknown>;
+  tragedyPlaces?: Record<string, unknown>[];
+};
+
+/** Every place in a think input, written as this world writes one. */
+export function encodeThinkInputPlaces(world: WorldAdapter, input: ThinkInput): SentThinkInput {
+  const codec = codecFor(world.space);
+  // Tolerant of a partial input, because this runs at a TRANSPORT seam: a
+  // backend stub, a replayed row, a being that perceived nothing. A field that
+  // is not there is not written, and a field that is not a place is passed on
+  // for the far side's gate to refuse.
+  const write = <T>(row: T): T => {
+    if (row === null || typeof row !== 'object') return row;
+    const place = (row as { place?: PlaceRef }).place;
+    return place === undefined ? row : ({ ...row, place: codec.encode(place) } as unknown as T);
+  };
+  const each = (rows: unknown): unknown => (Array.isArray(rows) ? rows.map(write) : rows);
+  const out: Record<string, unknown> = { ...(input as unknown as Record<string, unknown>) };
+  if (out['snapshot'] !== undefined) out['snapshot'] = write(out['snapshot']);
+  const seen = out['worldView'];
+  if (seen !== null && typeof seen === 'object') {
+    const view = seen as Record<string, unknown>;
+    out['worldView'] = {
+      ...view,
+      agents: each(view['agents']),
+      resources: each(view['resources']),
+      structures: each(view['structures']),
+    };
+  }
+  if (out['recalledMemories'] !== undefined) out['recalledMemories'] = each(out['recalledMemories']);
+  if (input.sacredPlace !== undefined) out['sacredPlace'] = codec.encode(input.sacredPlace);
+  if (Array.isArray(input.tragedyPlaces)) out['tragedyPlaces'] = input.tragedyPlaces.map((p) => codec.encode(p));
+  return out as unknown as SentThinkInput;
+}
+
+/**
+ * …and back, on the far side. Tolerant by design: what arrives is untrusted
+ * JSON that a gate has already bounded, and a field the world cannot read as a
+ * place simply yields none — which makes the rebuilt prompt differ from the one
+ * that was sent, which is a refusal, which is the outcome that edge wants.
+ */
+export function decodeThinkInputPlaces(world: WorldAdapter, sent: unknown): ThinkInput {
+  const codec = codecFor(world.space);
+  const asRow = (value: unknown): Record<string, unknown> | undefined =>
+    value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+  const read = (value: unknown): PlaceRef | undefined => {
+    const row = asRow(value);
+    return row === undefined ? undefined : codec.decode(row);
+  };
+  const lift = (value: unknown): unknown => {
+    const row = asRow(value);
+    if (row === undefined || !('place' in row)) return value;
+    const place = read(row['place']);
+    return place === undefined ? withoutPlace(row) : { ...row, place };
+  };
+  const source = asRow(sent) ?? {};
+  const out: Record<string, unknown> = { ...source };
+  out['snapshot'] = lift(source['snapshot']);
+  const seen = asRow(source['worldView']);
+  if (seen) {
+    out['worldView'] = {
+      ...seen,
+      agents: (seen['agents'] as unknown[] | undefined)?.map(lift) ?? [],
+      resources: (seen['resources'] as unknown[] | undefined)?.map(lift) ?? [],
+      structures: (seen['structures'] as unknown[] | undefined)?.map(lift) ?? [],
+    };
+  }
+  out['recalledMemories'] = (source['recalledMemories'] as unknown[] | undefined)?.map(lift) ?? [];
+  if ('sacredPlace' in source) {
+    const place = read(source['sacredPlace']);
+    if (place === undefined) delete out['sacredPlace'];
+    else out['sacredPlace'] = place;
+  }
+  if (Array.isArray(source['tragedyPlaces'])) {
+    out['tragedyPlaces'] = (source['tragedyPlaces'] as unknown[])
+      .map(read)
+      .filter((p): p is PlaceRef => p !== undefined);
+  }
+  return out as unknown as ThinkInput;
+}
+
+/** A record whose place could not be read is a record with no place. */
+function withoutPlace(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) if (key !== PLACE_FIELD) out[key] = value;
+  return out;
 }

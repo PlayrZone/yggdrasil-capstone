@@ -76,10 +76,10 @@ describe('a world cannot be written back into', () => {
 describe('an event the world does not declare forms no memory', () => {
   it('is refused rather than remembered with no salience', () => {
     const gate = new WorldGate();
-    expect(memoryFromEvent(foragerAdapter, event('SoldShares'), 1, CTX, gate)).toBeUndefined();
+    expect(memoryFromEvent(foragerAdapter, event('SoldShares'), 1, CTX, undefined, gate)).toBeUndefined();
     expect(gate.counts.undeclaredEvent).toBe(1);
     // …and a declared one still is.
-    expect(memoryFromEvent(foragerAdapter, event('AteFood'), 1, CTX, gate)?.importance).toBe(0.25);
+    expect(memoryFromEvent(foragerAdapter, event('AteFood'), 1, CTX, undefined, gate)?.importance).toBe(0.25);
     expect(gate.counts.undeclaredEvent).toBe(1);
   });
 
@@ -107,9 +107,9 @@ describe('an event the world does not declare forms no memory', () => {
     });
     const gate = new WorldGate();
     // The giver remembers giving — that id is declared.
-    expect(memoryFromEvent(half, event('GaveItem', 1, [2]), 1, CTX, gate)?.type).toBe('GaveItem');
+    expect(memoryFromEvent(half, event('GaveItem', 1, [2]), 1, CTX, undefined, gate)?.type).toBe('GaveItem');
     // The receiver would remember an id this world never declared.
-    expect(memoryFromEvent(half, event('GaveItem', 1, [2]), 2, CTX, gate)).toBeUndefined();
+    expect(memoryFromEvent(half, event('GaveItem', 1, [2]), 2, CTX, undefined, gate)).toBeUndefined();
     expect(gate.counts.undeclaredEvent).toBe(1);
   });
 
@@ -117,7 +117,7 @@ describe('an event the world does not declare forms no memory', () => {
     const gate = new WorldGate();
     for (const schema of foragerAdapter.events) {
       for (const selfId of [1, 2, 3]) {
-        memoryFromEvent(foragerAdapter, event(schema.id, 1, [2]), selfId, CTX, gate);
+        memoryFromEvent(foragerAdapter, event(schema.id, 1, [2]), selfId, CTX, undefined, gate);
       }
     }
     expect(gate.counts).toEqual({

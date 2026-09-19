@@ -126,9 +126,11 @@ export type {
   SerializedKnowledgeRecord,
   NonFiniteToken,
   NonFiniteSubstitution,
+  PeekedMemoryRecord,
+  UnvalidatedThinkInput,
 } from './record/types.js';
 export { DEFAULT_RECORDED_PROVENANCE } from './record/types.js';
-export { serializeThinkInput, deserializeThinkInput, attemptPrompt, attemptPromptDelta } from './record/serialize.js';
+export { serializeThinkInput, deserializeThinkInput, peekThinkInput, attemptPrompt, attemptPromptDelta } from './record/serialize.js';
 export { ScaffoldLedger } from './record/ScaffoldLedger.js';
 export { CognitionRecorder } from './record/CognitionRecorder.js';
 export type { CognitionRecorderOptions, CompletedAct } from './record/CognitionRecorder.js';
@@ -211,11 +213,20 @@ export {
 } from './contract/actions.js';
 export { WorldGate } from './contract/gate.js';
 export type { WorldGateCounts } from './contract/gate.js';
-// W1-B4 — where things are, and the only way to ask.
-export type { PlaceRef, DirectionId, SpaceOps } from './contract/space.js';
-export { ForeignPlaceError, guardPlaces, placeFieldNames } from './contract/space.js';
-export type { WireIntent, WireOutput } from './contract/wire.js';
-export { PLACE_FIELD, encodeIntent, encodePlan, encodeOutput } from './contract/wire.js';
+// W1-B4 — where things are, and the only way to ask. `SpaceOps` is the mind's
+// half; `SpaceCodec` is the edges', and it is reached through `codecFor(space)`
+// rather than off the adapter, so nothing a mind holds leads to it.
+export type { PlaceRef, DirectionId, SpaceOps, SpaceCodec, SpaceDefinition } from './contract/space.js';
+export { ForeignPlaceError, codecFor, defineSpace, placeFieldNames } from './contract/space.js';
+export type { WireIntent, WireOutput, SentThinkInput } from './contract/wire.js';
+export {
+  PLACE_FIELD,
+  encodeIntent,
+  encodePlan,
+  encodeOutput,
+  encodeThinkInputPlaces,
+  decodeThinkInputPlaces,
+} from './contract/wire.js';
 
 // ── The forager continent's own vocabulary (W1-B2 — no longer the mind's) ────
 export type {
@@ -238,8 +249,10 @@ export { FORAGER_KINDS } from './worlds/forager/kinds.js';
 // This world's plane, and the two ways in and out of one of its places. A host
 // that is ALREADY in the forager world (the lab, the instrument, a driver) may
 // open a place; a mind never can.
-export { foragerSpace, at, pointOf } from './worlds/forager/space.js';
+export { foragerSpace, at, pointOf, xOf, yOf } from './worlds/forager/space.js';
 export type { Point } from './worlds/forager/space.js';
+export { createPlaneSpace } from './worlds/plane.js';
+export type { PlaneSpace } from './worlds/plane.js';
 export { defineForagerWorld } from './worlds/forager/define.js';
 export type { ForagerWorldSpec } from './worlds/forager/define.js';
 
@@ -363,7 +376,9 @@ export {
   BASELINE_CLOSING,
   computeArmMetrics,
   metricValues,
+  integrityBreaches,
   ANSWER_WINDOW_TICKS,
+  INTEGRITY_THRESHOLDS,
   buildTraces,
   blindTraces,
   renderTrace,
@@ -376,9 +391,7 @@ export {
   sha256Hex,
   pairTraces,
   DISAVOWALS,
-  integrityBreaches,
   DISAVOWAL_PATTERNS,
-  INTEGRITY_THRESHOLDS,
   admitsIgnorance,
   disavowalIn,
   assertsAbsence,
@@ -397,6 +410,9 @@ export {
   wilsonInterval,
   exactBinomialTwoSided,
   pairedBootstrap,
+  signFlipPermutation,
+  minimumPairedSeeds,
+  MIN_PAIRED_SEEDS,
   minimumDetectableEffect,
   minimumDetectableWins,
   pairsForSweep,
@@ -405,14 +421,14 @@ export {
   normalQuantile,
   studentTQuantile,
   JUDGE_GATE,
+  JUDGE_GATE_HASH,
+  hashJudgeGate,
+  judgeGateOverrides,
   judgeGatePower,
   judgeGateDesign,
   pairsForJudgePower,
   INTERVIEW_INSTRUCTION,
   QUESTION_PREFIX,
-  signFlipPermutation,
-  minimumPairedSeeds,
-  MIN_PAIRED_SEEDS,
   YGGDRASIL_CLOSING,
   isInterview,
   questionIn,
@@ -421,10 +437,8 @@ export {
   OmniscientMockBackend,
   ADVERSARIAL_PROFILES,
   HONEST_STRATEGIES,
-  JUDGE_GATE_HASH,
-  hashJudgeGate,
-  judgeGateOverrides,
   LEAKING_STRATEGIES,
+  TIER2_BLIND_STRATEGIES,
   adversarialInterviewees,
   scriptedInterviewee,
 } from './eval/index.js';
@@ -438,7 +452,6 @@ export type {
   UsageReporting,
   OpenedBackend,
   HaltReason,
-  TIER2_BLIND_STRATEGIES,
   BackendSpec,
   TraceJudgeSpec,
   LeakJudgeSpec,
@@ -459,6 +472,7 @@ export type {
   BaselineAgentOptions,
   BaselineMemoryOptions,
   BaselinePersona,
+  ArmIntegrity,
   ArmMetrics,
   ArmObservation,
   MetricValue,
@@ -472,7 +486,6 @@ export type {
   PairingManifest,
   IgnoranceOptions,
   IgnoranceReport,
-  ArmIntegrity,
   ProbeAnswer,
   ProbeSubject,
   IgnoranceProbe,
@@ -488,30 +501,30 @@ export type {
   CriterionTally,
   PositionCheck,
   AggregateOptions,
+  ExploratoryGate,
+  RunAttestation,
   Interval,
   PairedSample,
   PairedResult,
+  PermutationTest,
   BootstrapOptions,
   DesignPower,
   JudgeDesignPower,
   JudgeGateRule,
+  JudgeGateConditions,
   JudgeGatePower,
   JudgeGateDesign,
   MultipleComparisonNote,
   AdversarialProfile,
   ArmId,
   ArmFamily,
-  ExploratoryGate,
-  RunAttestation,
   AbMode,
   IInterviewee,
   InterviewRequest,
-  PermutationTest,
   TraceMoment,
   MomentOutcome,
   RawBeingTrace,
   BlindTrace,
-  JudgeGateConditions,
   TraceKey,
   TraceFeatures,
   SentPrompt,

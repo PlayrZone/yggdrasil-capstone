@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildThinkPrompt, foragerAdapter, retryPrompt } from '@yggdrasil/engine';
-import type { SpaceOps, ThinkInput } from '@yggdrasil/engine';
+import { buildThinkPrompt, codecFor, decodeThinkInputPlaces, foragerAdapter, retryPrompt } from '@yggdrasil/engine';
+import type { SpaceCodec, ThinkInput } from '@yggdrasil/engine';
+
+const foragerPlaces = codecFor(foragerAdapter.space);
 import { RateLimiter } from '../src/main/ipcGuards.js';
 import { RETRY_ERROR_MAX, llmComplete, placeAt, type CompletionBackend } from '../src/main/llmBridge.js';
 
@@ -57,8 +60,14 @@ function thinkInput(over: Record<string, unknown> = {}): Record<string, unknown>
  */
 const WORLD = foragerAdapter.id;
 
+/**
+ * THE PROMPT MAIN WOULD REBUILD from a request exactly as it arrives — wire
+ * data, because a place does not survive a structured clone (engine W1-B4 round
+ * 3). `bindPromptToInput` decodes before it builds, so a test that composes the
+ * expected bytes has to decode too, or it is composing a prompt no edge could.
+ */
 const promptFor = (input: Record<string, unknown>): { system: string; user: string } =>
-  buildThinkPrompt(input as unknown as ThinkInput, foragerAdapter);
+  buildThinkPrompt(decodeThinkInputPlaces(foragerAdapter, input), foragerAdapter);
 
 const limiter = (): RateLimiter => new RateLimiter(10, 60_000);
 
@@ -193,7 +202,7 @@ describe('llmComplete', () => {
  * were PAID FOR: `snapshot.place` reaches the billed text only through
  * `placeText`, which renders nothing without a `sacredPlace`, so the prompt
  * beside a junk place is the same prompt and binds perfectly. Main holds the
- * world, so main hands the world's own `space.isPlace` to the gate.
+ * world, so main hands the world's own codec `isPlace` to the gate.
  */
 describe('llmComplete asks the world what a place is', () => {
   const withPlace = (place: unknown): Record<string, unknown> =>
@@ -243,8 +252,8 @@ describe('llmComplete asks the world what a place is', () => {
    * "fixed" to match it.
    */
   it('refuses a half-written place, though the world itself would allow one', async () => {
-    expect(foragerAdapter.space.isPlace({ y: 80 })).toBe(true);
-    expect(foragerAdapter.space.isPlace({ x: 120 })).toBe(true);
+    expect(foragerPlaces.isPlace({ y: 80 })).toBe(true);
+    expect(foragerPlaces.isPlace({ x: 120 })).toBe(true);
     for (const place of [{ x: 120 }, { y: 80 }, {}, { x: 120, y: undefined }]) {
       await refusesInput(withPlace(place));
     }
@@ -262,7 +271,7 @@ describe('llmComplete asks the world what a place is', () => {
    * — no line of this file changes.
    */
   it('requires whatever fields the world declares, not x and y', () => {
-    const spotSpace: Pick<SpaceOps, 'fields' | 'isPlace'> = {
+    const spotSpace: Pick<SpaceCodec, 'fields' | 'isPlace'> = {
       fields: [{ id: 'spot', type: 'ref' }],
       isPlace: (v: unknown): boolean => typeof (v as { spot?: unknown }).spot === 'string',
     };
@@ -272,17 +281,17 @@ describe('llmComplete asks the world what a place is', () => {
     expect(isSpot({ spot: undefined })).toBe(false);
     expect(isSpot(Object.create({ spot: 'the ridge' }) as object)).toBe(false);
     // The forager plane's own two, from the same composition.
-    const isHere = placeAt(foragerAdapter.space);
+    const isHere = placeAt(foragerPlaces);
     expect(isHere({ x: 120, y: 80 })).toBe(true);
     expect(isHere({ x: 120 })).toBe(false);
     // Neither half alone is the answer: complete but not a place, and a place
     // but not complete, are both refused.
     expect(isHere({ x: '120', y: 80 })).toBe(false);
-    expect(foragerAdapter.space.isPlace({ x: 120 })).toBe(true);
+    expect(foragerPlaces.isPlace({ x: 120 })).toBe(true);
   });
 
   it('answers a trapping object with a refusal rather than an exception', () => {
-    const isHere = placeAt(foragerAdapter.space);
+    const isHere = placeAt(foragerPlaces);
     const trapped = new Proxy({ x: 120, y: 80 }, { getOwnPropertyDescriptor: (): never => { throw new Error('boom'); } });
     expect(() => isHere(trapped)).not.toThrow();
     expect(isHere(trapped)).toBe(false);
@@ -472,5 +481,36 @@ describe('llmComplete binds the billed prompt to the input', () => {
     expect(backend.calls).toHaveLength(1);
     // Measured in UTF-8 bytes: an astral reason is 4 bytes a character.
     await refuses({ ...retryPrompt(built, '🌍'.repeat(RETRY_ERROR_MAX / 4 + 1)) }, input);
+  });
+});
+
+/**
+ * THE SOURCE OF THE PAID-CALL EDGE IS TEXT (W1-B4 verifier, round 2, attack 9).
+ *
+ * `RETRY_SENTINEL` held two LITERAL U+0000 from `427573f` until W1-B4 round 3.
+ * Nothing broke — `tsc` passes a NUL through verbatim and the round trip worked
+ * — but git calls a file with a NUL in it BINARY, so 2,573 bytes of change to
+ * this module showed as `Bin 7128 -> 9701 bytes`: no diff, no blame, and
+ * invisible to `git log -S`. On the one file that decides what an API key pays
+ * for. The escape has the identical runtime value; this is what stops the raw
+ * byte coming back.
+ */
+describe('the paid-call edge is readable source', () => {
+  const SOURCE = readFileSync(new URL('../src/main/llmBridge.ts', import.meta.url));
+
+  it('holds no NUL byte, so git treats it as text', () => {
+    expect(SOURCE.includes(0)).toBe(false);
+    expect(SOURCE.toString('utf8')).toContain(String.raw`'\u0000<retry-error>\u0000'`);
+  });
+
+  /** …and the escape really is the same two characters, or the fix broke it. */
+  it('still frames a rejection with the same sentinel it always did', () => {
+    const framed = retryPrompt({ system: 's', user: 'BASE' }, 'REASON');
+    expect(framed.user.startsWith('BASE')).toBe(true);
+    expect(framed.user).toContain('REASON');
+    // The sentinel character cannot occur in a real reason, which is why the two
+    // halves of the wrapper can never be found inside the thing they wrap.
+    const sentinel = `${String.fromCharCode(0)}<retry-error>${String.fromCharCode(0)}`;
+    expect(retryPrompt({ system: '', user: '' }, sentinel).user).toContain(sentinel);
   });
 });

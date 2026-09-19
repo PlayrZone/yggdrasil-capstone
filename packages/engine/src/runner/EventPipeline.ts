@@ -5,6 +5,7 @@ import type { AgentMind } from '../agent/AgentMind.js';
 import type { RuleIntern } from '../knowledge/KnowledgeStore.js';
 import { memoryFromEvent } from '../memory/memoryFromEvent.js';
 import type { WorldAdapter } from '../contract/adapter.js';
+import { codecFor } from '../contract/space.js';
 import type { SimEvent } from '../contract/types.js';
 import type { RunCounters } from './RunCounters.js';
 import type { NarrativeAuthor } from './society/SocietySystem.js';
@@ -66,12 +67,19 @@ export interface EventPipelineOptions {
  */
 export function installEventPipeline(host: EventPipelineHost, opts: EventPipelineOptions): void {
   if (opts.recorder) host.bus.on(opts.recorder.observeBefore);
+  const places = codecFor(opts.world.space);
 
   host.bus.on((event) => {
     host.counters.observe(event);
 
     const schema = opts.world.eventById.get(event.type);
     const story = opts.narrator.storyFor(event);
+    // WHERE IT HAPPENED, ASKED ONCE (W1-B4 round 3). This is the edge where a
+    // world's own event becomes N subjective memories, so it is the edge that
+    // reads the world's geometry off it — `memoryFromEvent` lives in the mind
+    // and may not hold a codec, and every witness of one happening should be
+    // handed the same handle rather than N copies of it.
+    const place = places.placeOf(event);
     for (const witnessId of host.perception.witnessesOf(host.world, event)) {
       const mind = host.minds.get(witnessId);
       if (!mind) continue;
@@ -79,7 +87,7 @@ export function installEventPipeline(host: EventPipelineHost, opts: EventPipelin
       if (!witness) continue;
       const t = witness.components['Transform2D'] as { x: number; y: number };
       const context = host.perception.contextAt(host.world, t.x, t.y, event.tick);
-      const memory = memoryFromEvent(opts.world, event, witnessId, context, mind.gate);
+      const memory = memoryFromEvent(opts.world, event, witnessId, context, place, mind.gate);
       if (memory) mind.observe(memory);
       // A memorable event becomes a STORY the witness carries.
       if (story) mind.narratives.remember(story.id, story.text, story.place, event.tick, true);

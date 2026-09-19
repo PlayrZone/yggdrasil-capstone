@@ -15,6 +15,7 @@ import {
 } from '../src/index.js';
 import type { CoreVerb, Intent, PlaceRef } from '../src/index.js';
 import { argumentShapes, wireFieldsOf } from '../src/contract/actions.js';
+import { codecFor } from '../src/contract/space.js';
 // Not through the barrel: `KindParam` is not one of its exports (and adding it
 // belongs to whoever needs it from outside the package, not to a test).
 import type { KindParam } from '../src/contract/actions.js';
@@ -186,7 +187,9 @@ describe('the forager verbs, as they stood before the move', () => {
     const aimed = foragerAdapter.actions.filter((a) => a.params.some((p) => p.type === 'place'));
     expect(aimed.map((a) => a.id)).toEqual(['MoveTo', 'Build', 'Flee']);
     expect(foragerAdapter.actions.flatMap((a) => a.params).map((p) => p.id)).not.toContain('x');
-    expect(foragerAdapter.space.fields.map((f) => `${f.id}:${f.type}`)).toEqual(['x:number', 'y:number']);
+    // The WIRE fields are the codec's, not the mind's: `SpaceOps` has no
+    // `fields`, because knowing how a place is written is an edge's job.
+    expect(codecFor(foragerAdapter.space).fields.map((f) => `${f.id}:${f.type}`)).toEqual(['x:number', 'y:number']);
   });
 
   it('draws each enumerated argument from exactly the old closed list', () => {

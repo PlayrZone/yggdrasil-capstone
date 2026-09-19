@@ -58,7 +58,9 @@ export function inhabit(): number {
     payload: {},
   };
   const context = { nearWater: true, night: false, inShelter: false, elevationBand: 0 };
-  const memory = memoryFromEvent(world, event, 7, context, new WorldGate());
+  // WHERE IT HAPPENED comes from the edge now, and a mind's only source for
+  // one with nothing behind it is the world's own `unplaced` (W1-B4 round 3).
+  const memory = memoryFromEvent(world, event, 7, context, world.space.unplaced, new WorldGate());
   if (memory) mind.observe(memory);
   mind.consolidate(2);
   mind.injectIdea('a thought', 3, 'AteFood', context);

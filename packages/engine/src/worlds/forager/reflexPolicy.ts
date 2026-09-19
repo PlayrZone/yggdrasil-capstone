@@ -9,8 +9,7 @@ import type {
 } from '../../contract/types.js';
 import type { DriveId, KindId } from '../../contract/ids.js';
 import type { PlaceRef } from '../../contract/space.js';
-import { at, pointOf } from './space.js';
-import type { Point } from './space.js';
+import { at, xOf, yOf } from './space.js';
 
 /**
  * W1-B3 MOVED THIS FILE; IT DID NOT REWRITE IT. Every line below stood in
@@ -30,7 +29,7 @@ import type { Point } from './space.js';
  * the arithmetic below is untouched — operation for operation, so every
  * comparison lands on the same side of every boundary it ever did — but what
  * arrives from a mind and what leaves for one is an opaque `PlaceRef`, opened
- * and closed by `pointOf`/`at` at the edge of each function.
+ * and closed by `xOf`/`yOf`/`at` at the edge of each function.
  */
 
 // Things an agent might TRY to eat (nutritious + poisonous). The reflex only
@@ -404,12 +403,15 @@ function affinityToward(input: ThinkInput, id: number): number {
 function preferredAgent(input: ThinkInput) {
   let best: (typeof input.worldView.agents)[number] | undefined;
   let bestScore = 0;
-  const self = pointOf(input.snapshot.place);
+  // One coordinate at a time, allocating nothing: this runs over everything a
+  // being can see, on every think, for every being (W1-B4 round 3 — `pointOf`
+  // built a pair per candidate and the whole loop showed up in the profile).
+  const selfX = xOf(input.snapshot.place);
+  const selfY = yOf(input.snapshot.place);
   for (const a of input.worldView.agents) {
     const aff = affinityToward(input, a.id);
     if (aff <= 0) continue;
-    const at = pointOf(a.place);
-    const d = Math.hypot(at.x - self.x, at.y - self.y) || 1;
+    const d = Math.hypot(xOf(a.place) - selfX, yOf(a.place) - selfY) || 1;
     const score = aff - d * 0.1;
     if (score > bestScore) {
       bestScore = score;
@@ -434,13 +436,13 @@ function nearest<T extends { place: PlaceRef; id?: number }>(
   input: ThinkInput,
   items: T[],
 ): T | undefined {
-  const { x, y } = pointOf(input.snapshot.place);
+  const x = xOf(input.snapshot.place);
+  const y = yOf(input.snapshot.place);
   let best: T | undefined;
   let bestD = Infinity;
   for (const item of items) {
-    const at = pointOf(item.place);
-    const dx = at.x - x;
-    const dy = at.y - y;
+    const dx = xOf(item.place) - x;
+    const dy = yOf(item.place) - y;
     const d = dx * dx + dy * dy;
     if (d < bestD) {
       best = item;
@@ -456,7 +458,8 @@ function nearest<T extends { place: PlaceRef; id?: number }>(
  */
 function wander(input: ThinkInput): Intent {
   const { id, traits } = input.snapshot;
-  const { x, y }: Point = pointOf(input.snapshot.place);
+  const x = xOf(input.snapshot.place);
+  const y = yOf(input.snapshot.place);
   // Persist a heading across a stretch of ticks (hash by a coarse time bucket)
   // so roaming actually traverses ground to find sparse food, rather than
   // jittering in place. Curiosity lengthens the stride.
@@ -468,8 +471,7 @@ function wander(input: ThinkInput): Intent {
   // Shun the places where tragedy is remembered — belief steering avoidance.
   if (input.tragedyPlaces) {
     for (const place of input.tragedyPlaces) {
-      const t = pointOf(place);
-      if ((tx - t.x) ** 2 + (ty - t.y) ** 2 < 35 * 35) {
+      if ((tx - xOf(place)) ** 2 + (ty - yOf(place)) ** 2 < 35 * 35) {
         angle += Math.PI * 0.8;
         tx = x + Math.cos(angle) * stride;
         ty = y + Math.sin(angle) * stride;

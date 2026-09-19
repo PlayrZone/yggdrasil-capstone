@@ -124,6 +124,26 @@ export interface SerializedThinkInput
   nonFinite?: NonFiniteSubstitution[];
 }
 
+/**
+ * A ROW READ WITHOUT THE WORLD THAT WROTE IT (W1-B4 verifier, round 2, FAIL 4).
+ *
+ * `peekThinkInput` hands this back, and the whole point of it being a distinct
+ * type is that it is NOT a `ThinkInput`: every place is still the stored fields,
+ * so `buildThinkPrompt` and every replay path refuse it at compile time. A
+ * reader counting what a being perceived or bucketing its needs is served
+ * exactly as well as it was when `deserializeThinkInput`'s world was optional;
+ * a reader that meant to rebuild a prompt is told to bring the world instead of
+ * quietly rendering one with no pull in it.
+ */
+export type PeekedMemoryRecord = Omit<SerializedMemoryRecord, 'embedding'> & { embedding?: Float32Array };
+
+export interface UnvalidatedThinkInput
+  extends Omit<SerializedThinkInput, 'relationships' | 'recalledMemories' | 'nonFinite'> {
+  relationships: Map<number, RelationshipRecord>;
+  recalledMemories: PeekedMemoryRecord[];
+}
+
+
 // ─── One call to a backend ───────────────────────────────────────────────────
 
 /**

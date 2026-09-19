@@ -1,4 +1,4 @@
-import { Experiment, MockMindBackend, at, foragerAdapter } from '../../src/index.js';
+import { Experiment, MockMindBackend, at, codecFor, foragerAdapter } from '../../src/index.js';
 import type {
   CognitionOutcome,
   CognitionRecordV2,
@@ -48,7 +48,7 @@ const SACRED = { x: 900, y: 120 } as const;
  * W1-B4, and the body's refusal is an event the being remembers. `at` cannot
  * make one, so the world's own reader does.
  */
-const HALF: PlaceRef = foragerAdapter.space.decode({ x: 5 })!;
+const HALF: PlaceRef = codecFor(foragerAdapter.space).decode({ x: 5 })!;
 
 /**
  * Six decisions, cycled — every shape of place a model produces, in the acts

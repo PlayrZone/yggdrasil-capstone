@@ -1,5 +1,6 @@
 import type { WorldAdapter } from './adapter.js';
 import type { ActionId, KindId } from './ids.js';
+import { codecFor } from './space.js';
 import type { Intent } from './types.js';
 
 /**
@@ -178,7 +179,7 @@ export type ParamSchema = PlaceParam | NumberParam | RefParam | KindParam | Enum
  * agree about `x,y` without any of them containing the letters.
  */
 export function wireFieldsOf(world: WorldAdapter, param: ParamSchema): readonly ParamSchema[] {
-  return param.type === 'place' ? world.space.fields : [param];
+  return param.type === 'place' ? codecFor(world.space).fields : [param];
 }
 
 /**
@@ -346,7 +347,7 @@ function paramAccepts(world: WorldAdapter, param: ParamSchema, value: unknown): 
     // Only this world can say whether a place is one of its own, and it is
     // asked about the HANDLE, never about the fields it was written with.
     case 'place':
-      return world.space.isPlace(value);
+      return codecFor(world.space).isPlace(value);
     case 'number':
     case 'duration':
     case 'ref': {

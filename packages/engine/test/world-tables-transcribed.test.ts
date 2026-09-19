@@ -9,6 +9,7 @@ import { AgentMind } from '../src/agent/AgentMind.js';
 import { RuleIntern } from '../src/knowledge/KnowledgeStore.js';
 import { featureActive, traitCurveValue } from '../src/contract/adapter.js';
 import { inlinePlace } from '../src/contract/wire.js';
+import { codecFor } from '../src/contract/space.js';
 import type { MemoryRecord, SimEvent, Traits } from '../src/contract/types.js';
 import type { ContextFeatureKey, ContextFeatures, SimEventType } from '../src/worlds/forager/types.js';
 import { importanceOf } from '../src/memory/importance.js';
@@ -36,6 +37,8 @@ import {
   wasMemoryFromEvent,
 } from './fixtures/foragerTablesBefore.js';
 import type { Deltas } from './fixtures/foragerTablesBefore.js';
+
+const foragerPlaces = codecFor(foragerAdapter.space);
 
 /**
  * W1-B1 MOVED TABLES; IT DID NOT WRITE THEM. `fixtures/foragerTablesBefore.ts`
@@ -226,7 +229,7 @@ describe('the perspective switch became data without changing', () => {
         const event: SimEvent = { tick: 42, type, actorId: 1, targetIds: [2], x: 5, y: 6, payload };
         for (const selfId of [1, 2, 3]) {
           const was = wasMemoryFromEvent(event, selfId, CONTEXT);
-          const built = memoryFromEvent(foragerAdapter, event, selfId, CONTEXT);
+          const built = memoryFromEvent(foragerAdapter, event, selfId, CONTEXT, foragerPlaces.placeOf(event));
           // W1-B4: the memory holds an opaque place where it held `x`/`y`, and
           // the place IS those two fields — so what is compared is the memory
           // as it WRITES (`inlinePlace`, through the world's own `space.encode`), which is the form a corpus row and a
@@ -243,11 +246,11 @@ describe('the perspective switch became data without changing', () => {
 
   it('is a comparison that can fail', () => {
     const died: SimEvent = { tick: 1, type: 'AgentDied', actorId: 1, targetIds: [], x: 0, y: 0, payload: { killerId: 7 } };
-    const bystander = memoryFromEvent(foragerAdapter, died, 3, CONTEXT)!;
+    const bystander = memoryFromEvent(foragerAdapter, died, 3, CONTEXT, foragerPlaces.placeOf(died))!;
     expect(bystander.type).toBe('WitnessedDeath');
     expect(bystander.causedBy).toBe(7);
     expect(JSON.stringify(bystander)).not.toEqual(
-      JSON.stringify(memoryFromEvent(foragerAdapter, died, 1, CONTEXT)),
+      JSON.stringify(memoryFromEvent(foragerAdapter, died, 1, CONTEXT, foragerPlaces.placeOf(died))),
     );
   });
 });

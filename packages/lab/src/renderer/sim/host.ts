@@ -1,5 +1,12 @@
-import { Experiment, TICKS_PER_DAY, TICKS_PER_SEASON, TICKS_PER_YEAR, foragerAdapter } from '@yggdrasil/engine';
-import type { IMindBackend, IntentKind, SimEvent, ThinkInput, ThinkPrompt } from '@yggdrasil/engine';
+import {
+  Experiment,
+  TICKS_PER_DAY,
+  TICKS_PER_SEASON,
+  TICKS_PER_YEAR,
+  encodeThinkInputPlaces,
+  foragerAdapter,
+} from '@yggdrasil/engine';
+import type { IMindBackend, IntentKind, SimEvent, ThinkInput, ThinkPrompt, WorldAdapter } from '@yggdrasil/engine';
 import {
   ACT_DANGER,
   ACT_DRINKING,
@@ -197,7 +204,7 @@ export class ProxyMindBackend implements IMindBackend {
     readonly modelId: string,
     private readonly port: HostPort,
     /** The world the engine composed the prompt from — main checks against it. */
-    private readonly worldId: string,
+    private readonly world: WorldAdapter,
   ) {}
 
   /**
@@ -205,12 +212,22 @@ export class ProxyMindBackend implements IMindBackend {
    * situation they were composed from. The engine's contract is that a
    * transport backend sends `prompt` and nothing else — recomposing from
    * `input` is what made the record disagree with what was actually sent.
+   *
+   * THE PLACES ARE WRITTEN OUT FIRST (W1-B4 round 3). Since the mind stopped
+   * holding coordinates a place is an opaque handle whose whole state is
+   * private, and `postMessage` copies own enumerable properties — so a place
+   * that crossed untranslated would arrive as `{}`, the IPC gate would refuse
+   * the input and no conscious being in the lab would ever think. The world
+   * writes each one as the fields it writes a place with, which is byte for byte
+   * what used to cross when a place WAS those fields; main reads them back with
+   * the same world before it rebuilds the prompt it is about to pay for.
    */
   complete(prompt: ThinkPrompt, input: ThinkInput): Promise<string> {
     const reqId = ++this.seq;
+    const sent = encodeThinkInputPlaces(this.world, input);
     return new Promise<string>((resolve, reject) => {
       this.pending.set(reqId, { resolve, reject });
-      this.port.post({ kind: 'llm-request', reqId, prompt, input, worldId: this.worldId });
+      this.port.post({ kind: 'llm-request', reqId, prompt, input: sent, worldId: this.world.id });
     });
   }
 
@@ -473,7 +490,7 @@ export class SimHost {
     // Both lab scenarios — classic and continent — are the forager continent,
     // so its adapter is the one the engine will compose prompts from. When the
     // lab offers a second world this must come from that run's own scenario.
-    this.backend = llm ? new ProxyMindBackend(llm.model, this.port, foragerAdapter.id) : null;
+    this.backend = llm ? new ProxyMindBackend(llm.model, this.port, foragerAdapter) : null;
     const exp = new Experiment({ seed, agentCount: population, ...(this.backend ? { mindBackend: this.backend } : {}) });
     this.exp = exp;
     this.animalKinds = new KindCodec(); // a new world names its own wildlife

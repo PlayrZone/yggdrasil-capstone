@@ -55,7 +55,25 @@ export type PlaceRoute =
   | 'arithmetic'
   | 'comparison'
   | 'cast away'
-  | 'mint';
+  | 'mint'
+  /** Holding the edge-facing codec — `encode`, `decode`, `placeOf`, `fields`. */
+  | 'codec'
+  /** `eval` / `new Function`, which no static rule can see inside. */
+  | 'eval'
+  /** A `label` result doing anything but going into a sentence. */
+  | 'label text';
+
+/**
+ * WHICH QUESTIONS ARE ASKED OF A FILE.
+ *
+ *  · `mind` — everything. A mind directory may not open a place, may not hold
+ *    the codec, may not `eval`, and may not do anything with a `label` result
+ *    except splice it into a sentence.
+ *  · `seam` — the place routes only. `contract/wire.ts` and `record/serialize.ts`
+ *    ARE the codec's callers by design; policing them for holding it would be a
+ *    dozen allow-list entries saying "the codec file uses the codec".
+ */
+export type LeakScope = 'mind' | 'seam';
 
 /**
  * EVERY FUNCTION THAT OPENS A VALUE RATHER THAN PASSING IT ON. `Object.assign`
@@ -114,17 +132,24 @@ export function compilerOptionsFor(tsconfig: string): ts.CompilerOptions {
 }
 
 /** Every place-handling leak in `files`, in source order. */
-export function placeLeaksIn(program: ts.Program, files: readonly string[]): PlaceLeak[] {
+export function placeLeaksIn(program: ts.Program, files: readonly string[], scope: LeakScope = 'mind'): PlaceLeak[] {
   const checker = program.getTypeChecker();
 
-  /** Is this type `PlaceRef` — the one declared in `contract/space.ts`? */
-  const isPlaceRef = (type: ts.Type): boolean => {
+  /** Is this type the one `contract/space.ts` declares under `name`? */
+  const declaredInSpace = (type: ts.Type, name: string): boolean => {
     const symbol = type.aliasSymbol ?? type.getSymbol();
-    if (symbol?.getName() !== 'PlaceRef') return false;
+    if (symbol?.getName() !== name) return false;
     return (symbol.getDeclarations() ?? []).some(
       (d) => path.resolve(d.getSourceFile().fileName).toLowerCase() === SPACE_MODULE.toLowerCase(),
     );
   };
+
+  const isPlaceRef = (type: ts.Type): boolean => declaredInSpace(type, 'PlaceRef');
+  const isCodec = (type: ts.Type): boolean =>
+    type.isUnionOrIntersection()
+      ? type.types.some((t) => declaredInSpace(t, 'SpaceCodec'))
+      : declaredInSpace(type, 'SpaceCodec');
+  const isSpaceOps = (type: ts.Type): boolean => declaredInSpace(type, 'SpaceOps');
 
   /**
    * …or a union with one in it, which is the shape a place is actually held in:
@@ -222,6 +247,37 @@ export function placeLeaksIn(program: ts.Program, files: readonly string[]): Pla
         if (from && !to) report(node, 'cast away');
         if (!from && to) report(node, 'mint');
       }
+      if (scope === 'mind') {
+        // THE CODEC, HELD (W1-B4 verifier, round 2, routes 20-22). `encode`,
+        // `decode`, `placeOf` and `fields` are not on the object a mind is given,
+        // so there is no property to reach for — but a file could still IMPORT
+        // `codecFor` and ask. Asked of the TYPE rather than of the name, so an
+        // alias, a re-export and a destructure are all the same finding.
+        if (
+          (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isCallExpression(node)) &&
+          !ts.isImportSpecifier(node.parent) &&
+          isCodec(typeOf(node))
+        ) {
+          report(node, 'codec');
+        }
+        // `eval` and `new Function` read source at runtime; no rule above can
+        // see inside a string.
+        if (ts.isCallExpression(node) && node.expression.getText() === 'eval') report(node, 'eval');
+        if (ts.isNewExpression(node) && node.expression.getText() === 'Function') report(node, 'eval');
+        // A `label` RESULT IS TEXT FOR A SENTENCE, and B5's lexicon is what
+        // finally makes it not a coordinate (`"900,120"` today). Until then the
+        // narrow rule: it may be interpolated or concatenated, and nothing else
+        // — `label(p).split(',').map(Number)` is route 19 and is a leak.
+        if (
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === 'label' &&
+          isSpaceOps(typeOf(node.expression.expression)) &&
+          !intoASentence(node)
+        ) {
+          report(node, 'label text');
+        }
+      }
       ts.forEachChild(node, visit);
     };
     ts.forEachChild(source, visit);
@@ -233,6 +289,41 @@ export function placeLeaksIn(program: ts.Program, files: readonly string[]): Pla
 function nothingLiteral(node: ts.Node): boolean {
   const text = node.getText();
   return text === 'undefined' || text === 'null';
+}
+
+/** Is this expression being spliced into a string and nothing else? */
+function intoASentence(node: ts.Node): boolean {
+  const parent = node.parent;
+  if (ts.isTemplateSpan(parent)) return true;
+  return ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.PlusToken;
+}
+
+/**
+ * EVERY NAMED FUNCTION IN A FILE, COUNTED — the answer to how round 2 widened
+ * the allow-list without touching it. Its key is `file:fn:route`, and a function
+ * name is not unique within a file: a second local arrow called `asPlace`, in a
+ * different function of `record/serialize.ts`, casting an arbitrary stored row
+ * to `PlaceRef`, kept the guard green. So every allow-listed name is asserted to
+ * occur EXACTLY ONCE in its file, and the excuse cannot be borrowed.
+ *
+ * Counted the same way `enclosing` names them, or the two would disagree about
+ * what a name means.
+ */
+export function functionNamesIn(program: ts.Program, fileName: string): Map<string, number> {
+  const source = program.getSourceFile(fileName);
+  if (!source) throw new Error(`the guard could not compile ${fileName}`);
+  const counts = new Map<string, number>();
+  const bump = (name: string): void => counts.set(name, (counts.get(name) ?? 0) + 1);
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isFunctionExpression(node)) {
+      bump(node.name?.getText() ?? '<anonymous>');
+    } else if (ts.isVariableDeclaration(node) && node.initializer && ts.isArrowFunction(node.initializer)) {
+      bump(node.name.getText());
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  return counts;
 }
 
 /** `file:fn:route`, which is what an allow-list entry and a control both name. */

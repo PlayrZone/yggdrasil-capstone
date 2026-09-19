@@ -12,9 +12,11 @@ import {
   ScaffoldLedger,
   attemptPrompt,
   buildThinkPrompt as buildThinkPromptIn,
+  codecFor,
   cognitionToExample,
   deserializeThinkInput,
   foragerAdapter,
+  peekThinkInput,
   retryPrompt,
   serializeThinkInput,
 } from '../src/index.js';
@@ -35,10 +37,13 @@ import type {
   RecorderWorld,
   RunManifest,
   RunSummary,
+  SerializedThinkInput,
   ThinkInput,
   Traits,
 } from '../src/index.js';
 import { at, pointOf } from '../src/worlds/forager/space.js';
+
+const foragerPlaces = codecFor(foragerAdapter.space);
 import { fingerprintOf } from './fingerprint.js';
 import { CTX, mem, resetIds } from './helpers.js';
 
@@ -1004,39 +1009,114 @@ describe('a non-finite number replays to the bytes that were sent', () => {
   });
 
   /**
-   * WITHOUT A WORLD IT STILL CHECKS THE ROW (W1-B4 verifier, backlog 7).
+   * ─── THE 17 ROW SHAPES, ON BOTH PATHS ──────────────────────────────────────
    *
-   * Making the adapter optional quietly made the validation optional too: which
-   * fields are a place and which pressures exist are both read off the world, so
-   * with no world `assertReplayable` checked NEITHER, and a row with a lost
-   * coordinate or `needs.hunger: null` replayed silently where it used to throw.
-   * `eval/trace.ts` is such a caller. It now asks the two questions that need no
-   * world — every pressure the ROW names, and every stored number that is gone —
-   * and says out loud that only a world can tell it a place field is MISSING.
+   * W1-B4 verifier, round 2, FAIL 4. `deserializeThinkInput`'s world was
+   * optional, and four row shapes that `c727af7` refused replayed silently
+   * without one — while PASSING a world made validation WEAKER for
+   * `tragedyPlaces`, which nothing checked at all.
+   *
+   * The world is REQUIRED now, so the replay path is one path and it refuses a
+   * superset of what base refused. A caller with a row from a world this process
+   * does not have calls `peekThinkInput`, whose RESULT cannot be replayed — see
+   * the test below this one.
+   *
+   * `peek` still asks everything that is true of a row whatever wrote it. The
+   * three it cannot ask are the three that are a question about a world's own
+   * schema — that a field is MISSING, or spelled with letters where this world
+   * writes a number — and those are marked `unasked` with the reason. They are
+   * not a hole a row can fall through: nothing can replay what `peek` returns.
    */
-  it('refuses a malformed place and a lost pressure even when no world was handed over', () => {
-    const clean = wire(serializeThinkInput(nonFiniteInput({ sacredPlace: { x: 900, y: 120 } }), foragerAdapter));
-    expect(() => deserializeThinkInput(clean)).not.toThrow();
-
-    const nulled = { ...clean, snapshot: { ...clean.snapshot, x: null as unknown as number } };
-    expect(() => deserializeThinkInput(nulled)).toThrow(/snapshot\.x is null/);
-    const notANumber = { ...clean, snapshot: { ...clean.snapshot, y: NaN as unknown as number } };
-    expect(() => deserializeThinkInput(notANumber)).toThrow(/snapshot\.y is NaN/);
-    const lostNeed = {
-      ...clean,
-      snapshot: { ...clean.snapshot, needs: { ...clean.snapshot.needs, hunger: null as unknown as number } },
+  it('refuses the same rows `c727af7` refused, and four more, with the world', () => {
+    const clean = wire(
+      serializeThinkInput(
+        { ...nonFiniteInput({ sacredPlace: { x: 900, y: 120 } }), tragedyPlaces: [at(1, 2), at(3, 4)] },
+        foragerAdapter,
+      ),
+    );
+    type Row = Record<string, unknown>;
+    const snapshotWith = (over: Row): SerializedThinkInput =>
+      ({ ...clean, snapshot: { ...(clean.snapshot as unknown as Row), ...over } }) as unknown as SerializedThinkInput;
+    const snapshotWithout = (key: string): SerializedThinkInput => {
+      const snapshot = { ...(clean.snapshot as unknown as Row) };
+      delete snapshot[key];
+      return { ...clean, snapshot } as unknown as SerializedThinkInput;
     };
-    expect(() => deserializeThinkInput(lostNeed)).toThrow(/snapshot\.needs\.hunger is null/);
-    const brokenSite = { ...clean, sacredPlace: { x: null, y: 120 } };
-    expect(() => deserializeThinkInput(brokenSite)).toThrow(/sacredPlace\.x is null/);
-    const brokenTragedy = { ...clean, tragedyPlaces: [{ x: 1, y: 2 }, { x: 3, y: null }] };
-    expect(() => deserializeThinkInput(brokenTragedy)).toThrow(/tragedyPlaces\[1\]\.y is null/);
+    const needsWith = (over: Row): SerializedThinkInput =>
+      snapshotWith({ needs: { ...((clean.snapshot as unknown as Row)['needs'] as Row), ...over } });
+    const needsWithout = (key: string): SerializedThinkInput => {
+      const needs = { ...((clean.snapshot as unknown as Row)['needs'] as Row) };
+      delete needs[key];
+      return snapshotWith({ needs });
+    };
 
-    // …and the one it cannot ask: which of the snapshot's keys were the place.
-    const missing = { ...clean, snapshot: { ...clean.snapshot } };
-    delete (missing.snapshot as Record<string, unknown>)['x'];
-    expect(() => deserializeThinkInput(missing)).not.toThrow();
-    expect(() => deserializeThinkInput(missing, foragerAdapter)).toThrow(/snapshot\.x is undefined/);
+    /** `refused` naming the field, or `unasked` with the reason it cannot be. */
+    const CASES: [string, SerializedThinkInput, RegExp | 'unasked'][] = [
+      ['snapshot.x: null', snapshotWith({ x: null }), /snapshot\.x is null/],
+      ['snapshot.x: "120"', snapshotWith({ x: '120' }), /snapshot\.x is 120/],
+      ['snapshot.x missing', snapshotWithout('x'), /snapshot\.x is undefined/],
+      ['snapshot.y: NaN, uncarried', snapshotWith({ y: NaN }), /snapshot\.y is NaN/],
+      ['snapshot.health: null', snapshotWith({ health: null }), /snapshot\.health is null/],
+      ['snapshot.ageTicks missing', snapshotWithout('ageTicks'), /snapshot\.ageTicks is undefined/],
+      ['needs.hunger: null', needsWith({ hunger: null }), /snapshot\.needs\.hunger is null/],
+      ['needs.hunger: "40"', needsWith({ hunger: '40' }), /snapshot\.needs\.hunger is 40/],
+      ['needs.hunger missing', needsWithout('hunger'), /snapshot\.needs\.hunger is undefined/],
+      ['traits.curiosity: null', snapshotWith({ traits: { curiosity: null } }), /snapshot\.traits\.curiosity is null/],
+      ['inventory.berry: null', snapshotWith({ inventory: { berry: null } }), /snapshot\.inventory\.berry is null/],
+      ['worldView.tick: null', { ...clean, worldView: { ...clean.worldView, tick: null } } as unknown as SerializedThinkInput, /worldView\.tick is null/],
+      ['knowledge[0].confidence: null', { ...clean, knowledge: [{ ...clean.knowledge[0]!, confidence: null }] } as unknown as SerializedThinkInput, /knowledge\[.*\]\.confidence/],
+      ['sacredPlace.x: null', { ...clean, sacredPlace: { x: null, y: 120 } } as unknown as SerializedThinkInput, /sacredPlace\.x is null/],
+      ['sacredPlace.x: "5"', { ...clean, sacredPlace: { x: '5', y: 120 } } as unknown as SerializedThinkInput, /sacredPlace\.x is 5/],
+      ['sacredPlace.x missing', { ...clean, sacredPlace: { y: 120 } } as unknown as SerializedThinkInput, /sacredPlace\.x is undefined/],
+      ['tragedyPlaces[1].y: null', { ...clean, tragedyPlaces: [{ x: 1, y: 2 }, { x: 3, y: null }] } as unknown as SerializedThinkInput, /tragedyPlaces\[1\]\.y is null/],
+    ];
+    expect(CASES).toHaveLength(17);
+
+    // The clean row is clean on both paths, or the table proves nothing.
+    expect(() => deserializeThinkInput(clean, foragerAdapter)).not.toThrow();
+    expect(() => peekThinkInput(clean)).not.toThrow();
+
+    /** What `peek` cannot ask, and why — a world's own schema, not a number. */
+    const UNASKED = new Set([
+      'snapshot.x: "120"',
+      'snapshot.x missing',
+      'needs.hunger missing',
+      'sacredPlace.x: "5"',
+      'sacredPlace.x missing',
+    ]);
+
+    for (const [what, row, expected] of CASES) {
+      expect(() => deserializeThinkInput(row, foragerAdapter), `with world: ${what}`).toThrow(expected as RegExp);
+      if (UNASKED.has(what)) {
+        expect(() => peekThinkInput(row), `peek: ${what}`).not.toThrow();
+      } else {
+        expect(() => peekThinkInput(row), `peek: ${what}`).toThrow(expected as RegExp);
+      }
+    }
+  });
+
+  /**
+   * …AND WHAT `peek` HANDS BACK CANNOT BE REPLAYED. That is the whole reason the
+   * five cases above are allowed to go unasked: the type says the row has not
+   * been held to a world's schema, so `buildThinkPrompt` will not take it and
+   * neither will anything that rebuilds a call.
+   */
+  it('hands back a row that carries its places as stored, and that no prompt will take', () => {
+    const clean = wire(serializeThinkInput(nonFiniteInput({ sacredPlace: { x: 900, y: 120 } }), foragerAdapter));
+    const peeked = peekThinkInput(clean);
+    // Everything a world-free reader wants is there and right.
+    expect(peeked.worldView.tick).toBe(1);
+    expect(peeked.snapshot.needs).toEqual((clean.snapshot as unknown as Record<string, unknown>)['needs']);
+    expect(peeked.relationships).toBeInstanceOf(Map);
+    // The places are the stored fields, NOT handles — which is what the type says
+    // and why `buildThinkPrompt(peeked)` is a compile error.
+    expect(peeked.sacredPlace).toEqual({ x: 900, y: 120 });
+    expect(foragerPlaces.owns(peeked.sacredPlace)).toBe(false);
+    expect(foragerPlaces.owns((peeked.snapshot as unknown as Record<string, unknown>)['place'])).toBe(false);
+    // …and the world path does hand back handles, for the same row.
+    const replayed = deserializeThinkInput(clean, foragerAdapter);
+    expect(foragerPlaces.owns(replayed.sacredPlace)).toBe(true);
+    expect(foragerAdapter.space.equal(replayed.sacredPlace!, at(900, 120))).toBe(true);
   });
 
   /**
@@ -1228,6 +1308,7 @@ describe('a closed recorder counts nothing more', () => {
           ...(level ? { provenance: level } : {}),
         },
         scaffold: new ScaffoldLedger(),
+        adapter: foragerAdapter,
         world: world(),
         nowMs: () => 0,
       });
@@ -1259,6 +1340,7 @@ describe('a closed recorder counts nothing more', () => {
       backendLabel: 'mock/x',
       options: { agentCount: 1, mythBehavior: false, leadership: false, offerMaking: false, craftLearning: false, outcomeWindowTicks: 100 },
       scaffold: new ScaffoldLedger(),
+      adapter: foragerAdapter,
       world: world(),
       nowMs: () => 0,
     });

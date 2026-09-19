@@ -1,6 +1,7 @@
 import type { EventRoleSchema, WorldAdapter } from '../contract/adapter.js';
 import type { ContextRecord, DriveDeltas, DriveId, EventId, ItemCounts, KindId } from '../contract/ids.js';
 import type { WorldGate } from '../contract/gate.js';
+import type { PlaceRef } from '../contract/space.js';
 import type { MemoryRecord, SimEvent, Utterance } from '../contract/types.js';
 import { importanceOf } from './importance.js';
 
@@ -21,12 +22,21 @@ import { importanceOf } from './importance.js';
  * never heard of, indistinguishable from a dull one.
  *
  * Returns undefined when the event is not memorable from this perspective.
+ *
+ * WHERE IT HAPPENED IS HANDED IN, not asked for (W1-B4 round 3). Reading a
+ * world's geometry off a world's carrier is `SpaceCodec.placeOf`, and the codec
+ * is not something a mind directory may hold — so the CALLER, which is the edge
+ * where a `SimEvent` enters the mind at all (`runner/EventPipeline.ts`), asks
+ * once per event and hands the handle to each of the N witnesses. It used to be
+ * asked once per witness, which also meant N identical places allocated for one
+ * thing that happened.
  */
 export function memoryFromEvent(
   world: WorldAdapter,
   event: SimEvent,
   selfId: number,
   context: ContextRecord,
+  place: PlaceRef | undefined,
   gate?: WorldGate,
 ): Omit<MemoryRecord, 'id'> | undefined {
   const schema = world.eventById.get(event.type);
@@ -99,11 +109,9 @@ export function memoryFromEvent(
     context,
     needDeltas: deltas,
     outcome: schema.outcome ?? 'neutral',
-    // WHERE IT HAPPENED, WITHOUT KNOWING WHERE (W1-B4). The event is the
-    // world's own carrier and only the world can read its geometry off it; what
-    // comes back is a handle this file can store and compare through nothing
-    // but `SpaceOps`.
-    place: world.space.placeOf(event),
+    // WHERE IT HAPPENED, WITHOUT KNOWING WHERE (W1-B4). A handle this file can
+    // store and compare through nothing but `SpaceOps`.
+    place,
     summaryText: describeEpisode(type, subjects, objectKind, causedBy),
     importance: importanceOf(world, type, deltas),
     origin,

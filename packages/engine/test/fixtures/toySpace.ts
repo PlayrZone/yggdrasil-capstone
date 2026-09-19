@@ -1,5 +1,5 @@
-import { guardPlaces } from '../../src/contract/space.js';
-import type { DirectionId, PlaceRef, SpaceOps } from '../../src/contract/space.js';
+import { defineSpace } from '../../src/contract/space.js';
+import type { DirectionId, PlaceRef, SpaceCodec, SpaceOps } from '../../src/contract/space.js';
 
 /**
  * A SPACE WITH NO COORDINATES IN IT AT ALL (W1-B4).
@@ -14,6 +14,12 @@ import type { DirectionId, PlaceRef, SpaceOps } from '../../src/contract/space.j
  *     hollow ── ridge ── well
  *        │
  *      burrow
+ *
+ * Its handle is built the same way the plane's is (round 3): a class whose one
+ * field is `#private`, a prototype with nothing on it, frozen instances. A toy
+ * world is the place a shortcut would be most tempting and least noticed, so it
+ * takes the same medicine — which is also what makes "the continent refuses a
+ * toy place" a test of ownership rather than of two different field names.
  */
 
 const WAYS: Readonly<Record<string, readonly string[]>> = {
@@ -25,18 +31,34 @@ const WAYS: Readonly<Record<string, readonly string[]>> = {
 
 export const TOY_SPOTS: readonly string[] = ['hollow', 'ridge', 'well', 'burrow'];
 
-/** Somewhere you can be. The whole runtime value of a place in this world. */
-interface Spot {
-  spot: string;
+/** Somewhere you can be. The whole runtime state of a place in this world. */
+class Somewhere {
+  readonly #spot: string;
+
+  constructor(name: string) {
+    this.#spot = name;
+    Object.freeze(this);
+  }
+
+  static owns(value: unknown): boolean {
+    return typeof value === 'object' && value !== null && #spot in value;
+  }
+
+  static read(place: PlaceRef): string {
+    return (place as unknown as Somewhere).#spot;
+  }
 }
 
-const asPlace = (spot: Spot): PlaceRef => spot as unknown as PlaceRef;
-const asSpot = (place: PlaceRef): Spot => place as unknown as Spot;
+Reflect.deleteProperty(Somewhere.prototype, 'constructor');
+Object.setPrototypeOf(Somewhere.prototype, null);
+Object.freeze(Somewhere.prototype);
 
 /** A place in this world, by name. */
 export function spot(name: string): PlaceRef {
-  return asPlace({ spot: name });
+  return new Somewhere(name) as unknown as PlaceRef;
 }
+
+const nameOf = Somewhere.read;
 
 /** Hops from one spot to another along the ways, or Infinity if unreachable. */
 function hops(from: string, to: string): number {
@@ -78,14 +100,18 @@ function stepToward(from: string, to: string): DirectionId {
 const wayfaring: SpaceOps = {
   /** You head FOR a place here; the directions are the spots themselves. */
   directions: [...TOY_SPOTS, 'here'],
-  /** One field, and it is a word — not two, and not numbers. */
-  fields: [{ id: 'spot', type: 'enum', values: TOY_SPOTS, hint: 'names one of the spots there are' }],
   unplaced: spot('hollow'),
 
-  distance: (a, b) => hops(asSpot(a).spot, asSpot(b).spot),
-  direction: (from, to) => stepToward(asSpot(from).spot, asSpot(to).spot),
-  within: (a, b, radius) => hops(asSpot(a).spot, asSpot(b).spot) <= radius,
-  equal: (a, b) => asSpot(a).spot === asSpot(b).spot,
+  distance: (a, b) => hops(nameOf(a), nameOf(b)),
+  direction: (from, to) => stepToward(nameOf(from), nameOf(to)),
+  within: (a, b, radius) => hops(nameOf(a), nameOf(b)) <= radius,
+  equal: (a, b) => nameOf(a) === nameOf(b),
+  label: (place) => nameOf(place),
+};
+
+const wayfaringCodec: SpaceCodec = {
+  /** One field, and it is a word — not two, and not numbers. */
+  fields: [{ id: 'spot', type: 'enum', values: TOY_SPOTS, hint: 'names one of the spots there are' }],
 
   placeOf(carrier) {
     if (carrier === null || typeof carrier !== 'object') return undefined;
@@ -93,17 +119,17 @@ const wayfaring: SpaceOps = {
     return typeof named === 'string' && named in WAYS ? spot(named) : undefined;
   },
 
-  label: (place) => asSpot(place).spot,
-  encode: (place) => ({ spot: asSpot(place).spot }),
+  encode: (place) => ({ spot: nameOf(place) }),
   decode(fields) {
     const named = fields['spot'];
     return typeof named === 'string' && named in WAYS ? spot(named) : undefined;
   },
   isPlace(value) {
     if (value === null || typeof value !== 'object') return false;
-    const named = (value as { spot?: unknown }).spot;
+    const named = Somewhere.owns(value) ? nameOf(value as unknown as PlaceRef) : (value as { spot?: unknown }).spot;
     return typeof named === 'string' && named in WAYS;
   },
+  owns: Somewhere.owns,
 };
 
 /**
@@ -111,4 +137,4 @@ const wayfaring: SpaceOps = {
  * world a place from the continent and it must say so rather than answer
  * `Infinity` hops to `undefined`.
  */
-export const toySpace: SpaceOps = guardPlaces(wayfaring);
+export const toySpace: SpaceOps = defineSpace({ ops: wayfaring, codec: wayfaringCodec });

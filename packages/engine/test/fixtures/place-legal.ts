@@ -30,13 +30,27 @@ export function samePlace(space: SpaceOps, a: PlaceRef, b: PlaceRef): boolean {
   return space.equal(a, b);
 }
 
-/** Written down — through the world, which is the one reviewed seam. */
-export function written(space: SpaceOps, place: PlaceRef): Record<string, unknown> {
-  return space.encode(place);
+/**
+ * Written down is NOT here any more (W1-B4 round 3). `encode` was on `SpaceOps`
+ * and so was reachable from every mind file that holds a world — the verifier's
+ * route 20, a codec door standing open on the mind's own object. It is on
+ * `SpaceCodec` now, which a mind cannot reach, so the positive control for
+ * writing a place down lives with the edges that do it.
+ */
+
+/**
+ * A LABEL GOES INTO A SENTENCE AND NOWHERE ELSE. On a plane it still renders
+ * `"900,120"` — a coordinate pair a mind could parse (verifier round 2, route
+ * 19) — and B5's lexicon is what finally makes it a WORD. Until then the narrow
+ * rule: interpolated or concatenated, never handled. `return space.label(p)`
+ * on its own is a LEAK under that rule, and deliberately so.
+ */
+export function sentence(space: SpaceOps, place: PlaceRef): string {
+  return `it lies toward ${space.label(place)}.`;
 }
 
-export function named(space: SpaceOps, place: PlaceRef): string {
-  return space.label(place);
+export function joined(space: SpaceOps, place: PlaceRef): string {
+  return 'toward ' + space.label(place);
 }
 
 /** Is there one at all? The one comparison that is not about places. */

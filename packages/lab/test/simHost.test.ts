@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Experiment, TICKS_PER_DAY } from '@yggdrasil/engine';
+import { Experiment, TICKS_PER_DAY, at, foragerAdapter } from '@yggdrasil/engine';
 import { daylightAt, ProxyMindBackend, SimHost, type HostPort } from '../src/renderer/sim/host.js';
 import {
   ACT_COUNT,
@@ -506,7 +506,7 @@ describe('SimHost — stats', () => {
 describe('ProxyMindBackend', () => {
   it('posts a think request and resolves with what comes back', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port, 'forager-continent');
+    const backend = new ProxyMindBackend('model-x', port, foragerAdapter);
     const prompt = { system: 'you are', user: 'hungry. what now?' };
     const promise = backend.complete(prompt as never, { situation: 'hungry' } as never);
     const request = port.last('llm-request')!;
@@ -514,14 +514,46 @@ describe('ProxyMindBackend', () => {
     // situation behind them. A transport bridge must never rebuild one from
     // the other.
     // …and the world it was composed FOR, so main can rebuild it to check.
-    expect(request).toMatchObject({ reqId: 1, prompt, input: { situation: 'hungry' }, worldId: 'forager-continent' });
+    expect(request).toMatchObject({ reqId: 1, prompt, input: { situation: 'hungry' }, worldId: foragerAdapter.id });
     backend.settle(request.reqId, '{"plan":[]}');
     await expect(promise).resolves.toBe('{"plan":[]}');
   });
 
+  /**
+   * THE PLACES GO OUT AS THE WORLD WRITES THEM (W1-B4 round 3). A place is an
+   * opaque handle now, and `postMessage`'s structured clone copies own
+   * enumerable properties — of which a place has none. Untranslated it would
+   * arrive as `{}`, main's gate would refuse the input and no conscious being in
+   * the lab would ever think. These are the same bytes that crossed before the
+   * step, when a place WAS its two fields.
+   */
+  it('writes every place out as this world writes one, so the clone carries it', async () => {
+    const port = new Recorder();
+    const backend = new ProxyMindBackend('model-x', port, foragerAdapter);
+    const input = {
+      snapshot: { id: 1, place: at(120, 80) },
+      worldView: { agents: [{ id: 2, place: at(3, 4) }], resources: [], structures: [] },
+      recalledMemories: [{ id: 9, place: at(5, 6) }, { id: 10 }],
+      sacredPlace: at(900, 120),
+      tragedyPlaces: [at(7, 8)],
+    };
+    void backend.complete({ system: '', user: '' } as never, input as never);
+    const sent = port.last('llm-request')!.input as Record<string, never>;
+    // What a structured clone would carry — checked on the CLONE, not on the
+    // object, because the object is what used to survive and no longer does.
+    const cloned = structuredClone(sent) as Record<string, Record<string, unknown>>;
+    expect(cloned['snapshot']).toEqual({ id: 1, place: { x: 120, y: 80 } });
+    expect(cloned['worldView']!['agents']).toEqual([{ id: 2, place: { x: 3, y: 4 } }]);
+    expect(cloned['recalledMemories']).toEqual([{ id: 9, place: { x: 5, y: 6 } }, { id: 10 }]);
+    expect(cloned['sacredPlace']).toEqual({ x: 900, y: 120 });
+    expect(cloned['tragedyPlaces']).toEqual([{ x: 7, y: 8 }]);
+    // …and the negative control: the handle itself clones to nothing at all.
+    expect(structuredClone(at(120, 80) as unknown as object)).toEqual({});
+  });
+
   it('rejects with the message main sent, so NO_LLM_KEY still reads as NO_LLM_KEY', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port, 'forager-continent');
+    const backend = new ProxyMindBackend('model-x', port, foragerAdapter);
     const promise = backend.complete({} as never, {} as never);
     backend.settle(1, undefined, 'NO_LLM_KEY');
     await expect(promise).rejects.toThrow('NO_LLM_KEY');
@@ -529,7 +561,7 @@ describe('ProxyMindBackend', () => {
 
   it('ignores a reply for a request it does not have, and fails the rest on abort', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port, 'forager-continent');
+    const backend = new ProxyMindBackend('model-x', port, foragerAdapter);
     expect(() => backend.settle(999, 'stray')).not.toThrow();
     const promise = backend.complete({} as never, {} as never);
     backend.abort();

@@ -1,7 +1,8 @@
 import { kindsFor, planArguments } from '../contract/actions.js';
 import type { ParamSchema } from '../contract/actions.js';
 import type { WorldAdapter } from '../contract/adapter.js';
-import type { SpaceOps } from '../contract/space.js';
+import { codecFor } from '../contract/space.js';
+import type { PlaceRef } from '../contract/space.js';
 import type { Goal, Intent, MindOutput, SpeechAct, Utterance } from '../contract/types.js';
 
 /**
@@ -149,8 +150,17 @@ interface Vocabulary {
   readonly args: readonly PlanArg[];
   readonly needs: ReadonlySet<string>;
   readonly needHint: string;
-  /** The only thing that can turn this world's fields into a place. */
-  readonly space: SpaceOps;
+  /**
+   * THE ONE THING THAT CAN TURN THIS WORLD'S FIELDS INTO A PLACE, and all that
+   * is kept of the codec: a bound `decode`, not the codec itself. The parser is
+   * the model's edge and genuinely has to build a place — but it needs exactly
+   * this one question answered, and holding the whole codec here would put
+   * `encode`, `placeOf` and the rest within reach of every function in a mind
+   * directory (W1-B4 verifier, round 2, routes 20-21). `vocabularyOf` is the
+   * single allow-listed seam that asks `codecFor`, and `test/mind-no-geometry`
+   * asserts there is exactly one function of that name in this file.
+   */
+  readonly decodePlace: (fields: Record<string, unknown>) => PlaceRef | undefined;
 }
 
 const VOCABULARIES = new WeakMap<WorldAdapter, Vocabulary>();
@@ -158,20 +168,21 @@ const VOCABULARIES = new WeakMap<WorldAdapter, Vocabulary>();
 function vocabularyOf(world: WorldAdapter): Vocabulary {
   const cached = VOCABULARIES.get(world);
   if (cached) return cached;
+  const codec = codecFor(world.space);
   const built: Vocabulary = {
     actions: new Set(world.actions.map((action) => action.id)),
-    args: planArguments(world).map((param) => planArg(world, param)),
+    args: planArguments(world).map((param) => planArg(world, param, codec.fields)),
     needs: new Set(world.drives.map((drive) => drive.id)),
     needHint: `a goal serves one of ${world.drives.map((drive) => drive.id).join(', ')}`,
-    space: world.space,
+    decodePlace: (fields) => codec.decode(fields),
   };
   VOCABULARIES.set(world, built);
   return built;
 }
 
-function planArg(world: WorldAdapter, param: ParamSchema): PlanArg {
+function planArg(world: WorldAdapter, param: ParamSchema, placeFields: readonly ParamSchema[]): PlanArg {
   if (param.type === 'place') {
-    return { id: param.id, fields: world.space.fields.map((field) => planArg(world, field)) };
+    return { id: param.id, fields: placeFields.map((field) => planArg(world, field, placeFields)) };
   }
   if (param.type === 'kind' || param.type === 'enum') {
     const values = param.type === 'kind' ? kindsFor(world, param) : [...param.values];
@@ -492,7 +503,7 @@ function readArg(
       const read = readArg(o, field, kind, vocab);
       if (read !== undefined) written[field.id] = read;
     }
-    return vocab.space.decode(written);
+    return vocab.decodePlace(written);
   }
   return arg.allowed ? readEnum(o, arg.id, arg.allowed, `${kind} ${arg.hint}`) : readNumber(o, arg.id);
 }

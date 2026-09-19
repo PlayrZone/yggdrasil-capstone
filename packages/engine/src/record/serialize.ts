@@ -1,4 +1,5 @@
 import type { WorldAdapter } from '../contract/adapter.js';
+import { codecFor } from '../contract/space.js';
 import type { PlaceRef } from '../contract/space.js';
 import { inlinePlace, liftPlace } from '../contract/wire.js';
 import type {
@@ -17,9 +18,11 @@ import type {
   CognitionRecordV2,
   NonFiniteSubstitution,
   NonFiniteToken,
+  PeekedMemoryRecord,
   SerializedKnowledgeRecord,
   SerializedMemoryRecord,
   SerializedThinkInput,
+  UnvalidatedThinkInput,
 } from './types.js';
 
 /**
@@ -76,26 +79,25 @@ export function serializeThinkInput(input: ThinkInput, world: WorldAdapter): Ser
 /**
  * The inverse — what a replay hands back to `buildThinkPrompt`.
  *
- * `world` is what turns the stored fields back into opaque places, and only it
- * knows which fields those were. It is OPTIONAL for one reason, written down
- * rather than left to be discovered: a caller that only reads what a being was
- * shown — its needs, its knowledge, what it perceived — does not need a place
- * at all, and requiring an adapter would break every such caller for nothing.
- * Without one the input carries no places and `buildThinkPrompt` renders no
- * pull toward a story's site; with one the replay is byte-identical.
+ * THE WORLD IS REQUIRED, and that is the whole of the W1-B4 verifier's round-2
+ * FAIL 4 (and round 1's backlog 7). It was optional, and the convenience cost
+ * more than it was worth twice over: only the world knows which stored fields
+ * were a place, so a world-less read handed back a `ThinkInput` whose places
+ * were raw wire data wearing the handle's type; and `assertReplayable` reads
+ * which fields those are and which pressures exist off the same world, so with
+ * no world it checked neither — four row shapes that `c727af7` refused replayed
+ * silently.
  *
- * WITHOUT ONE IT STILL CHECKS THE ROW (W1-B4 verifier, backlog 7). Making the
- * adapter optional quietly made the VALIDATION optional too: `assertReplayable`
- * reads which fields are a place and which pressures exist off the world, and
- * with no world it read neither — so a row with `needs.hunger: null` or a lost
- * coordinate replayed silently where it used to throw. The world-less path now
- * asks the two questions it can ask without a world: every pressure the ROW
- * itself names, and every stored number that has been LOST. The one thing it
- * still cannot ask is whether a place field is MISSING, because which fields
- * those are is the world's to say — which is exactly why the world is worth
- * passing.
+ * A caller that holds a row from a world this process does not have wants
+ * `peekThinkInput`, which says so in its return type.
+ *
+ * What it refuses is now a superset of what `c727af7` refused: the same
+ * snapshot numbers, the same needs (every drive the WORLD declares rather than
+ * four names typed out here), the same knowledge numbers, the same sacred
+ * place — plus every place in `tragedyPlaces`, which nothing checked before and
+ * which `wander` reads on the reflex path.
  */
-export function deserializeThinkInput(stored: SerializedThinkInput, world?: WorldAdapter): ThinkInput {
+export function deserializeThinkInput(stored: SerializedThinkInput, world: WorldAdapter): ThinkInput {
   // Substitutions are written back in place, so a row that carries any is copied
   // first: a caller's stored record must not be mutated, and replaying the same
   // row twice must find its placeholders where it left them.
@@ -103,7 +105,7 @@ export function deserializeThinkInput(stored: SerializedThinkInput, world?: Worl
   const restored = restoreNonFinite(source);
   assertReplayable(source, restored, world);
   const { relationships, recalledMemories, nonFinite: _nonFinite, ...rest } = source;
-  const lift = <T>(row: Record<string, unknown>): T => (world ? liftPlace<T>(world, row) : (row as T));
+  const lift = <T>(row: Record<string, unknown>): T => liftPlace<T>(world, row);
   return {
     // Key order kept, as on the way out: a row read and written again is the
     // same row.
@@ -113,14 +115,57 @@ export function deserializeThinkInput(stored: SerializedThinkInput, world?: Worl
   };
 }
 
+/**
+ * A ROW READ WITHOUT ITS WORLD — everything a reader can have when nobody in
+ * this process can say what a place is here.
+ *
+ * It is a separate function returning a separate TYPE rather than an optional
+ * argument, because the difference is not a nuance: `UnvalidatedThinkInput`
+ * keeps every place as the stored fields, so it is structurally NOT a
+ * `ThinkInput` and `buildThinkPrompt` will not take it. A caller counting what
+ * a being perceived, or bucketing its needs, reads this and is right; a caller
+ * that wanted to replay is told at compile time to bring the world.
+ *
+ * IT STILL CHECKS EVERY NUMBER IT CAN NAME WITHOUT ONE: the snapshot's own
+ * numbers, every pressure the ROW names, the traits, the inventory, the world
+ * tick, each belief's confidence and count, and any stored number ANYWHERE in
+ * the snapshot, the sacred place or a tragedy place that has been LOST — `null`
+ * from a truncated row, or a non-finite one the `nonFinite` side-channel did not
+ * carry. What it cannot ask is which fields SHOULD be there: that a need or a
+ * coordinate is missing altogether, or spelled with letters, is a question about
+ * a world's own schema, and this path has no world. That is the cost of reading
+ * a row from a world you do not have, and it is paid in the return type rather
+ * than in a prompt.
+ */
+export function peekThinkInput(stored: SerializedThinkInput): UnvalidatedThinkInput {
+  const source = stored.nonFinite && stored.nonFinite.length > 0 ? snapshotJson(stored) : stored;
+  const restored = restoreNonFinite(source);
+  assertPeekable(source, restored);
+  const { relationships, recalledMemories, nonFinite: _nonFinite, ...rest } = source;
+  return {
+    ...(rest as unknown as Omit<UnvalidatedThinkInput, 'relationships' | 'recalledMemories'>),
+    relationships: new Map(relationships.map(([id, r]) => [id, { ...r }])),
+    recalledMemories: recalledMemories.map(peekMemory),
+  };
+}
+
 /** The records of a think input that CARRY a place, with it written out. */
 function withPlacesWritten(
   rest: Omit<ThinkInput, 'relationships' | 'recalledMemories' | 'knowledge'>,
   world: WorldAdapter,
 ): Record<string, unknown> {
+  const codec = codecFor(world.space);
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(rest)) {
-    if (key === 'snapshot') out[key] = inlinePlace(world, value as AgentSnapshot);
+    // A STORY'S SITE AND THE PLACES A TRAGEDY SHUNS are places THEMSELVES rather
+    // than records carrying one, and until round 3 they were stored by simply
+    // being copied — on the unstated invariant that a place's runtime value IS
+    // its wire form. It never was an invariant of SPACE, only of a plane whose
+    // handle happened to be its own `{x, y}`; now the handle is opaque and a
+    // copy of one writes `{}`. So these ask the world like everything else.
+    if (key === 'sacredPlace') out[key] = codec.encode(value as PlaceRef);
+    else if (key === 'tragedyPlaces') out[key] = (value as PlaceRef[]).map((p) => codec.encode(p));
+    else if (key === 'snapshot') out[key] = inlinePlace(world, value as AgentSnapshot);
     else if (key === 'worldView') {
       const seen = value as WorldView;
       out[key] = {
@@ -145,12 +190,12 @@ function withPlacesWritten(
 function withPlacesLifted(
   rest: Record<string, unknown>,
   lift: <T>(row: Record<string, unknown>) => T,
-  world: WorldAdapter | undefined,
+  world: WorldAdapter,
 ): Record<string, unknown> {
+  const codec = codecFor(world.space);
   const asPlace = (stored: unknown): PlaceRef | undefined => {
     if (stored === null || stored === undefined || typeof stored !== 'object') return stored as PlaceRef | undefined;
-    if (!world) return stored as PlaceRef;
-    return world.space.decode(stored as Record<string, unknown>);
+    return codec.decode(stored as Record<string, unknown>);
   };
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(rest)) {
@@ -232,6 +277,13 @@ function deserializeMemory(
 ): MemoryRecord {
   const { embedding, ...rest } = m;
   const record = lift<MemoryRecord>(rest as Record<string, unknown>);
+  return embedding ? { ...record, embedding: Float32Array.from(embedding as number[]) } : record;
+}
+
+/** The same, with the place left exactly as stored — there is no world to ask. */
+function peekMemory(m: SerializedMemoryRecord): PeekedMemoryRecord {
+  const { embedding, ...rest } = m;
+  const record = rest as unknown as PeekedMemoryRecord;
   return embedding ? { ...record, embedding: Float32Array.from(embedding as number[]) } : record;
 }
 
@@ -338,54 +390,51 @@ function resolvePath(root: object, path: string): { holder: Record<string, numbe
 function assertReplayable(
   stored: SerializedThinkInput,
   restored: ReadonlySet<string>,
-  world: WorldAdapter | undefined,
+  world: WorldAdapter,
 ): void {
-  const num = (v: unknown, path: string, label = path.slice(2)): void => {
-    if (typeof v === 'number' && (Number.isFinite(v) || restored.has(path))) return;
-    throw new Error(`cognition record: ${label} is ${String(v)}, not a finite number — the row cannot be replayed`);
-  };
+  const num = numberChecker(restored);
   // WHICH FIELDS A PLACE IS, AND THEIR ORDER, ARE THE WORLD'S (W1-B4) — the
   // paths are unchanged for the forager plane (`$.snapshot.x`, `$.sacredPlace.y`)
   // because those are the fields it writes a place with. Checked as STORED,
   // because that is the form `nonFinite` names and the form a row is read from.
-  const numbersIn = (row: Record<string, unknown> | undefined, at: string): void => {
-    if (!row || !world) return;
-    for (const field of world.space.fields) num(row[field.id], `${at}.${field.id}`);
+  const fields = codecFor(world.space).fields;
+  const placeIn = (row: Record<string, unknown> | undefined, at: string): void => {
+    if (!row) return;
+    for (const field of fields) num(row[field.id], `${at}.${field.id}`);
   };
   const s = stored.snapshot as unknown as Record<string, unknown>;
-  numbersIn(s, '$.snapshot');
-  num(s['health'], '$.snapshot.health');
-  num(s['ageTicks'], '$.snapshot.ageTicks');
-  // Every pressure this world declares. The four named by hand here were the
-  // forager's, and a world with others simply went unchecked.
-  for (const drive of world?.drives ?? []) {
-    num((s['needs'] as Record<string, unknown> | undefined)?.[drive.id], `$.snapshot.needs.${drive.id}`);
-  }
-  for (const [key, value] of Object.entries((s['traits'] ?? {}) as Record<string, unknown>)) {
-    num(value, `$.snapshot.traits.${key}`);
-  }
-  // An inventory count renders too, and a lost one drops the item from the line
-  // silently rather than throwing — the quietest way for a replay to differ.
-  for (const [key, value] of Object.entries((s['inventory'] ?? {}) as Record<string, unknown>)) {
-    num(value, `$.snapshot.inventory.${key}`);
-  }
-  num(stored.worldView?.tick, '$.worldView.tick');
-  stored.knowledge.forEach((k, i) => {
-    num(k.confidence, `$.knowledge[${i}].confidence`, `knowledge[${k.id}].confidence`);
-    num(k.evidenceCount, `$.knowledge[${i}].evidenceCount`, `knowledge[${k.id}].evidenceCount`);
+  placeIn(s, '$.snapshot');
+  // Every pressure this world declares, checked where `c727af7` checked its own
+  // four — the ORDER of these is which defect a doubly-broken row names first.
+  commonNumbers(stored, num, () => {
+    for (const drive of world.drives) {
+      num((s['needs'] as Record<string, unknown> | undefined)?.[drive.id], `$.snapshot.needs.${drive.id}`);
+    }
   });
-  numbersIn(stored.sacredPlace, '$.sacredPlace');
-  if (world) return;
+  placeIn(stored.sacredPlace, '$.sacredPlace');
+  // EVERY PLACE A TRAGEDY MADE A BEING SHUN, held to the same standard as the
+  // one that draws it (round 2, FAIL 4): nothing checked these, so passing the
+  // world used to make validation WEAKER here than not passing it. `wander`
+  // reads them on the reflex path, so a half-written one is a lost destination,
+  // not a cosmetic gap.
+  stored.tragedyPlaces?.forEach((place, i) => placeIn(place, `$.tragedyPlaces[${i}]`));
+}
 
-  // ─── No world: what can still be asked, is (verifier backlog 7) ───────────
-  //
-  // Every pressure the ROW names, rather than every pressure the world declares.
-  // For a real forager row the two sets are the same four, which is why this
-  // restores the check rather than changing it; for a row from a world this
-  // process has never heard of it is the only honest reading.
-  for (const key of Object.keys((s['needs'] ?? {}) as Record<string, unknown>)) {
-    num((s['needs'] as Record<string, unknown>)[key], `$.snapshot.needs.${key}`);
-  }
+/**
+ * The same row, judged by everything that is true of a row whatever world wrote
+ * it. See `peekThinkInput` for what this deliberately cannot ask.
+ */
+function assertPeekable(stored: SerializedThinkInput, restored: ReadonlySet<string>): void {
+  const num = numberChecker(restored);
+  const s = stored.snapshot as unknown as Record<string, unknown>;
+  commonNumbers(stored, num, () => {
+    // Every pressure the ROW names, rather than every pressure a world declares.
+    // For a real forager row the two sets are the same four, which is why this
+    // is the check `c727af7` had rather than a different one.
+    for (const key of Object.keys((s['needs'] ?? {}) as Record<string, unknown>)) {
+      num((s['needs'] as Record<string, unknown>)[key], `$.snapshot.needs.${key}`);
+    }
+  });
   // A LOST NUMBER, wherever it sits. `null` is what a truncated or hand-edited
   // row puts where a number was, and a non-finite one that `nonFinite` did not
   // carry is a number the row failed to preserve. Which of the snapshot's keys
@@ -400,4 +449,37 @@ function assertReplayable(
   lost(s, '$.snapshot');
   lost(stored.sacredPlace, '$.sacredPlace');
   stored.tragedyPlaces?.forEach((place, i) => lost(place, `$.tragedyPlaces[${i}]`));
+}
+
+/** A number the prompt formats, or a named refusal. */
+function numberChecker(restored: ReadonlySet<string>): (v: unknown, path: string, label?: string) => void {
+  return (v: unknown, path: string, label = path.slice(2)): void => {
+    if (typeof v === 'number' && (Number.isFinite(v) || restored.has(path))) return;
+    throw new Error(`cognition record: ${label} is ${String(v)}, not a finite number — the row cannot be replayed`);
+  };
+}
+
+/** Every number a row must carry that no world has an opinion about. */
+function commonNumbers(
+  stored: SerializedThinkInput,
+  num: (v: unknown, path: string, label?: string) => void,
+  needs: () => void,
+): void {
+  const s = stored.snapshot as unknown as Record<string, unknown>;
+  num(s['health'], '$.snapshot.health');
+  num(s['ageTicks'], '$.snapshot.ageTicks');
+  needs();
+  for (const [key, value] of Object.entries((s['traits'] ?? {}) as Record<string, unknown>)) {
+    num(value, `$.snapshot.traits.${key}`);
+  }
+  // An inventory count renders too, and a lost one drops the item from the line
+  // silently rather than throwing — the quietest way for a replay to differ.
+  for (const [key, value] of Object.entries((s['inventory'] ?? {}) as Record<string, unknown>)) {
+    num(value, `$.snapshot.inventory.${key}`);
+  }
+  num(stored.worldView?.tick, '$.worldView.tick');
+  stored.knowledge.forEach((k, i) => {
+    num(k.confidence, `$.knowledge[${i}].confidence`, `knowledge[${k.id}].confidence`);
+    num(k.evidenceCount, `$.knowledge[${i}].evidenceCount`, `knowledge[${k.id}].evidenceCount`);
+  });
 }

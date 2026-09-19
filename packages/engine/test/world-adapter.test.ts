@@ -31,23 +31,23 @@ describe('a mind in a toy world', () => {
   it('takes its perspectives from the toy world’s roles', () => {
     const given = event('GaveItem', 1, [2]);
     // The giver remembers giving; the receiver remembers receiving — both worlds.
-    expect(memoryFromEvent(toyWorld, given, 1, OUT_OF_IT)?.type).toBe('GaveItem');
-    expect(memoryFromEvent(toyWorld, given, 2, OUT_OF_IT)?.type).toBe('ReceivedItem');
+    expect(memoryFromEvent(toyWorld, given, 1, OUT_OF_IT, undefined)?.type).toBe('GaveItem');
+    expect(memoryFromEvent(toyWorld, given, 2, OUT_OF_IT, undefined)?.type).toBe('ReceivedItem');
     // …but in the toy world a bystander sees nothing at all, where a forager
     // bystander records an observation. Same code, different world.
-    expect(memoryFromEvent(toyWorld, given, 3, OUT_OF_IT)).toBeUndefined();
-    expect(memoryFromEvent(foragerAdapter, given, 3, OUT_OF_IT)?.origin).toBe('observation');
+    expect(memoryFromEvent(toyWorld, given, 3, OUT_OF_IT, undefined)).toBeUndefined();
+    expect(memoryFromEvent(foragerAdapter, given, 3, OUT_OF_IT, undefined)?.origin).toBe('observation');
   });
 
   it('moves relationships by the toy world’s deltas', () => {
     const mind = new AgentMind(1, toyWorld);
-    mind.observe(memoryFromEvent(toyWorld, event('GaveItem', 2, [1]), 1, OUT_OF_IT)!);
+    mind.observe(memoryFromEvent(toyWorld, event('GaveItem', 2, [1]), 1, OUT_OF_IT, undefined)!);
     const r = mind.relationships.get(2)!;
     expect({ trust: r.trust, friendship: r.friendship }).toEqual({ trust: 80, friendship: 90 });
 
     // The forager world, same act, same class: its own much smaller numbers.
     const forager = new AgentMind(1, foragerAdapter);
-    forager.observe(memoryFromEvent(foragerAdapter, event('GaveItem', 2, [1]), 1, OUT_OF_IT)!);
+    forager.observe(memoryFromEvent(foragerAdapter, event('GaveItem', 2, [1]), 1, OUT_OF_IT, undefined)!);
     const f = forager.relationships.get(2)!;
     expect({ trust: f.trust, friendship: f.friendship }).toEqual({ trust: 56, friendship: 55 });
   });
@@ -57,8 +57,8 @@ describe('a mind in a toy world', () => {
     // Five meals in it, five gifts out of it: the feature co-occurs with eating
     // at twice chance, which clears the miner's lift threshold.
     for (let i = 0; i < 5; i++) {
-      mind.observe(memoryFromEvent(toyWorld, event('AteFood', 1, [], i), 1, IN_IT)!);
-      mind.observe(memoryFromEvent(toyWorld, event('GaveItem', 1, [2], i), 1, OUT_OF_IT)!);
+      mind.observe(memoryFromEvent(toyWorld, event('AteFood', 1, [], i), 1, IN_IT, undefined)!);
+      mind.observe(memoryFromEvent(toyWorld, event('GaveItem', 1, [2], i), 1, OUT_OF_IT, undefined)!);
     }
     mind.consolidate(100);
 
@@ -87,7 +87,7 @@ describe('two worlds in one process', () => {
     for (let tick = 0; tick < 4; tick++) {
       for (const { world, mind } of inhabitants) {
         const received = event('ReceivedItem', 9, [mind.agentId], tick);
-        mind.observe(memoryFromEvent(world, received, mind.agentId, OUT_OF_IT)!);
+        mind.observe(memoryFromEvent(world, received, mind.agentId, OUT_OF_IT, undefined)!);
       }
     }
     for (const { mind, salience } of inhabitants) {

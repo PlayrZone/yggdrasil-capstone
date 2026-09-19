@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { foragerAdapter } from '@yggdrasil/engine';
+import { codecFor, foragerAdapter } from '@yggdrasil/engine';
 import {
   PROMPT_LIMITS,
   RateLimiter,
@@ -19,7 +19,8 @@ import {
  * may write `{"kind":"MoveTo","x":5}`), and a hand-rolled copy would have
  * quietly guessed otherwise.
  */
-const isPlace = (value: unknown): boolean => foragerAdapter.space.isPlace(value);
+const foragerPlaces = codecFor(foragerAdapter.space);
+const isPlace = (value: unknown): boolean => foragerPlaces.isPlace(value);
 
 /** A payload whose only unusual thing is where the being is standing. */
 const withPlace = (place: unknown): Record<string, unknown> =>
@@ -396,11 +397,11 @@ describe('validateThinkInput asks the world what a place is', () => {
    */
   it("takes the predicate it is handed — the completeness question is the caller's", () => {
     // The world's own answer, pinned: the divergence is a decision, not a bug.
-    expect(foragerAdapter.space.isPlace({ y: 80 })).toBe(true);
+    expect(foragerPlaces.isPlace({ y: 80 })).toBe(true);
     expect(validateThinkInput(withPlace({ y: 80 }), isPlace).ok).toBe(true);
     // The edge's sharper question, composed the way `llmBridge` composes it.
     const complete = (v: unknown): boolean =>
-      isPlace(v) && foragerAdapter.space.fields.every((f) => Object.prototype.hasOwnProperty.call(v, f.id) && (v as Record<string, unknown>)[f.id] !== undefined);
+      isPlace(v) && foragerPlaces.fields.every((f) => Object.prototype.hasOwnProperty.call(v, f.id) && (v as Record<string, unknown>)[f.id] !== undefined);
     expect(validateThinkInput(withPlace({ y: 80 }), complete).ok).toBe(false);
     expect(validateThinkInput(withPlace({ x: 120, y: 80 }), complete).ok).toBe(true);
     // …and an explicit `undefined` for both is not half-written, it is empty —

@@ -3,8 +3,9 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { codecFor } from '../src/contract/space.js';
 import { foragerAdapter } from '../src/worlds/forager/adapter.js';
-import { compilerOptionsFor, leakKey, placeLeaksIn } from './placeLeaks.js';
+import { compilerOptionsFor, functionNamesIn, leakKey, placeLeaksIn } from './placeLeaks.js';
 
 /**
  * THE MIND STOPPED KNOWING GEOMETRY, ENFORCED (W1-B4).
@@ -36,7 +37,7 @@ const TSCONFIG = fileURLToPath(new URL('../tsconfig.json', import.meta.url));
 const MIND_DIRS = ['agent', 'memory', 'learning', 'knowledge', 'relationships', 'narrative', 'consciousness'];
 
 /** The fields THIS world writes a place with — `x`, `y`. */
-const COORDS = new Set(foragerAdapter.space.fields.map((field) => field.id));
+const COORDS = new Set(codecFor(foragerAdapter.space).fields.map((field) => field.id));
 /** …and the words it decides a direction is. */
 const DIRECTIONS = new Set(foragerAdapter.space.directions);
 
@@ -198,16 +199,36 @@ const POLICED_SEAMS = ['contract/wire.ts', 'record/serialize.ts'];
 
 const ALLOW_LIST: { key: string; why: string }[] = [
   {
-    key: 'contract/wire.ts:encodeIntent:mint',
-    why: "narrows an Intent's own `place` field before handing it to `space.encode` — the codec's whole job",
+    key: 'contract/wire.ts:writeIntent:mint',
+    why: "narrows an Intent's own `place` field before handing it to the codec — the codec's whole job",
   },
   {
     key: 'contract/wire.ts:inlinePlace:mint',
-    why: 'the same narrowing for a record that carries one, on its way to `space.encode`',
+    why: 'the same narrowing for a record that carries one, on its way to `encode`',
+  },
+  {
+    key: 'record/serialize.ts:withPlacesWritten:mint',
+    why: "a story's site and the places a tragedy shuns are places THEMSELVES, and this narrows each before the world writes it",
   },
   {
     key: 'record/serialize.ts:asPlace:mint',
-    why: 'inside `withPlacesLifted`: a stored row read back with NO world carries wire data, and the world-less mode returns it as it always did',
+    why: 'inside `withPlacesLifted`: the stored fields of a site, narrowed on their way back through `decode`',
+  },
+];
+
+/**
+ * THE ONE MIND FILE THAT MAY HOLD THE CODEC, and the reason it is one.
+ *
+ * `consciousness/schema.ts` is the MODEL's edge: it reads a model's JSON and has
+ * to build a place out of the fields this world writes one as. It lives in a
+ * mind directory until B6 moves the directories, so it is allow-listed by file
+ * AND function — and what it keeps is a bound `decode`, not the codec, so
+ * `vocabularyOf` is the only function in the file that can see one.
+ */
+const CODEC_SEAMS: { key: string; why: string }[] = [
+  {
+    key: 'consciousness/schema.ts:vocabularyOf:codec',
+    why: "the parser's vocabulary is derived once per world, and binding `decode` into it is the only reach a mind directory has",
   },
 ];
 
@@ -215,11 +236,34 @@ describe('nothing in the mind opens a place (W1-B4 verifier, the second fail)', 
   const options = compilerOptionsFor(TSCONFIG);
   const mindSources = mindFiles().map((file) => path.join(SRC, file));
   const seamSources = POLICED_SEAMS.map((file) => path.join(SRC, file));
-  const controls = ['place-leaks.ts', 'place-legal.ts', 'place-refused.ts'].map((f) => path.join(SRC, '..', 'test', 'fixtures', f));
+  const controls = ['place-leaks.ts', 'place-legal.ts', 'place-refused.ts', 'place-codec.ts'].map((f) =>
+    path.join(SRC, '..', 'test', 'fixtures', f),
+  );
   const program = ts.createProgram([...mindSources, ...seamSources, ...controls], options);
 
-  it('finds nothing in the seven directories that are the mind', () => {
-    expect(placeLeaksIn(program, mindSources).map(leakKey)).toEqual([]);
+  it('finds nothing in the seven directories that are the mind, but the one reviewed parser seam', () => {
+    const found = placeLeaksIn(program, mindSources).map(leakKey);
+    expect(found.filter((key) => !CODEC_SEAMS.some((entry) => entry.key === key))).toEqual([]);
+    for (const entry of CODEC_SEAMS) expect(found, entry.why).toContain(entry.key);
+  }, 120_000);
+
+  /**
+   * THE ALLOW-LIST CANNOT BE WIDENED BY REUSING A NAME (round 2's last finding).
+   * Its key is `file:fn:route`, and a function name is not unique in a file — a
+   * SECOND local arrow called `asPlace`, inside a different function of
+   * `record/serialize.ts`, casting an arbitrary stored row to `PlaceRef`, left
+   * the guard green. So every excused name is asserted to occur exactly once in
+   * the file that excuses it.
+   */
+  it('every excused function name occurs exactly once in its file', () => {
+    const counted = new Map<string, Map<string, number>>();
+    for (const entry of [...ALLOW_LIST, ...CODEC_SEAMS]) {
+      const [file, fn] = entry.key.split(':');
+      const names =
+        counted.get(file!) ?? functionNamesIn(program, path.join(SRC, file!));
+      counted.set(file!, names);
+      expect(names.get(fn!), `${file}: ${fn} must be the only function of that name`).toBe(1);
+    }
   }, 120_000);
 
   /**
@@ -228,7 +272,7 @@ describe('nothing in the mind opens a place (W1-B4 verifier, the second fail)', 
    * everything they do is either on the list or a failure.
    */
   it('finds only the reviewed serialisation seam, by name, in the files that write a place down', () => {
-    const found = placeLeaksIn(program, seamSources).map(leakKey);
+    const found = placeLeaksIn(program, seamSources, 'seam').map(leakKey);
     expect(found.filter((key) => !ALLOW_LIST.some((entry) => entry.key === key))).toEqual([]);
     // …and the list is not stale: every entry on it is something that is really
     // there, so a fix that removes a seam removes its excuse with it.
@@ -298,6 +342,33 @@ describe('nothing in the mind opens a place (W1-B4 verifier, the second fail)', 
     const legal = path.join(SRC, '..', 'test', 'fixtures', 'place-legal.ts');
     expect(diagnosticsFor(program, legal)).toEqual([]);
     expect(placeLeaksIn(program, [legal]).map(leakKey)).toEqual([]);
+  }, 120_000);
+
+  /**
+   * THE THREE ROUTES THAT ARE NOT ABOUT OPENING A HANDLE (round 3). Holding the
+   * codec, reading source at runtime, and handling a `label` result are all
+   * things the type system is perfectly happy with — routes 17, 19, 20 and 21 of
+   * the verifier's 22. The fixture compiles cleanly and every function in it is
+   * caught.
+   */
+  it('catches holding the codec, eval, and a label that is handled rather than said', () => {
+    const codec = path.join(SRC, '..', 'test', 'fixtures', 'place-codec.ts');
+    expect(diagnosticsFor(program, codec)).toEqual([]);
+    expect([...new Set(placeLeaksIn(program, [codec]).map((leak) => `${leak.fn}:${leak.route}`))].sort()).toEqual(
+      [
+        'evaluatesIt:eval',
+        'holdsTheCodec:codec',
+        'keepsTheLabel:label text',
+        'mintsOne:codec',
+        'parsesTheLabel:label text',
+        'readsBySource:eval',
+        'writesOneDown:codec',
+      ].sort(),
+    );
+    // …and the SEAM scope deliberately does not ask those questions: the files
+    // that ARE the codec's callers would otherwise need a dozen excuses saying
+    // "the codec file uses the codec".
+    expect(placeLeaksIn(program, [codec], 'seam').map((leak) => leak.route)).toEqual([]);
   }, 120_000);
 });
 

@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { AgentMind, ForeignPlaceError, buildThinkPrompt, foragerAdapter, at, pointOf } from '../src/index.js';
-import type { AgentSnapshot, PlaceRef, SimEvent, WorldView } from '../src/index.js';
+import {
+  AgentMind,
+  ForeignPlaceError,
+  buildThinkPrompt,
+  codecFor,
+  createPlaneSpace,
+  foragerAdapter,
+  at,
+  pointOf,
+} from '../src/index.js';
+import type { AgentSnapshot, PlaceRef, SimEvent, SpaceOps, WorldView } from '../src/index.js';
 import { memoryFromEvent } from '../src/memory/memoryFromEvent.js';
 import { SuccessionMiner } from '../src/learning/SuccessionMiner.js';
 import { toyWorld } from './fixtures/toyAdapter.js';
 import { TOY_SPOTS, spot } from './fixtures/toySpace.js';
 import { mem, resetIds } from './helpers.js';
+
+const places = codecFor(foragerAdapter.space);
+const toyPlaces = codecFor(toyWorld.space);
 
 /**
  * W1-B4 — THE MIND STOPPED KNOWING GEOMETRY.
@@ -105,17 +117,17 @@ describe('the forager plane answers exactly as the mind used to', () => {
   /** The handle round-trips the exact floats, which is why a corpus row did not move. */
   it('round-trips a place through its wire fields exactly', () => {
     for (const [x, y] of [...SAMPLES, [0.1 + 0.2, 1 / 3] as [number, number]]) {
-      const written = foragerAdapter.space.encode(at(x, y));
+      const written = places.encode(at(x, y));
       expect(written).toEqual({ x, y });
-      const back = foragerAdapter.space.decode(written)!;
+      const back = places.decode(written)!;
       expect(Object.is(pointOf(back).x, x)).toBe(true);
       expect(Object.is(pointOf(back).y, y)).toBe(true);
     }
     // Half a place survives as half a place: a model writes one, and the body
     // has always been the one to answer for it.
-    expect(foragerAdapter.space.encode(foragerAdapter.space.decode({ x: 5 })!)).toEqual({ x: 5 });
-    expect(foragerAdapter.space.decode({})).toBeUndefined();
-    expect(foragerAdapter.space.decode({ x: 'far' })).toBeUndefined();
+    expect(places.encode(places.decode({ x: 5 })!)).toEqual({ x: 5 });
+    expect(places.decode({})).toBeUndefined();
+    expect(places.decode({ x: 'far' })).toBeUndefined();
   });
 
   it('compares places by value, because two of the same place are two objects', () => {
@@ -185,7 +197,7 @@ describe('the same mind lives in a world with no coordinates in it', () => {
       spot: 'well',
       payload: {},
     } as unknown as SimEvent;
-    const memory = memoryFromEvent(toyWorld, happening, 1, ctx)!;
+    const memory = memoryFromEvent(toyWorld, happening, 1, ctx, toyPlaces.placeOf(happening))!;
     expect(memory.place).toBeDefined();
     expect(toyWorld.space.label(memory.place!)).toBe('well');
     expect(toyWorld.space.distance(spot('burrow'), memory.place!)).toBe(3);
@@ -230,7 +242,7 @@ describe('the same mind lives in a world with no coordinates in it', () => {
     // world with two of them is shown two (B3 verifier, round 2, backlog 2).
     expect(whole).toContain('hunger 10, rest 10');
     // And its place is written the way IT writes one: a word, not a pair.
-    expect(toyWorld.space.encode(spot('ridge'))).toEqual({ spot: 'ridge' });
+    expect(toyPlaces.encode(spot('ridge'))).toEqual({ spot: 'ridge' });
   });
 });
 
@@ -251,60 +263,162 @@ describe('the same mind lives in a world with no coordinates in it', () => {
  * wrong world has a bug, and a bug that returns a plausible number is the
  * expensive kind. W1-C is the step that puts two worlds in one process.
  */
+/**
+ * ─── OWNERSHIP: TWO PLANAR WORLDS, AND NEITHER ANSWERS FOR THE OTHER ────────
+ *
+ * W1-B4 verifier, round 2, FAIL 2. The first gate asked "does this value carry
+ * any of the fields I write a place with", and a second plane's `{x: 3, y: 9}`
+ * answered YES — `distance` 1080.41, `direction` "southeast", `equal` TRUE for
+ * two places that were never in the same world. W1-C's town is a plane.
+ *
+ * Ownership is now a `#private` brand: `#x in v`, which only the class that
+ * minted the instance can ask, which nothing can forge and no Proxy can trap.
+ */
 describe('a world refuses a place another world minted', () => {
   const foreign = spot('hollow');
   const other = spot('well');
   const here = at(3, 4);
 
+  /** A SECOND PLANE — the shape W1-C's town will have. */
+  const town = createPlaneSpace();
+
+  const refusals = (space: SpaceOps, stranger: PlaceRef, own: PlaceRef): [string, number, () => unknown][] => [
+    ['distance', 1, () => space.distance(stranger, own)],
+    ['distance', 2, () => space.distance(own, stranger)],
+    ['direction', 1, () => space.direction(stranger, own)],
+    ['direction', 2, () => space.direction(own, stranger)],
+    ['within', 1, () => space.within(stranger, own, 8)],
+    ['within', 2, () => space.within(own, stranger, 8)],
+    ['equal', 1, () => space.equal(stranger, own)],
+    ['equal', 2, () => space.equal(own, stranger)],
+    ['label', 1, () => space.label(stranger)],
+  ];
+
+  const expectForeign = (op: string, argument: number, call: () => unknown, what = ''): void => {
+    let thrown: unknown;
+    try {
+      call();
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown, `${what}${op} argument ${argument}`).toBeInstanceOf(ForeignPlaceError);
+    const error = thrown as ForeignPlaceError;
+    expect(error.op).toBe(op);
+    expect(error.argument).toBe(argument);
+    expect(error.name).toBe('ForeignPlaceError');
+    expect(error.message).toBe(`space.${op}: argument ${argument} is not a place of this world`);
+  };
+
   it('used to say two different places were the same place, and now says whose they are', () => {
-    // What it did: `hollow` and `well` are different spots, and the continent
-    // called them equal.
     expect(toyWorld.space.equal(foreign, other)).toBe(false);
     expect(() => foragerAdapter.space.equal(foreign, other)).toThrow(ForeignPlaceError);
   });
 
   it('refuses at every entry point that takes one, naming the op and the argument', () => {
-    const calls: [string, number, () => unknown][] = [
-      ['distance', 1, () => foragerAdapter.space.distance(foreign, here)],
-      ['distance', 2, () => foragerAdapter.space.distance(here, foreign)],
-      ['direction', 1, () => foragerAdapter.space.direction(foreign, here)],
-      ['direction', 2, () => foragerAdapter.space.direction(here, foreign)],
-      ['within', 1, () => foragerAdapter.space.within(foreign, here, 8)],
-      ['within', 2, () => foragerAdapter.space.within(here, foreign, 8)],
-      ['equal', 1, () => foragerAdapter.space.equal(foreign, here)],
-      ['equal', 2, () => foragerAdapter.space.equal(here, foreign)],
-      ['label', 1, () => foragerAdapter.space.label(foreign)],
-      ['encode', 1, () => foragerAdapter.space.encode(foreign)],
+    for (const [op, argument, call] of refusals(foragerAdapter.space, foreign, here)) {
+      expectForeign(op, argument, call);
+    }
+  });
+
+  /**
+   * THE ONE THAT ROUND 2 BROKE THE OLD GATE WITH. Two planes, same fields, same
+   * arithmetic, same everything except WHICH CLASS MINTED THE HANDLE — and that
+   * is now the whole of the question.
+   */
+  it('refuses a second PLANAR world’s places, which is the case the gate exists for', () => {
+    const theirs = town.at(3, 9);
+    for (const [op, argument, call] of refusals(foragerAdapter.space, theirs, here)) {
+      expectForeign(op, argument, call);
+    }
+    // …and symmetrically: the town does not answer for the continent either.
+    for (const [op, argument, call] of refusals(town.space, here, theirs)) {
+      expectForeign(op, argument, call);
+    }
+    // Each is perfectly happy with its own.
+    expect(town.space.distance(town.at(0, 0), town.at(3, 4))).toBe(5);
+    expect(foragerAdapter.space.distance(at(0, 0), here)).toBe(5);
+    // And neither codec will read the other's handle as a place.
+    expect(codecFor(town.space).isPlace(here)).toBe(false);
+    expect(places.isPlace(theirs)).toBe(false);
+    expect(codecFor(town.space).owns(here)).toBe(false);
+    expect(places.owns(theirs)).toBe(false);
+    expect(places.owns(here)).toBe(true);
+  });
+
+  it('refuses every hand-built thing that used to pass for a place', () => {
+    const nullProto = Object.create(null) as Record<string, number>;
+    nullProto['x'] = 3;
+    nullProto['y'] = 9;
+    const arrayWithAnX = Object.assign([1, 2], { x: 3, y: 9 });
+    const strangers: [string, unknown][] = [
+      ['a plain pair', { x: 3, y: 9 }],
+      ['a stringly pair', { x: '120', y: '2' }],
+      ['a pair with an extra key', { x: 1, y: 2, z: 3 }],
+      ['an array carrying an x', arrayWithAnX],
+      ['a null-prototype pair', nullProto],
+      ['an empty object', {}],
+      ['another world’s field name', { spot: 'ridge' }],
+      ['an array', []],
+      ['a string', 'here'],
+      ['a number', 42],
+      ['null', null],
+      ['undefined', undefined],
+      ['a Date', new Date(0)],
+      ['this world’s own place, wrapped in a Proxy', new Proxy(here as unknown as object, {})],
     ];
-    for (const [op, argument, call] of calls) {
-      let thrown: unknown;
-      try {
-        call();
-      } catch (err) {
-        thrown = err;
+    for (const [what, stranger] of strangers) {
+      expect(() => foragerAdapter.space.label(stranger as PlaceRef), what).toThrow(ForeignPlaceError);
+      expect(() => foragerAdapter.space.equal(stranger as PlaceRef, here), what).toThrow(ForeignPlaceError);
+    }
+  });
+
+  /**
+   * UNTHROWABLE BY CONSTRUCTION (round 2, FAIL 2, last paragraph). The old gate
+   * called `isPlace` first, which READ `x` — so a throwing getter escaped as a
+   * raw `Error` rather than a `ForeignPlaceError`. A private-brand test reads no
+   * property at all.
+   */
+  it('answers a trapping value with a ForeignPlaceError, never with its own exception', () => {
+    const boom = (): never => {
+      throw new Error('boom');
+    };
+    const revoked = Proxy.revocable({ x: 1, y: 2 }, {});
+    revoked.revoke();
+    const traps: [string, unknown][] = [
+      ['a throwing getter', Object.defineProperty({ y: 2 }, 'x', { get: boom, enumerable: true })],
+      ['a get-trap that throws', new Proxy({ x: 1, y: 2 }, { get: boom })],
+      ['a has-trap that throws', new Proxy({ x: 1, y: 2 }, { has: boom })],
+      ['an ownKeys-trap that throws', new Proxy({ x: 1, y: 2 }, { ownKeys: boom })],
+      ['a getPrototypeOf-trap that throws', new Proxy({ x: 1, y: 2 }, { getPrototypeOf: boom })],
+      ['a revoked Proxy', revoked.proxy],
+      ['a descriptor liar', new Proxy({ x: 1, y: 2 }, { getOwnPropertyDescriptor: boom })],
+    ];
+    for (const [what, trap] of traps) {
+      for (const [op, argument, call] of refusals(foragerAdapter.space, trap as PlaceRef, here)) {
+        expectForeign(op, argument, call, `${what}: `);
       }
-      expect(thrown, `${op} argument ${argument}`).toBeInstanceOf(ForeignPlaceError);
-      const error = thrown as ForeignPlaceError;
-      expect(error.op).toBe(op);
-      expect(error.argument).toBe(argument);
-      expect(error.name).toBe('ForeignPlaceError');
-      expect(error.message).toBe(`space.${op}: argument ${argument} is not a place of this world`);
     }
   });
 
   it('is symmetric — the toy world refuses the continent’s places too', () => {
     expect(() => toyWorld.space.distance(here, foreign)).toThrow(ForeignPlaceError);
     expect(() => toyWorld.space.label(here)).toThrow(ForeignPlaceError);
-    // …and it is not vacuous: its own places still work.
     expect(toyWorld.space.distance(foreign, other)).toBe(2);
   });
 
-  it('refuses an object that is no world’s place at all', () => {
-    for (const nonsense of [{}, { z: 1 }, [], 'here', 42]) {
-      expect(() => foragerAdapter.space.label(nonsense as unknown as PlaceRef), JSON.stringify(nonsense)).toThrow(
-        ForeignPlaceError,
-      );
-    }
+  /**
+   * `unplaced` IS A REAL PLACE OF THIS WORLD, not a sentinel: the mind files a
+   * siteless tale at it and then asks how far away it is, and a gate that
+   * refused it would throw inside the one path that has no alternative.
+   */
+  it('mints its own `unplaced`, so a siteless tale can still be asked about', () => {
+    expect(places.owns(foragerAdapter.space.unplaced)).toBe(true);
+    expect(foragerAdapter.space.distance(foragerAdapter.space.unplaced, at(3, 4))).toBe(5);
+    expect(places.encode(foragerAdapter.space.unplaced)).toEqual({ x: 0, y: 0 });
+    expect(toyPlaces.owns(toyWorld.space.unplaced)).toBe(true);
+    expect(toyWorld.space.label(toyWorld.space.unplaced)).toBe('hollow');
+    // …and it is not the same place in two worlds: each world minted its own.
+    expect(() => foragerAdapter.space.label(toyWorld.space.unplaced)).toThrow(ForeignPlaceError);
   });
 
   /**
@@ -314,23 +428,242 @@ describe('a world refuses a place another world minted', () => {
    * renders into a prompt, and a model's `{"kind":"MoveTo","x":5}` reaches the
    * body as half a place — and `isPlace`, which is the EDGE's question about
    * untrusted JSON, says no to both. Refusing them here would throw inside a run
-   * that has always worked, so the gate asks the weaker question: does this carry
-   * any of the fields this world writes a place with?
+   * that has always worked.
    */
   it('lets through the unusable places this world really does mint', () => {
     const nan = at(Number.NaN, 0);
-    const half = foragerAdapter.space.decode({ x: 5 })!;
-    expect(foragerAdapter.space.isPlace(nan)).toBe(false);
-    expect(foragerAdapter.space.isPlace(half)).toBe(true);
+    const half = places.decode({ x: 5 })!;
+    expect(places.isPlace(nan)).toBe(false);
+    expect(places.isPlace(half)).toBe(true);
+    expect(places.owns(nan)).toBe(true);
+    expect(places.owns(half)).toBe(true);
     expect(foragerAdapter.space.distance(nan, at(0, 0))).toBeNaN();
     expect(foragerAdapter.space.distance(half, at(0, 0))).toBeNaN();
-    expect(foragerAdapter.space.encode(half)).toEqual({ x: 5 });
+    expect(places.encode(half)).toEqual({ x: 5 });
   });
 
   /** The three that take `unknown` by contract still ANSWER rather than throw. */
   it('still answers the edge’s questions about a stranger instead of throwing', () => {
-    expect(foragerAdapter.space.isPlace(foreign)).toBe(false);
-    expect(foragerAdapter.space.placeOf(foreign)).toBeUndefined();
-    expect(foragerAdapter.space.decode({ spot: 'hollow' })).toBeUndefined();
+    expect(places.isPlace(foreign)).toBe(false);
+    expect(places.placeOf(foreign)).toBeUndefined();
+    expect(places.decode({ spot: 'hollow' })).toBeUndefined();
+  });
+});
+
+/**
+ * ─── THE 22 ROUTES, RUN ─────────────────────────────────────────────────────
+ *
+ * The W1-B4 verifier's round 2 wrote 22 ways out of the handle into a mind
+ * directory, ALL of which compiled with zero errors and ALL of which passed
+ * every static guard — because not one of them makes an expression whose TYPE
+ * is `PlaceRef`. A nominal brand is a name, and a name is a thing a mind author
+ * need never say.
+ *
+ * So the answer is not another checker rule, it is that THERE IS NOTHING THERE:
+ * a place's whole state is `#private`, its prototype is empty, and the codec is
+ * not reachable from the object a mind is handed. This runs all 22 against a
+ * real forager place and asserts that not one coordinate comes back.
+ *
+ * TWO OF THEM STILL YIELD, deliberately and with an owner. They are asserted to
+ * yield, so that closing them is a visible change and not a silent one:
+ *
+ *   19  `label(p)` renders `"900,120"` — text a mind could parse. B5 gives
+ *       places WORDS; until then the prompt's bytes may not move. The static
+ *       guard narrows it: a `label` result in a mind directory may only flow
+ *       into string concatenation or a template.
+ *   18  `SimEvent` still carries this world's own `x`/`y`. B6, with the rest of
+ *       the per-world instrument.
+ */
+describe('the 22 routes out of a place, run against a real one', () => {
+  const X = 900.5;
+  const Y = 120.25;
+  const probe = at(X, Y);
+  const origin = at(0, 0);
+
+  /** Does anything anywhere in this value carry one of the two coordinates? */
+  const leaks = (value: unknown, depth = 0): boolean => {
+    if (depth > 6) return false;
+    if (typeof value === 'number') return value === X || value === Y;
+    if (typeof value === 'string') return value.includes(String(X)) || value.includes(String(Y));
+    if (value === null || value === undefined) return false;
+    if (typeof value !== 'object') return false;
+    if (Array.isArray(value)) return value.some((v) => leaks(v, depth + 1));
+    try {
+      return Reflect.ownKeys(value as object).some((k) => {
+        const v = (value as Record<string | symbol, unknown>)[k];
+        return leaks(typeof k === 'string' ? k : '', depth + 1) || leaks(v, depth + 1);
+      });
+    } catch {
+      return false;
+    }
+  };
+
+  /** A route's verdict: what it produced, or the fact that it could not. */
+  const run = (route: () => unknown): { leaked: boolean; threw: boolean; got: unknown } => {
+    try {
+      const got = route();
+      return { leaked: leaks(got), threw: false, got };
+    } catch {
+      return { leaked: false, threw: true, got: undefined };
+    }
+  };
+
+  const asObject = (p: PlaceRef): object => p as unknown as object;
+  const asAny = (p: PlaceRef): Record<string, unknown> => p as unknown as Record<string, unknown>;
+  const K = 'x';
+  const K2 = 'y';
+
+  const ROUTES: [number, string, () => unknown][] = [
+    [1, 'Object.values through an `object` parameter', () => Object.values(asObject(probe))],
+    [2, 'a generic helper that widens to object', () => (<T,>(v: T) => Object.values(v as unknown as object))(probe)],
+    [3, 'a parameter typed unknown', () => ((v: unknown) => Object.values(v as object))(probe)],
+    [
+      4,
+      'an intermediate `const o: object = p`, then Object.entries',
+      () => {
+        const o: object = asObject(probe);
+        return Object.entries(o);
+      },
+    ],
+    [5, '…then Array.from', () => Array.from(asObject(probe) as ArrayLike<number>)],
+    [6, '…then new Map(Object.entries(o))', () => [...new Map(Object.entries(asObject(probe)))]],
+    [7, '…then spread', () => ({ ...asObject(probe) })],
+    [
+      8,
+      '…then for…in',
+      () => {
+        const seen: string[] = [];
+        for (const k in asObject(probe)) seen.push(`${k}=${String(asAny(probe)[k])}`);
+        return seen;
+      },
+    ],
+    [9, '…then Object.assign', () => Object.assign({}, asObject(probe))],
+    [10, '…then structuredClone', () => structuredClone(asObject(probe))],
+    [
+      11,
+      '…then Object.getOwnPropertyNames',
+      () => Object.getOwnPropertyNames(asObject(probe)).map((k) => asAny(probe)[k]),
+    ],
+    [
+      12,
+      '…then Reflect.ownKeys',
+      () => Reflect.ownKeys(asObject(probe)).map((k) => (asAny(probe) as Record<string | symbol, unknown>)[k]),
+    ],
+    [13, 'an any alias read by const key', () => [asAny(probe)[K], asAny(probe)[K2]]],
+    [14, 'JSON round trip of a RECORD that carries one', () => JSON.parse(JSON.stringify({ id: 1, place: probe })) as unknown],
+    [15, '`satisfies object`, then opened', () => Object.keys(asObject(probe) satisfies object)],
+    [
+      16,
+      'a type predicate that calls it array-like',
+      () => {
+        const arrayish = (v: object): v is ArrayLike<number> => typeof (v as ArrayLike<number>).length === 'number';
+        const o = asObject(probe);
+        return arrayish(o) ? [o.length, o[0], o[1]] : [(o as ArrayLike<number>)[0], (o as ArrayLike<number>)[1]];
+      },
+    ],
+    [
+      17,
+      'new Function / eval',
+      () =>
+        (
+          new Function('p', 'return [p.x, p.y, JSON.stringify(p), String(p && p.constructor)]') as (
+            p: unknown,
+          ) => unknown
+        )(probe),
+    ],
+    // 18 and 19 are the two documented residuals; see the block above.
+    [
+      20,
+      'the codec’s own door, off the object a mind holds',
+      () => (foragerAdapter.space as unknown as { encode?: (p: PlaceRef) => unknown }).encode?.(probe),
+    ],
+    [
+      21,
+      'minting one from numbers a mind chose',
+      () =>
+        (foragerAdapter.space as unknown as { decode?: (f: Record<string, unknown>) => unknown }).decode?.({
+          [K]: X,
+          [K2]: Y,
+        }),
+    ],
+    [
+      22,
+      'triangulating against places a mind minted for itself',
+      () => {
+        const space = foragerAdapter.space as unknown as {
+          decode?: (f: Record<string, unknown>) => PlaceRef | undefined;
+        };
+        const a = space.decode?.({ [K]: 0, [K2]: 0 });
+        const b = space.decode?.({ [K]: 1, [K2]: 0 });
+        if (!a || !b) return undefined;
+        return [foragerAdapter.space.distance(probe, a), foragerAdapter.space.distance(probe, b)];
+      },
+    ],
+    // Everything else the verifier listed as "the same leak wearing other clothes".
+    [23, 'Object.keys', () => Object.keys(asObject(probe))],
+    [24, 'Object.getOwnPropertySymbols', () => Object.getOwnPropertySymbols(asObject(probe))],
+    [25, 'Object.getOwnPropertyDescriptors', () => Object.getOwnPropertyDescriptors(asObject(probe))],
+    [
+      26,
+      'the prototype chain, and the constructor on it',
+      () => {
+        const proto = Object.getPrototypeOf(asObject(probe)) as object | null;
+        return [proto, proto === null ? null : Object.getOwnPropertyNames(proto), asAny(probe)['constructor']];
+      },
+    ],
+    [27, 'JSON.stringify of the handle itself', () => JSON.stringify(probe)],
+    [28, 'String() and a template', () => `${String(probe)}`],
+    [29, 'Object.fromEntries of its entries', () => Object.fromEntries(Object.entries(asObject(probe)))],
+    [
+      30,
+      'writing to it, then reading back',
+      () => {
+        try {
+          asAny(probe)[K] = X;
+        } catch {
+          /* frozen, which is the point */
+        }
+        return asAny(probe)[K];
+      },
+    ],
+  ];
+
+  for (const [n, what, route] of ROUTES) {
+    it(`route ${n} — ${what} — yields no coordinate`, () => {
+      const verdict = run(route);
+      // Described rather than stringified: some of these produce a value with
+      // no `toString` at all, which is itself part of the answer.
+      let described = '<unprintable>';
+      try {
+        described = JSON.stringify(verdict.got) ?? String(verdict.got);
+      } catch {
+        /* an opaque handle has nothing to print */
+      }
+      expect(verdict.leaked, `route ${n} produced ${described}`).toBe(false);
+    });
+  }
+
+  /** The probe really does hold those two numbers, or the table proves nothing. */
+  it('is not vacuous: the world itself can still read the place', () => {
+    expect(places.encode(probe)).toEqual({ x: X, y: Y });
+    expect(pointOf(probe)).toEqual({ x: X, y: Y });
+    expect(foragerAdapter.space.distance(probe, origin)).toBe(Math.hypot(X, Y));
+    // …and the detector is not vacuous either.
+    expect(leaks({ deep: [{ here: X }] })).toBe(true);
+    expect(leaks(`about ${X} away`)).toBe(true);
+    expect(leaks({ id: 1, kind: 'berry' })).toBe(false);
+  });
+
+  /**
+   * THE TWO THAT STILL YIELD, pinned as they are so that fixing them is a
+   * deliberate change with a failing test attached to it.
+   */
+  it('route 19 — `label` is still parseable text — RESIDUAL, owner B5 (lexicon)', () => {
+    expect(foragerAdapter.space.label(at(900, 120)).split(',').map(Number)).toEqual([900, 120]);
+  });
+
+  it('route 18 — a SimEvent still carries this world’s x and y — RESIDUAL, owner B6', () => {
+    const event = { tick: 1, type: 'AteFood', actorId: 1, targetIds: [], x: X, y: Y, payload: {} } as unknown as SimEvent;
+    expect(leaks((event as unknown as Record<string, unknown>)[K])).toBe(true);
   });
 });
