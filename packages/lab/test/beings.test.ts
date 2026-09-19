@@ -47,9 +47,14 @@ import {
   legendFor,
   maxLeaderFor,
   movingFor,
+  nameClaimFor,
+  NAME_NOTE,
   NEAR_LABEL_M,
   nextFrameAt,
   octantDistance,
+  placeCountChip,
+  regionOf,
+  scaleBarFor,
   PICTO_ALARM,
   PICTO_COUNT,
   PICTO_EAT,
@@ -93,7 +98,10 @@ import {
   shelterMeasure,
   specimenPlan,
   SPECIMEN_COLS,
+  SPECIMEN_GRID_ROWS,
   SPECIMEN_ID_BASE,
+  SPECIMEN_KNOTS,
+  SPECIMEN_REQUIRED,
   SPECIMEN_ROWS,
   SPECIMEN_SPACING,
   subjectCovers,
@@ -413,7 +421,9 @@ describe('a band promises only what it draws', () => {
   it('asks more of itself the closer it gets', () => {
     expect(bandPromise('mid').condition!).toBeGreaterThan(bandPromise('default').condition!);
     expect(bandPromise('near').stage!).toBeGreaterThan(bandPromise('mid').stage!);
-    expect(bandPromise('near').names).toBe('all');
+    // There is no `all`: "every being on screen is named" was never true on a
+    // frame with more beings in it than the budget has nodes.
+    expect(bandPromise('near').names).toBe('within');
     expect(bandPromise('far').names).toBe('found');
   });
 
@@ -652,8 +662,15 @@ describe('the legend describes the band it is in, and nothing else', () => {
     }
     const note = legendFor('near').flatMap((s) => s.items)
       .filter((i) => i.kind === 'note').map((n) => n.label).join(' ');
-    expect(note).toContain('walk to');
+    // The legend makes NO claim of its own any more. It points at the chip,
+    // which prints the measured radius and the number of names on screen —
+    // round six had the legend, the chip and the audit saying three different
+    // things, and a reviewer proved no two could both be true.
+    expect(note).toContain(NAME_NOTE);
+    expect(NAME_NOTE).toContain('the chip over the frame prints');
     expect(note).not.toContain('every being in frame is named');
+    expect(note).not.toContain('everyone you could walk to');
+    expect(bandPromise('near').says).not.toContain('named');
     expect(bandPromise('near').says).not.toContain('every name');
   });
 
@@ -852,19 +869,58 @@ describe('the beings the scenery has to step aside for', () => {
 describe('the legibility specimen', () => {
   const plan = specimenPlan();
 
+  const vocabulary = plan.filter((c) => c.knot === 0);
+
   it('fills the grid exactly once, with nobody standing on anybody', () => {
-    expect(plan).toHaveLength(SPECIMEN_COLS * SPECIMEN_ROWS);
+    expect(vocabulary).toHaveLength(SPECIMEN_COLS * SPECIMEN_GRID_ROWS);
     const seen = new Set<string>();
-    for (const c of plan) {
+    for (const c of vocabulary) {
       expect(c.col).toBeGreaterThanOrEqual(0);
       expect(c.col).toBeLessThan(SPECIMEN_COLS);
       expect(c.row).toBeGreaterThanOrEqual(0);
       expect(c.row).toBeLessThan(SPECIMEN_ROWS);
       seen.add(`${c.col},${c.row}`);
     }
-    expect(seen.size).toBe(plan.length);
+    expect(seen.size).toBe(vocabulary.length);
     // Two paces apart: far enough that no figure hides the one behind it.
     expect(SPECIMEN_SPACING).toBeGreaterThan(2.2);
+  });
+
+  /**
+   * L4's "find X in three interactions" and "read a crowd of 2–12" could not be
+   * scored at all in round six: a day-nine world of three hundred held no
+   * speaking elder, no starving child and nobody fleeing, and the only crowd
+   * any camera could reach held three hundred and two. An untestable task is an
+   * unscored one, so the specimen carries both.
+   */
+  it('carries the rare combinations a real run may simply not contain', () => {
+    for (const want of SPECIMEN_REQUIRED) {
+      const found = plan.filter((c) => c.stage === want.stage && c.cond === want.cond && c.act === want.act);
+      expect(found.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('stands people in knots of two to twelve, so a chip has a crowd to count', () => {
+    const sizes = SPECIMEN_KNOTS.map((k) => k.size);
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(2);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(12);
+    for (let k = 0; k < SPECIMEN_KNOTS.length; k++) {
+      const members = plan.filter((c) => c.knot === k + 1);
+      expect(members).toHaveLength(SPECIMEN_KNOTS[k]!.size);
+      // Close enough that their pins overlap and a chip forms, and inside the
+      // ground the specimen lays for itself.
+      for (const m of members) {
+        expect(Math.hypot(m.col - SPECIMEN_KNOTS[k]!.col, m.row - SPECIMEN_KNOTS[k]!.row)).toBeLessThan(0.75);
+        expect(m.col).toBeGreaterThanOrEqual(0);
+        expect(m.col).toBeLessThan(SPECIMEN_COLS);
+        expect(m.row).toBeGreaterThanOrEqual(0);
+        expect(m.row).toBeLessThan(SPECIMEN_ROWS);
+      }
+    }
+    // A knot big enough to have a mix shows one: a chip's stacked bar has
+    // something to say about every crowd worth reading.
+    const biggest = plan.filter((c) => c.knot === 1);
+    expect(new Set(biggest.map((c) => c.cond)).size).toBe(4);
   });
 
   it('covers every stage, every condition, every act and all eight headings', () => {
@@ -1321,6 +1377,82 @@ describe('every being in the frame is a pin or part of a number, never both', ()
     expect(chips).toBeGreaterThan(30);
   });
 
+  /**
+   * Round six's whole-frame count was exact to 0.5% and its QUADRANT counts ran
+   * −88% to +45%. Nothing was miscounted: one chip had folded ninety-two beings
+   * whose outline straddled two quadrants, and a chip is read where its number
+   * sits. "Count the pins, add the numbers" was valid frame-wide and nowhere
+   * else, which is not a counting rule — it is a counting rule with an
+   * exception a reader cannot see.
+   */
+  const VIEW = { w: 1400, h: 900 };
+
+  it('gives a quadrant the same arithmetic as the whole frame', () => {
+    let quadrants = 0;
+    for (let seed = 301; seed <= 340; seed++) {
+      const points = scatter(seed, 40 + (seed * 11) % 180, VIEW.w, VIEW.h);
+      const plan = planCount(points, PIN, 64, VIEW);
+      // The truth: where the beings actually are.
+      const truth = [0, 0, 0, 0];
+      for (const p of points) truth[regionOf(p.x, p.y, VIEW)]! += 1;
+      // What a reader gets: the pins they can see in the quadrant, plus the
+      // numbers whose chips sit in it.
+      const read = [0, 0, 0, 0];
+      for (const k of plan.singles) {
+        const p = points[k]!;
+        read[regionOf(p.x, p.y, VIEW)]! += 1;
+      }
+      // Read where the chip's NUMBER sits, not where its outline is centred:
+      // the disc is what a reader counts, and a disc pushed up and to the
+      // right of a hull near the middle of the frame used to carry twenty
+      // beings across the line with it.
+      const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
+      for (const chip of plan.chips) {
+        const halfW = String(chip.count).length * 3.5 + 7;
+        const at = placeCountChip({ x: chip.x, y: chip.y, rx: chip.rx, ry: chip.ry }, halfW, 9, [], placed, VIEW);
+        placed.push({ x0: at.x - halfW, y0: at.y - 9, x1: at.x + halfW, y1: at.y + 9 });
+        read[regionOf(at.x, at.y, VIEW)]! += chip.count;
+      }
+      for (let q = 0; q < 4; q++) {
+        quadrants++;
+        const off = Math.abs(read[q]! - truth[q]!);
+        // Within one being, or within a tenth — the bar a reviewer counting a
+        // quadrant by eye is held to.
+        expect(off <= 1 || off <= truth[q]! * 0.1).toBe(true);
+      }
+    }
+    expect(quadrants).toBe(160);
+  });
+
+  it('never lets one chip stand for two places at once', () => {
+    for (let seed = 401; seed <= 430; seed++) {
+      const points = scatter(seed, 120, VIEW.w, VIEW.h);
+      const plan = planCount(points, PIN, 64, VIEW);
+      for (const chip of plan.chips) {
+        // Every member in the chip's own region…
+        const regions = new Set(chip.members.map((k) => regionOf(points[k]!.x, points[k]!.y, VIEW)));
+        expect(regions.size).toBe(1);
+        // …and compact enough to read as one gathering.
+        expect(chip.rx * 2).toBeLessThanOrEqual(Math.min(VIEW.w, VIEW.h) / 6 + PIN * 2);
+        expect(chip.ry * 2).toBeLessThanOrEqual(Math.min(VIEW.w, VIEW.h) / 6 + PIN * 2);
+      }
+    }
+  });
+
+  it('still closes the whole-frame arithmetic with the frame split in four', () => {
+    for (let seed = 501; seed <= 530; seed++) {
+      const points = scatter(seed, 30 + seed % 140, VIEW.w, VIEW.h);
+      const plan = planCount(points, PIN, 64, VIEW);
+      const counted = plan.chips.reduce((sum, c) => sum + c.count, 0);
+      expect(plan.singles.length + counted).toBe(points.length);
+      const seen = new Set<number>(plan.singles);
+      for (const chip of plan.chips) for (const k of chip.members) seen.add(k);
+      expect(seen.size).toBe(points.length);
+      // And nothing stands for one being: that is what its own pin is for.
+      for (const chip of plan.chips) expect(chip.count).toBeGreaterThanOrEqual(2);
+    }
+  });
+
   it('collapses a PAIR, not only a crowd — two overlapping rings are already unreadable', () => {
     const plan = planCount([{ id: 1, x: 100, y: 100 }, { id: 2, x: 108, y: 103 }], 24, 8);
     expect(plan.singles).toHaveLength(0);
@@ -1529,5 +1661,165 @@ describe('the observatory does not hog a shared GPU', () => {
     expect(nextFrameAt(5000, 0, FPS_ACTIVE)).toBe(5000);
     expect(nextFrameAt(5, 0, FPS_ACTIVE)).toBeNull();
     expect(nextFrameAt(100, 0, 0)).toBeNull();
+  });
+});
+
+// ── The ruler ────────────────────────────────────────────────────────────────
+
+/**
+ * Round six drew a scale bar that printed `200 UNITS` in every band under a
+ * line clamped to at most 190 px — so at MID it spanned about five metres and
+ * at NEAR about 1.9, claiming two hundred of an unnamed unit both times. On the
+ * one instrument whose entire subject is that one unit is one metre, the ruler
+ * was wrong by up to a hundred times, and a reviewer said so first.
+ */
+describe('the scale bar measures the ground it is drawn over', () => {
+  it('snaps to the 1–2–5 series, in metres', () => {
+    const spans = [];
+    for (let e = -2; e <= 4; e++) {
+      for (const m of [1, 1.3, 2.7, 6, 9.4]) {
+        const mpp = (m * 10 ** e) / 140;
+        spans.push(scaleBarFor(mpp).metres);
+      }
+    }
+    for (const metres of spans) {
+      const decade = 10 ** Math.floor(Math.log10(metres));
+      expect([1, 2, 5]).toContain(Math.round(metres / decade));
+    }
+  });
+
+  it('draws the span it prints — the bar IS metres ÷ metres-per-pixel', () => {
+    for (const mpp of [0.004, 0.01, 0.05, 0.33, 1, 4.7, 19, 140]) {
+      const bar = scaleBarFor(mpp);
+      expect(bar.px).toBeCloseTo(bar.metres / mpp, 6);
+    }
+  });
+
+  it('is always long enough to measure against, and never longer than its budget', () => {
+    // The series steps by at most 2.5, so the largest span under 200 px is
+    // never under 80 — that is why the bar needs no clamp, and a clamp is
+    // exactly what made the old one a lie.
+    for (let i = 0; i < 400; i++) {
+      const mpp = 0.002 * 1.05 ** i;
+      const bar = scaleBarFor(mpp);
+      expect(bar.px).toBeLessThanOrEqual(200);
+      expect(bar.px).toBeGreaterThanOrEqual(80);
+    }
+  });
+
+  it('says metres up to a kilometre and kilometres past it, and never says "units"', () => {
+    expect(scaleBarFor(2 / 140).label).toBe('2 m');
+    expect(scaleBarFor(0.014).label).toBe('2 m');
+    expect(scaleBarFor(1).label).toBe('200 m');
+    expect(scaleBarFor(10).label).toBe('2 km');
+    expect(scaleBarFor(4).label).toBe('500 m');
+    for (const mpp of [0.001, 0.02, 0.7, 3, 40]) {
+      expect(scaleBarFor(mpp).label).toMatch(/^[\d.]+ (m|km)$/);
+      expect(scaleBarFor(mpp).label).not.toContain('unit');
+    }
+  });
+
+  it('holds at a NEAR camera, where the old bar was a hundred times out', () => {
+    // A 1.75 m adult standing 170 px tall is 0.0103 m per pixel.
+    const bar = scaleBarFor(1.75 / 170);
+    expect(bar.metres).toBeLessThanOrEqual(2);
+    expect(bar.px).toBeCloseTo(bar.metres / (1.75 / 170), 6);
+    expect(bar.label).toBe('2 m');
+  });
+
+  it('survives a camera that has not been placed yet', () => {
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const bar = scaleBarFor(bad);
+      expect(Number.isFinite(bar.px)).toBe(true);
+      expect(bar.metres).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ── A number that never covers a being ───────────────────────────────────────
+
+/**
+ * `default.png`, round six: a "24" chip sitting nine pixels from a pinned being
+ * and hiding it completely, directly under a legend line reading "no pin is
+ * drawn inside it". The reviewer's own note for that target was "no pin at
+ * all". A count that hides one of the people it counts is not a count, and a
+ * legend that promises otherwise is worse than no legend.
+ */
+describe('a crowd’s number sits outside its ring and off every being', () => {
+  const VIEW = { w: 1400, h: 900 };
+
+  const pinsAround = (seed: number, n: number): { x0: number; y0: number; x1: number; y1: number }[] =>
+    scatter(seed, n, VIEW.w, VIEW.h).map((p) => ({ x0: p.x - 12, y0: p.y - 12, x1: p.x + 12, y1: p.y + 12 }));
+
+  it('never lands on a pin when anywhere is free', () => {
+    let clear = 0;
+    for (let seed = 601; seed <= 640; seed++) {
+      const hull = { x: 200 + (seed * 37) % 900, y: 150 + (seed * 53) % 600, rx: 30 + seed % 120, ry: 22 + seed % 90 };
+      const pins = pinsAround(seed, 40);
+      const at = placeCountChip(hull, 14, 9, pins, [], VIEW);
+      if (!at.clear) continue;
+      clear++;
+      for (const pin of pins) {
+        const hits = at.x - 14 < pin.x1 && at.x + 14 > pin.x0 && at.y - 9 < pin.y1 && at.y + 9 > pin.y0;
+        expect(hits).toBe(false);
+      }
+    }
+    expect(clear).toBeGreaterThan(30);
+  });
+
+  it('stands outside the outline it belongs to, not inside the crowd', () => {
+    // The failure was arithmetic: the old offset was 0.72 of the extent, which
+    // for any hull wider than the chip is inside it.
+    for (const rx of [20, 80, 200, 420]) {
+      const hull = { x: 700, y: 450, rx, ry: rx * 0.7 };
+      const at = placeCountChip(hull, 14, 9, [], [], VIEW);
+      const dx = (at.x - hull.x) / hull.rx;
+      const dy = (at.y - hull.y) / hull.ry;
+      expect(dx * dx + dy * dy).toBeGreaterThan(1);
+    }
+  });
+
+  it('keeps its leader line home short — a number with no ring is not a count', () => {
+    const hull = { x: 700, y: 450, rx: 120, ry: 90 };
+    const at = placeCountChip(hull, 14, 9, [], [], VIEW);
+    expect(Math.hypot(at.anchorX - at.x, at.anchorY - at.y)).toBeLessThan(40);
+  });
+
+  it('admits it when the frame has nowhere free — it does not pretend', () => {
+    // A being under every slot: the chip has to shrink and fade, and `clear`
+    // is the view saying so out loud rather than covering somebody quietly.
+    const wall = [{ x0: 0, y0: 0, x1: VIEW.w, y1: VIEW.h }];
+    const at = placeCountChip({ x: 700, y: 450, rx: 60, ry: 40 }, 14, 9, wall, [], VIEW);
+    expect(at.clear).toBe(false);
+    expect(at.covers).toBeGreaterThan(0);
+  });
+
+  it('stays inside the canvas', () => {
+    for (const hull of [
+      { x: 8, y: 8, rx: 60, ry: 40 },
+      { x: VIEW.w - 6, y: VIEW.h - 6, rx: 90, ry: 70 },
+      { x: VIEW.w / 2, y: 2, rx: 200, ry: 160 },
+    ]) {
+      const at = placeCountChip(hull, 18, 9, [], [], VIEW);
+      expect(at.x - 18).toBeGreaterThanOrEqual(0);
+      expect(at.x + 18).toBeLessThanOrEqual(VIEW.w);
+      expect(at.y - 9).toBeGreaterThanOrEqual(0);
+      expect(at.y + 9).toBeLessThanOrEqual(VIEW.h);
+    }
+  });
+});
+
+// ── One sentence about names ─────────────────────────────────────────────────
+
+describe('the naming claim is one sentence, and it is the one the chip prints', () => {
+  it('prints the measured radius and the number of names actually drawn', () => {
+    expect(nameClaimFor('near', 13.4, 6)).toBe('names within 13 m · 6 shown');
+    expect(nameClaimFor('near', 0, 0)).toBe('names within 0 m · 0 shown');
+  });
+
+  it('never promises a radius in a band that does not scope one', () => {
+    expect(nameClaimFor('default', 0, 4)).not.toContain('within');
+    expect(nameClaimFor('far', 0, 1)).toContain('only the selected being');
+    for (const band of BAND_ORDER) expect(nameClaimFor(band, 12, 3)).toContain('3 shown');
   });
 });

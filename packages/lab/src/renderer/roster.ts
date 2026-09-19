@@ -96,6 +96,79 @@ export function nextSort(current: Sort, key: SortKey): Sort {
   return { key, dir: current.dir === 1 ? -1 : 1 };
 }
 
+// ── Holding still while somebody is reading ──────────────────────────────────
+
+/**
+ * Whether the table is allowed to re-sort itself right now.
+ *
+ * Selecting a being centres the camera on it, which drives its `distance` to
+ * zero, which — with the table sorted by distance, as it is by default —
+ * re-sorts three hundred rows and throws the row you just clicked to the far
+ * end of the list. A reviewer clicked a row, watched the inspector fill with
+ * the right being, and found `.rrow.sel` gone from the table entirely.
+ *
+ * A sort order is a reading aid, not a live read-out. So the order is FROZEN
+ * the moment a row is picked, and thaws only on something the reader did
+ * deliberately: clicking a header, scrolling, or changing the question. The
+ * values inside the rows keep updating — only their order is held.
+ */
+export interface OrderState {
+  /** The id order the table is pinned to, newest first, or null to sort freely. */
+  frozen: number[] | null;
+  /** The row the freeze exists to protect. */
+  anchor: number | null;
+}
+
+export const FREE_ORDER: OrderState = { frozen: null, anchor: null };
+
+export type OrderEvent =
+  /** A row was chosen — by click, by Enter, or by the world. `order` is what is on screen now. */
+  | { kind: 'pick'; id: number; order: readonly number[] }
+  /** A column header was clicked: the reader asked for a new order. */
+  | { kind: 'sort' }
+  /** The reader scrolled the table themselves. */
+  | { kind: 'scroll' }
+  /** The question changed, so the set of rows did. */
+  | { kind: 'filter' }
+  /** Nothing is selected any more. */
+  | { kind: 'clear' };
+
+export function orderReduce(state: OrderState, event: OrderEvent): OrderState {
+  switch (event.kind) {
+    case 'pick':
+      // Re-picking inside an existing freeze keeps the order that is on screen;
+      // re-snapshotting it would be harmless but pointless churn.
+      if (state.frozen !== null) return state.anchor === event.id ? state : { frozen: state.frozen, anchor: event.id };
+      return { frozen: [...event.order], anchor: event.id };
+    case 'sort':
+    case 'scroll':
+    case 'filter':
+    case 'clear':
+      return state.frozen === null ? state : FREE_ORDER;
+    default:
+      return state;
+  }
+}
+
+/**
+ * The rows in the order the reader is looking at.
+ *
+ * Frozen ids keep the position they had when the freeze began; anything that
+ * has appeared since — a being that walked into frame, or one a filter let back
+ * in — follows in the order the sort put it, so new rows are never hidden and
+ * old ones never jump.
+ */
+export function applyOrder(rows: readonly RosterRow[], state: OrderState): RosterRow[] {
+  if (state.frozen === null) return rows.slice();
+  const at = new Map<number, number>();
+  for (let i = 0; i < state.frozen.length; i++) at.set(state.frozen[i]!, i);
+  const held: RosterRow[] = [];
+  const fresh: RosterRow[] = [];
+  for (const row of rows) (at.has(row.id) ? held : fresh).push(row);
+  held.sort((a, b) => at.get(a.id)! - at.get(b.id)!);
+  return held.concat(fresh);
+}
+
 // ── Virtualization ───────────────────────────────────────────────────────────
 
 export interface RowWindow {

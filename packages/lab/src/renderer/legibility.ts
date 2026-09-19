@@ -31,7 +31,21 @@
  * Pure: no DOM, no three, no engine. It runs in Node.
  */
 
-import { COND_HURT, COND_SICK, COND_STARVING } from './sim/protocol.js';
+import {
+  ACT_DANGER,
+  ACT_EATING,
+  ACT_IDLE,
+  ACT_RESTING,
+  ACT_SOCIAL,
+  ACT_WALKING,
+  ACT_WORKING,
+  COND_HURT,
+  COND_SICK,
+  COND_STARVING,
+  STAGE_ADULT,
+  STAGE_CHILD,
+  STAGE_ELDER,
+} from './sim/protocol.js';
 
 // ── How big is big enough to be called ───────────────────────────────────────
 
@@ -301,12 +315,19 @@ export interface SpecimenCell {
   act: number;
   /** Which of the eight compass octants it faces, 0 = +Z. */
   octant: number;
+  /** Grid coordinates — fractional inside a knot, where beings stand close. */
   col: number;
   row: number;
+  /** 0 for the vocabulary grid; 1… for the beings standing in knot n. */
+  knot: number;
 }
 
 export const SPECIMEN_COLS = 12;
-export const SPECIMEN_ROWS = 8;
+/** Rows of the vocabulary grid — one being per cell, nobody touching anybody. */
+export const SPECIMEN_GRID_ROWS = 8;
+/** Rows of knots below it — see `SPECIMEN_KNOTS`. */
+export const SPECIMEN_KNOT_ROWS = 2;
+export const SPECIMEN_ROWS = SPECIMEN_GRID_ROWS + SPECIMEN_KNOT_ROWS;
 /**
  * Metres between neighbours.
  *
@@ -318,7 +339,48 @@ export const SPECIMEN_ROWS = 8;
  * inside a MID frame.
  */
 export const SPECIMEN_SPACING = 4.3;
-const SPECIMEN_N = SPECIMEN_COLS * SPECIMEN_ROWS;
+const SPECIMEN_N = SPECIMEN_COLS * SPECIMEN_GRID_ROWS;
+
+/**
+ * The combinations a real run may simply not contain, and a reviewer therefore
+ * cannot test.
+ *
+ * Round six's L4 could not score "find the elder who is speaking", "find the
+ * starving child" or "find whoever is fleeing" at all: a day-nine world of
+ * three hundred held none of them, and an untestable task is an unscored one.
+ * These three — plus a sick elder asleep, the pair a reader most often
+ * confuses — are placed explicitly, inside the knots, so each is findable by
+ * filter, by roster, by hovering and inside a chip, exactly like a real being.
+ */
+export const SPECIMEN_REQUIRED: readonly { stage: number; cond: number; act: number }[] = [
+  { stage: STAGE_ELDER, cond: 0, act: ACT_SOCIAL },
+  { stage: STAGE_CHILD, cond: COND_STARVING, act: ACT_IDLE },
+  { stage: STAGE_ADULT, cond: COND_HURT, act: ACT_DANGER },
+  { stage: STAGE_ELDER, cond: COND_SICK, act: ACT_RESTING },
+];
+
+/**
+ * Knots: two to twelve beings standing together, the size of crowd a chip is
+ * actually about.
+ *
+ * The vocabulary grid is one being per four metres of flat ground, which is the
+ * right picture for reading a mark and the wrong one for everything a count
+ * chip claims: a reviewer could only ever reach one chip, holding 302 beings,
+ * and "a crowd of 2–12, read its mix" went untested for want of a crowd. The
+ * knots sit below the grid, are laid out from their own sizes, and go through
+ * the same clustering, the same chips and the same probes as a settlement.
+ */
+export const SPECIMEN_KNOTS: readonly { size: number; col: number; row: number }[] = [
+  { size: 12, col: 2.6, row: 8.25 },
+  { size: 3, col: 8.6, row: 8.25 },
+  { size: 8, col: 1.6, row: 9.45 },
+  { size: 5, col: 5.6, row: 9.45 },
+  { size: 2, col: 9.6, row: 9.45 },
+];
+
+/** Knot acts, dealt in order — every act a pictogram exists for, and two without. */
+const KNOT_ACTS = [ACT_IDLE, ACT_WORKING, ACT_SOCIAL, ACT_WALKING, ACT_EATING, ACT_RESTING, ACT_DANGER];
+const KNOT_CONDS = [0, COND_STARVING, COND_SICK, COND_HURT];
 
 /**
  * The grid: ninety-six beings covering every life stage, every condition, every
@@ -338,10 +400,9 @@ const SPECIMEN_N = SPECIMEN_COLS * SPECIMEN_ROWS;
  * review without either number meaning anything.
  */
 export function specimenPlan(): SpecimenCell[] {
-  const conds = [0, COND_STARVING, COND_SICK, COND_HURT];
   const out: SpecimenCell[] = [];
   let i = 0;
-  for (const cond of conds) {
+  for (const cond of KNOT_CONDS) {
     for (let j = 0; j < 24; j++) {
       const slot = (i * 7) % SPECIMEN_N;
       out.push({
@@ -351,8 +412,47 @@ export function specimenPlan(): SpecimenCell[] {
         octant: (j * 3) % 8,
         col: slot % SPECIMEN_COLS,
         row: Math.floor(slot / SPECIMEN_COLS),
+        knot: 0,
       });
       i++;
+    }
+  }
+  out.push(...knotPlan());
+  return out;
+}
+
+/**
+ * The beings standing in knots, laid out on rings from the knot's own size.
+ *
+ * Two rings past six, so a dozen people are a crowd rather than a fence: the
+ * inner ones are partly behind the outer ones, which is what a crowd IS and
+ * what the count chip exists to resolve. Every knot of four or more carries all
+ * four conditions, so a chip's stacked bar has something to say and a NEAR
+ * camera on any two rows still sees every condition.
+ */
+function knotPlan(): SpecimenCell[] {
+  const out: SpecimenCell[] = [];
+  let required = 0;
+  for (let k = 0; k < SPECIMEN_KNOTS.length; k++) {
+    const knot = SPECIMEN_KNOTS[k]!;
+    // In grid cells: a knot of two stands a pace apart, a knot of twelve fills
+    // about half a cell, which is the couple of metres a gathering occupies.
+    const radius = 0.13 + knot.size * 0.031;
+    for (let n = 0; n < knot.size; n++) {
+      const ring = knot.size > 6 && n % 2 === 1 ? 0.55 : 1;
+      const angle = (n / knot.size) * Math.PI * 2 + k * 0.7;
+      const rare = required < SPECIMEN_REQUIRED.length && n === 0 && knot.size >= 2
+        ? SPECIMEN_REQUIRED[required++]!
+        : null;
+      out.push({
+        stage: rare ? rare.stage : (n + k) % 3,
+        cond: rare ? rare.cond : KNOT_CONDS[n % KNOT_CONDS.length]!,
+        act: rare ? rare.act : KNOT_ACTS[(n + k) % KNOT_ACTS.length]!,
+        octant: (n * 3 + k) % 8,
+        col: knot.col + Math.cos(angle) * radius * ring,
+        row: knot.row + Math.sin(angle) * radius * ring * 0.8,
+        knot: k + 1,
+      });
     }
   }
   return out;

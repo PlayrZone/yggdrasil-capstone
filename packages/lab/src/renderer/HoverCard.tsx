@@ -34,29 +34,56 @@ export interface HoverCardData {
   /** True while this being's own pictogram and arrow are withheld as unsafe. */
   marksHeld: boolean;
   specimen: boolean;
+  /** Where the subject is on screen, and how much room it takes, in client px. */
+  mark?: { x: number; y: number; r: number } | null;
 }
 
 const CARD_W = 252;
 
 /**
- * Sit beside the cursor, and flip rather than leave the window.
+ * Sit beside the cursor — and never on the being the card is about.
  *
- * Fixed positioning, in client coordinates — the same coordinates the pointer
- * arrives in — so the card never has to know what it is floating over. A card
- * clipped by the edge of the screen is a card that has hidden the answer at
- * exactly the moment you asked for it.
+ * Fixed positioning, in client coordinates, the same ones the pointer arrives
+ * in. Two rules: the card stays inside the window, because a card clipped by
+ * the edge of the screen has hidden the answer at the moment it was asked for;
+ * and it keeps off its own subject, because a card that covers the being it
+ * describes makes "which one is it?" unanswerable exactly when it matters.
+ * Four placements are tried in order and the first that does both wins.
  */
-function place(at: { x: number; y: number }, h: number): React.CSSProperties {
+export function placeCard(
+  at: { x: number; y: number },
+  h: number,
+  avoid?: { x: number; y: number; r: number } | null,
+): React.CSSProperties {
   const w = typeof window === 'undefined' ? 1600 : window.innerWidth;
   const vh = typeof window === 'undefined' ? 900 : window.innerHeight;
-  const right = at.x + 18 + CARD_W < w - 8;
-  const below = at.y + 16 + h < vh - 8;
-  return {
-    position: 'fixed',
-    left: right ? at.x + 18 : Math.max(8, at.x - 18 - CARD_W),
-    top: below ? at.y + 16 : Math.max(8, at.y - 16 - h),
-    width: CARD_W,
+  const slots = [
+    { left: at.x + 18, top: at.y + 16 },
+    { left: at.x - 18 - CARD_W, top: at.y + 16 },
+    { left: at.x + 18, top: at.y - 16 - h },
+    { left: at.x - 18 - CARD_W, top: at.y - 16 - h },
+    { left: at.x - CARD_W / 2, top: at.y - 24 - h },
+    { left: at.x - CARD_W / 2, top: at.y + 24 },
+  ];
+  let fallback: { left: number; top: number } | null = null;
+  for (const slot of slots) {
+    const inside = slot.left >= 8 && slot.left + CARD_W <= w - 8 && slot.top >= 8 && slot.top + h <= vh - 8;
+    if (!inside) continue;
+    if (!fallback) fallback = slot;
+    if (!avoid) break;
+    const nearestX = Math.max(slot.left, Math.min(avoid.x, slot.left + CARD_W));
+    const nearestY = Math.max(slot.top, Math.min(avoid.y, slot.top + h));
+    const reach = avoid.r + 4;
+    if ((nearestX - avoid.x) ** 2 + (nearestY - avoid.y) ** 2 > reach * reach) {
+      fallback = slot;
+      break;
+    }
+  }
+  const chosen = fallback ?? {
+    left: Math.max(8, Math.min(w - 8 - CARD_W, at.x + 18)),
+    top: Math.max(8, Math.min(vh - 8 - h, at.y + 16)),
   };
+  return { position: 'fixed', left: chosen.left, top: chosen.top, width: CARD_W };
 }
 
 /**
@@ -105,7 +132,7 @@ export function HoverCard({
   return (
     <div
       className="hovercard"
-      style={place(at, many ? 330 : 190)}
+      style={placeCard(at, many ? 330 : 190, card.mark)}
       role="tooltip"
       aria-live="polite"
     >
@@ -175,7 +202,7 @@ export function ChipCard({
   at: { x: number; y: number };
 }): React.ReactElement {
   return (
-    <div className="hovercard chipcard" style={place(at, 30 + summary.mix.length * 17 + summary.activities.length * 17)} role="tooltip">
+    <div className="hovercard chipcard" style={placeCard(at, 30 + summary.mix.length * 17 + summary.activities.length * 17)} role="tooltip">
       <div className="hhead">
         <b>{summary.count} together</b>
         {summary.filtering && <span>{summary.matched} match</span>}

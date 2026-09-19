@@ -286,16 +286,23 @@ export interface BandPromise {
   heading: number | null;
   /** Finding the selected being. */
   selected: number | null;
-  /** Whether every being on screen gets a name, some do, or only the found one. */
-  names: 'found' | 'some' | 'all';
   /**
-   * Where `names` is `all`, the radius that "all" is scoped to, in metres.
+   * Whether only the found being is named, some are, or everyone inside a
+   * measured radius is.
    *
-   * "Every being in frame is named" was false and could not be made true: at
-   * NEAR the far side of the valley is in frame and half a pixel wide. "Every
-   * being you could walk to" is a promise the picture can keep, and the view
-   * reports the radius it actually reached this frame so the claim is measured
-   * rather than asserted.
+   * There is no `all`. "Every being on screen is named" was false in every
+   * frame that had more beings in it than the budget has nodes, and a promise
+   * that is true only on a quiet frame is not a promise.
+   */
+  names: 'found' | 'some' | 'within';
+  /**
+   * Where `names` is `within`, the furthest the naming rule ever LOOKS, in
+   * metres — a being past this is not a candidate for a name at all.
+   *
+   * It is not the claim. The claim is the radius the frame actually reached,
+   * which is measured every frame and printed by the band chip; `labelAudit()`
+   * reports that radius, how many names the budgeter placed, and how many are
+   * on screen, and those last two are the same number or the view is lying.
    */
   namesWithinM: number | null;
   /** One line, for the band indicator over the canvas. */
@@ -324,8 +331,8 @@ const PROMISES: Record<ZoomBand, BandPromise> = {
   },
   near: {
     band: 'near', count: null, condition: 0.90, stage: 0.90, activity: 0.90, heading: 0.90,
-    selected: 1, names: 'all', namesWithinM: NEAR_LABEL_M,
-    says: 'the whole figure · everyone you could walk to, named',
+    selected: 1, names: 'within', namesWithinM: NEAR_LABEL_M,
+    says: 'the whole figure · everything it is doing',
   },
 };
 
@@ -341,6 +348,62 @@ export function bandShowsDetail(band: ZoomBand): boolean {
 /** Bands that draw a being as a figure in a ring rather than as a presence dot. */
 export function bandShowsBodies(band: ZoomBand): boolean {
   return band !== 'far';
+}
+
+// ── The ruler ────────────────────────────────────────────────────────────────
+
+/**
+ * The scale bar: a round number of METRES and the pixels it spans in this
+ * frame.
+ *
+ * Round six printed `200 units` under a bar clamped to at most 190 px in every
+ * band — so at NEAR the bar spanned 1.9 m of ground while claiming two hundred,
+ * wrong by a hundred times on the one piece of chrome whose entire job is that
+ * one unit is one metre. A scale bar is not a decoration with a caption: it is
+ * the only thing in the frame a reader can measure the world against, so it is
+ * computed from the ground the camera is actually looking at and labelled with
+ * what it measured.
+ *
+ * The span is snapped to the cartographic 1–2–5 series (1 m, 2 m, 5 m, 10 m …
+ * 2 km), because a bar reading "137 m" is a number a reader has to do
+ * arithmetic with. Taking the largest step that fits `maxPx` guarantees the bar
+ * is never shorter than `maxPx / 2.5` — the ratio between neighbouring steps —
+ * so with the default 200 it is always at least 80 px of drawn line.
+ */
+const SCALE_STEPS: readonly number[] = [1, 2, 5];
+
+export interface ScaleBar {
+  /** The span the bar stands for, in metres. */
+  metres: number;
+  /** How wide it is drawn, in CSS pixels. `px ≈ metres / metresPerPx`. */
+  px: number;
+  /** What is printed over it — metres up to a kilometre, then km. */
+  label: string;
+}
+
+export function scaleBarFor(metresPerPx: number, maxPx = 200): ScaleBar {
+  const mpp = Number.isFinite(metresPerPx) && metresPerPx > 0 ? metresPerPx : 1;
+  const cap = Math.max(12, maxPx);
+  let metres = 1e-4;
+  // Largest round span that still fits the pixel budget. The series is walked
+  // rather than derived from a logarithm so the value is exactly 1, 2 or 5
+  // times a power of ten and the label carries no floating-point dust.
+  for (let e = -4; e <= 7; e++) {
+    for (const step of SCALE_STEPS) {
+      const span = e < 0 ? step / 10 ** -e : step * 10 ** e;
+      if (span / mpp > cap) continue;
+      if (span > metres) metres = span;
+    }
+  }
+  return { metres, px: metres / mpp, label: scaleBarLabel(metres) };
+}
+
+function scaleBarLabel(metres: number): string {
+  if (metres >= 1000) {
+    const km = metres / 1000;
+    return `${Number(km.toFixed(3))} km`;
+  }
+  return `${Number(metres.toFixed(4))} m`;
 }
 
 // ── How often the view is allowed to redraw ──────────────────────────────────
@@ -924,6 +987,7 @@ export function clusterHierarchy(
   cellPx: number,
   minCount: number,
   budget: number,
+  maxExtentPx = Number.POSITIVE_INFINITY,
 ): Cluster[] {
   const out: Cluster[] = [];
   const scratch: ScreenPoint[] = [];
@@ -961,8 +1025,63 @@ export function clusterHierarchy(
   };
   for (const group of clusterBeings(points, cellPx, minCount)) split(group, cellPx);
   mergeOverlaps(out);
-  out.sort((a, b) => (b.count === a.count ? a.x - b.x : b.count - a.count));
-  return out.length > budget ? out.slice(0, budget) : out;
+  const compact = capExtent(out, points, cellPx, maxExtentPx);
+  compact.sort((a, b) => (b.count === a.count ? a.x - b.x : b.count - a.count));
+  return compact.length > budget ? compact.slice(0, budget) : compact;
+}
+
+/**
+ * Keep a chip's people together — no group may be wider than `maxPx` on screen.
+ *
+ * A reviewer counting one QUADRANT of a default frame came out −88% in the
+ * bottom-left and +45% in the top-left, while the whole-frame count was exact
+ * to 0.5%. Nothing was miscounted: one chip had folded ninety-two beings whose
+ * outline straddled the boundary between the two, and a chip is read where its
+ * number sits. "Count the pins, add the numbers" was only ever valid frame-wide.
+ *
+ * So a group that spans more of the view than a reader would take in as one
+ * place is bisected at the median of its longer axis until every part is
+ * compact. Bisection is used rather than another grid pass because it always
+ * terminates and always leaves both halves non-empty — the grid refused to
+ * split exactly the shapeless, sprawling groups this is for. Every being stays
+ * in exactly one part, so the count arithmetic is untouched.
+ */
+function capExtent(
+  groups: readonly Cluster[],
+  points: readonly ScreenPoint[],
+  cell: number,
+  maxPx: number,
+): Cluster[] {
+  if (!(maxPx > 0) || !Number.isFinite(maxPx)) return groups.slice();
+  const out: Cluster[] = [];
+  const queue = groups.slice();
+  while (queue.length > 0) {
+    const group = queue.pop()!;
+    const overWide = group.rx * 2 > maxPx;
+    const overTall = group.ry * 2 > maxPx;
+    if ((!overWide && !overTall) || group.members.length < 2) {
+      out.push(group);
+      continue;
+    }
+    const byX = group.rx >= group.ry;
+    const sorted = group.members.slice().sort((a, b) => {
+      const pa = points[a]!;
+      const pb = points[b]!;
+      return byX ? pa.x - pb.x || pa.y - pb.y : pa.y - pb.y || pa.x - pb.x;
+    });
+    const mid = sorted.length >> 1;
+    const lower = sorted.slice(0, mid);
+    const upper = sorted.slice(mid);
+    if (lower.length === 0 || upper.length === 0) {
+      out.push(group);
+      continue;
+    }
+    queue.push(
+      extentOf(points, lower, cell, group.depth + 1),
+      extentOf(points, upper, cell, group.depth + 1),
+    );
+  }
+  return out;
 }
 
 // ── Counting, made mechanical ────────────────────────────────────────────────
@@ -1008,9 +1127,15 @@ export interface CountPlan {
  * it, because a half-visible ring beside a number is the one thing a reader
  * cannot resolve.
  */
-export function planCount(points: readonly ScreenPoint[], pinPx: number, budget: number): CountPlan {
+export function planCount(
+  points: readonly ScreenPoint[],
+  pinPx: number,
+  budget: number,
+  view?: CountView,
+): CountPlan {
   const cell = Math.max(6, pinPx);
-  const chips = clusterHierarchy(points, cell, COLLAPSE_MIN, budget);
+  const maxExtent = view ? Math.min(view.w, view.h) / COMPACT_VIEW_FRACTION : Number.POSITIVE_INFINITY;
+  const chips = clusterHierarchy(points, cell, COLLAPSE_MIN, budget, maxExtent);
   const taken = new Uint8Array(points.length);
   for (const chip of chips) for (const k of chip.members) taken[k] = 1;
 
@@ -1037,13 +1162,209 @@ export function planCount(points: readonly ScreenPoint[], pinPx: number, budget:
     mergeOverlaps(chips);
   }
 
+  // The absorb pass merges overlapping outlines, which can put a group back
+  // together that the extent cap had just taken apart — so the cap is applied
+  // again, LAST, and nothing merges after it.
+  const compact = capExtent(chips, points, cell, maxExtent);
+  const regioned = view ? splitByRegion(compact, points, cell, view) : compact;
+  // A chip standing in for ONE being says less than that being's own pin does,
+  // so whatever a split leaves alone goes back to being a pin.
+  const final: Cluster[] = [];
+  for (const chip of regioned) {
+    if (chip.members.length >= COLLAPSE_MIN) {
+      final.push(chip);
+      continue;
+    }
+    for (const k of chip.members) taken[k] = 0;
+  }
+
   const singles: number[] = [];
   for (let k = 0; k < points.length; k++) if (taken[k] === 0) singles.push(k);
-  chips.sort((a, b) => (b.count === a.count ? a.x - b.x : b.count - a.count));
-  return { singles, chips };
+  final.sort((a, b) => (b.count === a.count ? a.x - b.x : b.count - a.count));
+  return { singles, chips: final };
+}
+
+/** The canvas a count is being read off, in CSS pixels. */
+export interface CountView {
+  w: number;
+  h: number;
+}
+
+/**
+ * How much of the shorter side of the view one chip is allowed to span. A sixth
+ * is about what a reader takes in as "over there together"; past that the chip
+ * is summarising two places at once.
+ */
+const COMPACT_VIEW_FRACTION = 6;
+
+/**
+ * Which region of the frame a point is in. The frame is read in quadrants —
+ * that is how every reviewer has been asked to check a count — so a chip may
+ * not span the lines a reader counts across.
+ */
+export function regionOf(x: number, y: number, view: CountView): number {
+  return (x < view.w / 2 ? 0 : 1) + (y < view.h / 2 ? 0 : 2);
+}
+
+/**
+ * Cut every chip at the frame's own dividing lines.
+ *
+ * With this, a quadrant count is arithmetic again: every being a chip stands in
+ * for is in the chip's own quadrant, so counting the pins in a quadrant and
+ * adding the numbers whose chips sit in it gives the quadrant's population
+ * exactly, the way the whole-frame count already did.
+ */
+function splitByRegion(
+  chips: readonly Cluster[],
+  points: readonly ScreenPoint[],
+  cell: number,
+  view: CountView,
+): Cluster[] {
+  const out: Cluster[] = [];
+  for (const chip of chips) {
+    const parts = new Map<number, number[]>();
+    for (const k of chip.members) {
+      const p = points[k]!;
+      const region = regionOf(p.x, p.y, view);
+      const bucket = parts.get(region);
+      if (bucket) bucket.push(k);
+      else parts.set(region, [k]);
+    }
+    if (parts.size <= 1) {
+      out.push(chip);
+      continue;
+    }
+    for (const members of parts.values()) out.push(extentOf(points, members, cell, chip.depth + 1));
+  }
+  return out;
+}
+
+// ── Where a crowd's number goes ──────────────────────────────────────────────
+
+/**
+ * Where a count chip is allowed to sit, relative to its own outline — tried in
+ * order: up-right first, then the other corners, then the sides.
+ */
+const CHIP_SLOTS: readonly (readonly [number, number])[] = [
+  [1, -1], [-1, -1], [1, 1], [-1, 1], [0, -1.15], [0, 1.15], [1.25, 0], [-1.25, 0],
+];
+
+export interface ChipPlacement {
+  /** Centre of the chip, in canvas pixels. */
+  x: number;
+  y: number;
+  /** The point on the outline the leader line runs back to. */
+  anchorX: number;
+  anchorY: number;
+  /** True when it covers nothing — no pin, no name, no other chip. */
+  clear: boolean;
+  /** How many marks it would cover where it landed. Zero, or the chip is shy. */
+  covers: number;
+}
+
+/**
+ * Put a crowd's number outside its own ring and off every being.
+ *
+ * Round six offset the chip by 0.72 of the hull's extent, which for any group
+ * bigger than a doorway is INSIDE the crowd, and tested the result against
+ * other chips only. A reviewer found a "24" sitting on a pinned being, hiding
+ * it completely, nine pixels from an outline whose legend line promised that no
+ * pin is drawn inside a chip; they recorded that target as "no pin at all".
+ *
+ * So the slots start at the ellipse's own boundary, step out by the chip's half
+ * size, and are scored against every mark drawn in the frame. `clear` says
+ * whether the winner covers nothing; when nothing is free the caller shrinks
+ * and fades the chip instead, because a number may lose a fight with a being
+ * and a being may never lose one with a number.
+ */
+export function placeCountChip(
+  hull: { x: number; y: number; rx: number; ry: number },
+  halfW: number,
+  halfH: number,
+  pins: readonly LabelObstacle[],
+  chips: readonly LabelObstacle[],
+  view: CountView,
+  gap = 6,
+): ChipPlacement {
+  // The number is read where it SITS, so it has to sit in the part of the
+  // frame its people are in. Splitting the crowds at the quadrant lines is only
+  // half the job: a disc pushed up and to the right of a hull near the middle
+  // of the frame carries its twenty beings across the line with it, which is
+  // how a settled world still came out +36% in one quadrant and −29% in
+  // another with every chip's members in one place.
+  const home = regionOf(hull.x, hull.y, view);
+  let best: ChipPlacement | null = null;
+  let bestScore = Infinity;
+  for (const [sx, sy] of CHIP_SLOTS) {
+    const len = Math.hypot(sx, sy) || 1;
+    const ux = sx / len;
+    const uy = sy / len;
+    const anchorX = hull.x + hull.rx * ux;
+    const anchorY = hull.y + hull.ry * uy;
+    const x = Math.round(Math.min(view.w - halfW - 3, Math.max(halfW + 3, anchorX + ux * (halfW + gap))));
+    const y = Math.round(Math.min(view.h - halfH - 3, Math.max(halfH + 3, anchorY + uy * (halfH + gap))));
+    const covers = chipCoverage(x, y, halfW, halfH, pins, chips);
+    // Being in the wrong quarter of the frame is not something the chip can
+    // apologise for by shrinking, so it steers the choice without ever making
+    // a chip that covers nothing call itself unclear.
+    const score = covers + (regionOf(x, y, view) === home ? 0 : CHIP_WRONG_REGION);
+    if (score < bestScore) {
+      bestScore = score;
+      best = { x, y, anchorX, anchorY, clear: covers === 0, covers };
+    }
+    if (score === 0) break;
+  }
+  return best ?? { x: hull.x, y: hull.y, anchorX: hull.x, anchorY: hull.y, clear: false, covers: 1 };
+}
+
+/**
+ * What each thing a chip could land on costs it. A pin is a BEING and weighs
+ * most; carrying a number out of its own quarter of the frame is next, because
+ * that is a count a reader gets wrong rather than a mark they cannot see; a
+ * name or another chip is chrome.
+ */
+const CHIP_ON_PIN = 100;
+const CHIP_WRONG_REGION = 30;
+const CHIP_ON_CHIP = 10;
+
+/** What this position would cover, weighed by what a reader can least afford to lose. */
+function chipCoverage(
+  x: number, y: number, halfW: number, halfH: number,
+  pins: readonly LabelObstacle[],
+  chips: readonly LabelObstacle[],
+): number {
+  let cost = 0;
+  const x0 = x - halfW;
+  const x1 = x + halfW;
+  const y0 = y - halfH;
+  const y1 = y + halfH;
+  for (const t of pins) {
+    if (x0 < t.x1 && x1 > t.x0 && y0 < t.y1 && y1 > t.y0) cost += CHIP_ON_PIN;
+  }
+  for (const t of chips) {
+    if (x0 < t.x1 + 4 && x1 > t.x0 - 4 && y0 < t.y1 + 4 && y1 > t.y0 - 4) cost += CHIP_ON_CHIP;
+  }
+  return cost;
 }
 
 // ── Names over the world ─────────────────────────────────────────────────────
+
+/**
+ * The one sentence the view makes about names — the words the band chip prints
+ * and the words `labelAudit()` reports, generated here so they cannot be two
+ * different sentences.
+ *
+ * Round six had three: a legend promising names for everyone you could walk to,
+ * a chip printing a radius, and an audit reporting a radius, a population
+ * inside it and a different number of names drawn. No two were about the same
+ * thing, and a reviewer called it — correctly — three statements that cannot
+ * all be true.
+ */
+export function nameClaimFor(band: ZoomBand, withinM: number, shown: number): string {
+  if (band === 'near') return `names within ${withinM.toFixed(0)} m · ${shown} shown`;
+  if (bandPromise(band).names === 'found') return `only the selected being is named · ${shown} shown`;
+  return `names where there is room, nearest first · ${shown} shown`;
+}
 
 export interface LabelCandidate {
   id: number;
@@ -1290,6 +1611,16 @@ export interface LegendSection {
 }
 
 const SELECT_HEX = '#ffd34d';
+/**
+ * The ripple a being leaves when it speaks, and the thread to whoever heard it.
+ *
+ * It is drawn in EVERY band — a hundred-pixel mint arc at DEFAULT, four times
+ * the size of a pin — and until round six it was listed only in the key that
+ * opens on request, where a reviewer reading the frame never saw it and took
+ * several of them for pins. Anything the view draws that large belongs in the
+ * inline key of the band that draws it.
+ */
+const SPEECH_HEX = '#7fd8a8';
 
 /**
  * The one sentence a reader needs to trust anything they measure off the frame.
@@ -1316,7 +1647,22 @@ export const GHOST_NOTE = 'anything standing between you and a being turns to a 
  * The counting rule, stated as arithmetic rather than as an invitation to
  * estimate. Every being in the frame is in exactly one of the two terms.
  */
-export const COUNT_NOTE = 'to count the frame: count the pins, add the numbers — every being is one or the other, never both';
+export const COUNT_NOTE = 'to count the frame — or any quarter of it: count the pins, add the numbers — every being is one or the other, never both, '
+  + 'and a number only ever counts people in its own part of the frame';
+
+/**
+ * What a count chip is, stated so a reader can check it against the frame.
+ *
+ * Both halves of this were false in round six. A chip disc was drawn ON TOP of
+ * a pinned being — one hid a target completely, nine pixels from the outline
+ * whose legend line said no pin is drawn inside it — and a chip's people could
+ * be spread over a third of the view, so the number was read in a quadrant its
+ * members were not in. The disc now sits outside its own outline, clear of
+ * every pin and every name, on a leader line home; and a chip never spans the
+ * lines a reader counts across.
+ */
+export const CHIP_NOTE = 'the number is ALL of them, including the ones behind the others · no pin is drawn inside the ring, '
+  + 'and the number itself sits outside it, never on a being';
 
 /**
  * The truth about what a mark does NOT say, per band, and it is a promise about
@@ -1332,8 +1678,22 @@ export const COUNT_NOTE = 'to count the frame: count the pins, add the numbers �
  */
 export const CROWD_NOTE = 'two marks close enough to touch are BOTH dropped rather than point at the wrong person — the chip says how many';
 
+/**
+ * What NEAR says about names, pointing at the one place the answer is measured.
+ *
+ * The band used to promise names for everyone you could walk to while the audit
+ * behind it reported a radius, a count of who was inside it, and a different
+ * count of what was drawn — three statements that could not all be true. There
+ * is now one source: the budgeter places the names, the view measures how far
+ * out it got every readable being named, and the chip over the frame prints
+ * that radius and the number of names on screen. This sentence points there
+ * and claims nothing of its own.
+ */
+export const NAME_NOTE = 'every being nearer than the radius the chip over the frame prints is named — '
+  + 'the chip prints that radius, and how many names are on screen';
+
 /** What the reader should do instead, out where marks say least. */
-export const ASK_NOTE = 'hover any pin for name, age, condition, activity and plan · the roster below lists everyone, and the chips filter them';
+export const ASK_NOTE ='hover any pin for name, age, condition, activity and plan · the roster below lists everyone, and the chips filter them';
 
 function marker(over: Partial<Extract<LegendItem, { kind: 'marker' }>> & { label: string }): LegendItem {
   return {
@@ -1379,8 +1739,9 @@ export function legendFor(band: ZoomBand): LegendSection[] {
         name: 'the map',
         items: [
           { kind: 'dot', label: 'one dot is one being' },
-          { kind: 'chip', label: 'a ring of people — the number is ALL of them, and no dot is drawn inside it' },
+          { kind: 'chip', label: `a ring of people — ${CHIP_NOTE}` },
           { kind: 'swatch', color: SELECT_HEX, round: true, label: 'the one you selected — the only being named out here' },
+          { kind: 'swatch', color: SPEECH_HEX, round: true, label: 'spoke, threaded to who heard' },
           { kind: 'note', label: COUNT_NOTE },
           { kind: 'note', label: SCALE_NOTE, quiet: true },
           { kind: 'note', label: 'a whole being is under a pixel from here, so these marks are map pins, not people — zoom in for who and what', quiet: true },
@@ -1394,8 +1755,9 @@ export function legendFor(band: ZoomBand): LegendSection[] {
         name: 'the map',
         items: [
           marker({ label: 'one pin is one being', note: 'the point is its facing' }),
-          { kind: 'chip', label: 'a ring of people — the number is ALL of them, and no pin is drawn inside it' },
+          { kind: 'chip', label: `a ring of people — ${CHIP_NOTE}` },
           { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
+          { kind: 'swatch', color: SPEECH_HEX, round: true, label: 'spoke, threaded to who heard' },
           { kind: 'note', label: COUNT_NOTE },
         ],
       },
@@ -1441,7 +1803,8 @@ export function legendFor(band: ZoomBand): LegendSection[] {
       name: '',
       items: [
         { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
-        { kind: 'note', label: 'every being close enough to walk to is named — the chip over the frame says how far that reached', quiet: true },
+        { kind: 'swatch', color: SPEECH_HEX, round: true, label: 'spoke, threaded to who heard' },
+        { kind: 'note', label: NAME_NOTE, quiet: true },
         { kind: 'note', label: GHOST_NOTE, quiet: true },
         { kind: 'note', label: SCALE_NOTE, quiet: true },
       ],
@@ -1450,8 +1813,9 @@ export function legendFor(band: ZoomBand): LegendSection[] {
     detail.push({
       name: '',
       items: [
-        { kind: 'chip', label: 'a crowd, and how many are in it' },
+        { kind: 'chip', label: `a crowd, and how many are in it — ${CHIP_NOTE}` },
         { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
+        { kind: 'swatch', color: SPEECH_HEX, round: true, label: 'spoke, threaded to who heard' },
         { kind: 'note', label: GHOST_NOTE, quiet: true },
         { kind: 'note', label: SCALE_NOTE, quiet: true },
       ],

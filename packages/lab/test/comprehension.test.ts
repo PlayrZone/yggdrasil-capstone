@@ -17,11 +17,14 @@ import {
   withText,
 } from '../src/renderer/filters.js';
 import {
+  applyOrder,
   brushReduce,
+  FREE_ORDER,
   indexOfRow,
   moveFocus,
   nextSort,
   NO_BRUSH,
+  orderReduce,
   scrollToRow,
   shouldScrollToBrush,
   sortRows,
@@ -31,9 +34,16 @@ import {
 } from '../src/renderer/roster.js';
 import {
   conditionMix,
+  coveringBody,
   cycleCandidate,
   groupByActivity,
   orderCandidates,
+  type BodyBox,
+  PICK_BODY,
+  PICK_FIGURE,
+  PICK_HIDDEN,
+  PICK_MARK,
+  pickLayerOf,
   suppressOverlaps,
   type MarkPoint,
   type PickCandidate,
@@ -494,5 +504,184 @@ describe('the goal lane', () => {
   it('answers null for a being with no plan rather than inventing one', () => {
     expect(goalWord(GOAL_NONE)).toBeNull();
     expect(goalWord(200)).toBeNull();
+  });
+});
+
+// ── The table holds still while somebody is reading it ───────────────────────
+
+/**
+ * Round six: click a roster row → the camera centres on that being → its
+ * `distance` goes to zero → the distance sort re-runs → the row you clicked
+ * lands at the far end of three hundred. The inspector filled with the right
+ * being and the table had lost it: `.rrow.sel` was not in the list at all.
+ *
+ * A sort order is a reading aid, not a live read-out, so it freezes under a
+ * selection and thaws only on something the reader did on purpose.
+ */
+describe('a selected row stays where the reader put it', () => {
+  const table = [
+    row({ id: 1, distance: 10 }),
+    row({ id: 2, distance: 20 }),
+    row({ id: 3, distance: 30 }),
+    row({ id: 4, distance: 40 }),
+  ];
+
+  it('freezes the order the moment a row is picked', () => {
+    const state = orderReduce(FREE_ORDER, { kind: 'pick', id: 3, order: [1, 2, 3, 4] });
+    expect(state.frozen).toEqual([1, 2, 3, 4]);
+    expect(state.anchor).toBe(3);
+  });
+
+  it('keeps the picked row in place when centring zeroes its distance', () => {
+    const state = orderReduce(FREE_ORDER, { kind: 'pick', id: 3, order: [1, 2, 3, 4] });
+    // The camera arrives: #3 is now nearest, and a live sort would move it to
+    // the top — or, sorted the other way, off the end of the list.
+    const moved = table.map((r) => (r.id === 3 ? row({ id: 3, distance: 0 }) : r));
+    const resorted = sortRows(moved, { key: 'distance', dir: 1 });
+    expect(resorted.map((r) => r.id)).toEqual([3, 1, 2, 4]);
+    expect(applyOrder(resorted, state).map((r) => r.id)).toEqual([1, 2, 3, 4]);
+    // And the row is still THERE, which is the actual defect.
+    expect(indexOfRow(applyOrder(resorted, state), 3)).toBe(2);
+  });
+
+  it('thaws on a header click, a scroll, a new question, or dropping the selection', () => {
+    const frozen = orderReduce(FREE_ORDER, { kind: 'pick', id: 2, order: [1, 2, 3, 4] });
+    for (const kind of ['sort', 'scroll', 'filter', 'clear'] as const) {
+      expect(orderReduce(frozen, { kind }).frozen).toBeNull();
+    }
+  });
+
+  it('does not re-snapshot the order when the selection moves inside a freeze', () => {
+    const first = orderReduce(FREE_ORDER, { kind: 'pick', id: 2, order: [1, 2, 3, 4] });
+    const second = orderReduce(first, { kind: 'pick', id: 4, order: [4, 3, 2, 1] });
+    expect(second.frozen).toEqual([1, 2, 3, 4]);
+    expect(second.anchor).toBe(4);
+  });
+
+  it('is a no-op when nothing is frozen, so a free table never re-renders for this', () => {
+    for (const kind of ['sort', 'scroll', 'filter', 'clear'] as const) {
+      expect(orderReduce(FREE_ORDER, { kind })).toBe(FREE_ORDER);
+    }
+    expect(applyOrder(table, FREE_ORDER).map((r) => r.id)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('lets a being that has just walked into frame in, at the end, rather than hiding it', () => {
+    const state = orderReduce(FREE_ORDER, { kind: 'pick', id: 2, order: [1, 2, 3] });
+    const withNewcomer = [...table, row({ id: 9, distance: 5 })];
+    const out = applyOrder(sortRows(withNewcomer, { key: 'distance', dir: 1 }), state);
+    expect(out.map((r) => r.id)).toEqual([1, 2, 3, 9, 4]);
+  });
+
+  it('drops a being that has died without disturbing the rest', () => {
+    const state = orderReduce(FREE_ORDER, { kind: 'pick', id: 3, order: [1, 2, 3, 4] });
+    const alive = table.filter((r) => r.id !== 2);
+    expect(applyOrder(alive, state).map((r) => r.id)).toEqual([1, 3, 4]);
+  });
+
+  it('never mutates the rows it orders', () => {
+    const state = orderReduce(FREE_ORDER, { kind: 'pick', id: 1, order: [4, 3, 2, 1] });
+    const before = table.map((r) => r.id);
+    applyOrder(table, state);
+    expect(table.map((r) => r.id)).toEqual(before);
+  });
+});
+
+// ── Picking is about what is DRAWN at that pixel ─────────────────────────────
+
+/**
+ * Round six verified identification 15/15 through `ui.hover(id)` — the one
+ * route that never touches picking — and a reviewer with a real mouse, aiming
+ * at each being's own reported position, got a card for somebody else seven
+ * times in ten in a crowd. The cause was the ordering: any body the ray struck
+ * outranked everything, and a body the ray MISSED (through the gap between an
+ * arm and a trunk, or over a being lying down) fell all the way back to "whose
+ * PIN is nearest" — and a pin is at the feet, forty pixels below the cursor.
+ */
+describe('a pick offers what is drawn at that pixel', () => {
+  const at = (id: number, layer: number, depth: number, distPx = 0): PickCandidate =>
+    ({ id, onBody: layer === PICK_BODY, layer, distPx, depth });
+
+  it('offers an exact body hit before the same crowd’s footprints and pins', () => {
+    const list = [at(1, PICK_MARK, 10, 2), at(2, PICK_FIGURE, 40), at(3, PICK_BODY, 90)];
+    expect(orderCandidates(list).map((c) => c.id)).toEqual([3, 2, 1]);
+  });
+
+  it('offers the figure the ray slipped through before a neighbour’s pin', () => {
+    // The exact shape of the defect: the target's own body box against a
+    // neighbour whose pin happens to be nearer the cursor.
+    const target = at(7, PICK_FIGURE, 30, 26);
+    const neighbour = at(8, PICK_MARK, 28, 3);
+    expect(orderCandidates([neighbour, target])[0]!.id).toBe(7);
+  });
+
+  it('breaks a tie within a layer by nearest to the camera, then nearest to the cursor', () => {
+    expect(orderCandidates([at(1, PICK_BODY, 90), at(2, PICK_BODY, 12), at(3, PICK_BODY, 40)]).map((c) => c.id))
+      .toEqual([2, 3, 1]);
+    expect(orderCandidates([at(1, PICK_MARK, 20, 9), at(2, PICK_MARK, 20, 2)]).map((c) => c.id)).toEqual([2, 1]);
+  });
+
+  it('puts a being you can only see through a hill after anyone standing in the open', () => {
+    const ghosted = at(4, PICK_BODY + PICK_HIDDEN, 5);
+    const plain = at(5, PICK_MARK, 400, 8);
+    expect(orderCandidates([ghosted, plain]).map((c) => c.id)).toEqual([5, 4]);
+  });
+
+  it('reads a candidate that only knows body-or-not, so nothing has to be rewritten at once', () => {
+    expect(pickLayerOf({ id: 1, onBody: true, distPx: 0, depth: 1 })).toBe(PICK_BODY);
+    expect(pickLayerOf({ id: 2, onBody: false, distPx: 4, depth: 1 })).toBe(PICK_MARK);
+  });
+
+  it('is still deterministic under an exact tie, so the arrow keys walk a stable list', () => {
+    const tied = [at(9, PICK_MARK, 20, 4), at(2, PICK_MARK, 20, 4), at(5, PICK_MARK, 20, 4)];
+    expect(orderCandidates(tied).map((c) => c.id)).toEqual([2, 5, 9]);
+    expect(orderCandidates([...tied].reverse()).map((c) => c.id)).toEqual([2, 5, 9]);
+  });
+});
+
+// ── A being standing behind a being is not in the picture ────────────────────
+
+/**
+ * The other half of round six's 3/10 identification score, and the half that
+ * was not the picking. `visibleIds()` offered beings whose reported position
+ * belonged to somebody standing in front of them; a reviewer pointed a real
+ * mouse at each one and got a card about the being that WAS drawn there —
+ * correctly. Bodies are opaque and drawn in depth order, so the probe has to
+ * say so.
+ */
+describe('the probes do not offer a being somebody else is standing in front of', () => {
+  const box = (id: number, x: number, y: number, depth: number, w = 20, h = 60): BodyBox =>
+    ({ id, x, y, x0: x - w / 2, y0: y - h / 2, x1: x + w / 2, y1: y + h / 2, depth });
+
+  it('names whoever is in front at the very point the view reports', () => {
+    const boxes = [box(1, 100, 100, 30), box(2, 104, 104, 12)];
+    expect(coveringBody(boxes, 1)).toBe(2);
+    expect(coveringBody(boxes, 2)).toBeNull();
+  });
+
+  it('leaves a being standing in the open alone', () => {
+    expect(coveringBody([box(1, 100, 100, 30), box(2, 400, 100, 12)], 1)).toBeNull();
+  });
+
+  it('does not let two beings at the same depth cover each other', () => {
+    // A metre apart on one line of sight is a crowd, not an occlusion — and
+    // "both are hidden" would empty the frame.
+    const boxes = [box(1, 100, 100, 30), box(2, 103, 101, 29.8)];
+    expect(coveringBody(boxes, 1)).toBeNull();
+    expect(coveringBody(boxes, 2)).toBeNull();
+  });
+
+  it('names the NEAREST of several in front, which is the one actually drawn', () => {
+    const boxes = [box(1, 100, 100, 30), box(2, 100, 100, 20), box(3, 100, 100, 9)];
+    expect(coveringBody(boxes, 1)).toBe(3);
+  });
+
+  it('says nothing about a being that is not in the frame at all', () => {
+    expect(coveringBody([box(2, 100, 100, 10)], 99)).toBeNull();
+  });
+
+  it('is exact at the edge of a body — a point on the boundary is covered', () => {
+    const boxes = [box(1, 100, 100, 30), box(2, 110, 100, 10, 20, 60)];
+    expect(coveringBody(boxes, 1)).toBe(2); // 100 is the left edge of #2
+    expect(coveringBody([box(1, 100, 100, 30), box(2, 111, 100, 10, 20, 60)], 1)).toBeNull();
   });
 });

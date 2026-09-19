@@ -15,12 +15,16 @@ import {
   type FilterState,
 } from './filters.js';
 import {
+  applyOrder,
+  FREE_ORDER,
   indexOfRow,
   moveFocus,
   nextSort,
+  orderReduce,
   scrollToRow,
   sortRows,
   windowFor,
+  type OrderState,
   type RosterRow,
   type Sort,
   type SortKey,
@@ -107,14 +111,55 @@ export function RosterDock({
   const [focus, setFocus] = useState(-1);
   const body = useRef<HTMLDivElement | null>(null);
   const [viewportH, setViewportH] = useState(180);
+  // The order holds still while a row is being read. See `orderReduce`.
+  const [order, setOrder] = useState<OrderState>(FREE_ORDER);
+  /** Set while THIS component scrolls the table, so it does not thaw its own freeze. */
+  const selfScroll = useRef(false);
 
   const scoped = useMemo(() => (inFrameOnly ? rows.filter((r) => r.inFrame) : rows), [rows, inFrameOnly]);
   const count = useMemo(() => countMatches(rows, filter), [rows, filter]);
-  const shown = useMemo(() => sortRows(filterRows(scoped, filter), sort), [scoped, filter, sort]);
+  const sorted = useMemo(() => sortRows(filterRows(scoped, filter), sort), [scoped, filter, sort]);
+  const shown = useMemo(() => applyOrder(sorted, order), [sorted, order]);
   const win = useMemo(
     () => windowFor(scrollTop, viewportH, ROW_H, shown.length),
     [scrollTop, viewportH, shown.length],
   );
+  const shownRef = useRef(shown);
+  useEffect(() => { shownRef.current = shown; }, [shown]);
+
+  // A new question is a new table: the freeze exists to stop a row moving under
+  // the reader, not to outlive what they were reading.
+  useEffect(() => { setOrder((o) => orderReduce(o, { kind: 'filter' })); }, [filter, inFrameOnly]);
+  // Clicking a being in the WORLD centres the camera just as a row click does,
+  // so it freezes the order too — otherwise the being you just clicked is the
+  // one row that moves.
+  useEffect(() => {
+    setOrder((o) => (selectedId === null
+      ? orderReduce(o, { kind: 'clear' })
+      : orderReduce(o, { kind: 'pick', id: selectedId, order: shownRef.current.map((r) => r.id) })));
+  }, [selectedId]);
+
+  /** Pick a row, and hold the order it was picked in. */
+  const pick = useCallback(
+    (id: number) => {
+      setOrder((o) => orderReduce(o, { kind: 'pick', id, order: shownRef.current.map((r) => r.id) }));
+      onPick(id);
+    },
+    [onPick],
+  );
+
+  // The selected row stays where the reader can see it — the other half of
+  // freezing the order. A selection made from the WORLD scrolls the table to
+  // it too; the pointer is on the canvas, so nothing moves under it.
+  useEffect(() => {
+    const el = body.current;
+    if (!el || selectedId === null) return;
+    const at = indexOfRow(shownRef.current, selectedId);
+    const next = scrollToRow(at, el.scrollTop, el.clientHeight, ROW_H);
+    if (next === null) return;
+    selfScroll.current = true;
+    el.scrollTop = next;
+  }, [selectedId, order]);
 
   useEffect(() => {
     const el = body.current;
@@ -134,7 +179,9 @@ export function RosterDock({
     if (!el || !brushFromWorld || brushId === null) return;
     const at = indexOfRow(shown, brushId);
     const next = scrollToRow(at, el.scrollTop, el.clientHeight, ROW_H);
-    if (next !== null) el.scrollTop = next;
+    if (next === null) return;
+    selfScroll.current = true;
+    el.scrollTop = next;
   }, [brushId, brushFromWorld, shown]);
 
   const onKey = useCallback(
@@ -158,7 +205,7 @@ export function RosterDock({
         const row = shown[focus];
         if (row) {
           e.preventDefault();
-          onPick(row.id);
+          pick(row.id);
         }
         return;
       }
@@ -167,7 +214,7 @@ export function RosterDock({
         onFilter({ stages: [], conditions: [], activities: [], text: '' });
       }
     },
-    [focus, shown, onHoverRow, onPick, filter, onFilter],
+    [focus, shown, onHoverRow, pick, filter, onFilter],
   );
 
   const lit = chipCount(filter);
@@ -232,7 +279,11 @@ export function RosterDock({
             role="columnheader"
             className={`${c.className}${sort.key === c.key ? ' sorted' : ''}`}
             aria-sort={sort.key === c.key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}
-            onClick={() => setSort((s) => nextSort(s, c.key))}
+            onClick={() => {
+              // Asking for an order is the one thing that thaws a frozen one.
+              setOrder((o) => orderReduce(o, { kind: 'sort' }));
+              setSort((s) => nextSort(s, c.key));
+            }}
           >
             {c.label}
             {sort.key === c.key && <i>{sort.dir === 1 ? '▲' : '▼'}</i>}
@@ -247,7 +298,13 @@ export function RosterDock({
         role="grid"
         aria-rowcount={shown.length}
         onKeyDown={onKey}
-        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        onScroll={(e) => {
+          setScrollTop(e.currentTarget.scrollTop);
+          // The reader scrolling is the reader done with the row they froze;
+          // the table scrolling itself to show them that row is not.
+          if (selfScroll.current) selfScroll.current = false;
+          else setOrder((o) => orderReduce(o, { kind: 'scroll' }));
+        }}
       >
         {shown.length === 0 ? (
           <p className="rempty">
@@ -271,7 +328,7 @@ export function RosterDock({
                   aria-rowindex={at + 1}
                   aria-selected={r.id === selectedId}
                   onMouseEnter={() => { setFocus(at); onHoverRow(r.id); }}
-                  onClick={() => onPick(r.id)}
+                  onClick={() => pick(r.id)}
                 >
                   <span className={`c-name${r.selfChosen ? ' named' : ''}`}>{r.name}</span>
                   <span className="c-stage">{r.stageWord}</span>

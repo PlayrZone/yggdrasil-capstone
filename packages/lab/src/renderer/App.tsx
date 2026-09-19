@@ -374,6 +374,7 @@ export function App(): React.ReactElement {
           bandPixels: () => world.bandPixels(),
           annotationPixels: () => world.annotationPixels(),
           scaleReport: () => world.scaleReport(),
+          scaleBar: () => world.scaleBar(),
           promises: () => world.promises(),
           activityShownOf: (id) => world.activityShownOf(id),
           stageShownOf: (id) => world.stageShownOf(id),
@@ -390,6 +391,8 @@ export function App(): React.ReactElement {
           chipSummary: (cluster) => world.chipSummary(cluster),
           chipsOnScreen: () => world.chipsOnScreen(),
           hoverCandidates: () => candRef.current.map((c) => c.id),
+          // The mouse's own picking, through the mouse's own code path.
+          pickAtScreen: (x, y) => world.pickAtScreen(x, y),
           hoveredId: () => world.hovered,
           markAudit: () => world.markAudit(),
           markGeometry: () => world.markGeometry(),

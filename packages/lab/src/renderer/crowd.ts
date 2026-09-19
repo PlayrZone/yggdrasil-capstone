@@ -89,36 +89,113 @@ export function suppressOverlaps(points: readonly MarkPoint[]): boolean[] {
 
 // ── 2. Who is under the cursor ───────────────────────────────────────────────
 
+/**
+ * WHAT was drawn at that pixel, best first — the only question a pick is
+ * allowed to answer.
+ *
+ * Round six's picking asked a different question and got a different answer:
+ * any body the ray struck outranked every mark, whatever the cursor was
+ * actually on, and a body the ray MISSED — through the gap between a figure's
+ * arm and its trunk, or because the being was lying down — fell all the way
+ * back to "whose pin is nearest", which in a crowd is the neighbour's. Pointing
+ * the real mouse at a being's own reported position gave a card for somebody
+ * else seven times in ten.
+ *
+ * So the layers are the drawing order. An exact hit on a body beats the same
+ * body's silhouette, which beats a ground mark, and anything only visible
+ * THROUGH the land — an x-ray outline over a hill — comes after everything
+ * drawn in the open.
+ */
+export const PICK_BODY = 0;
+/** Inside the drawn figure's own footprint, where the ray slipped through it. */
+export const PICK_FIGURE = 1;
+/** Inside the ground mark: the pin, the ring, or the dot out at FAR. */
+export const PICK_MARK = 2;
+/** How far a being the land is hiding is pushed down the list. */
+export const PICK_HIDDEN = 3;
+
 export interface PickCandidate {
   id: number;
   /** True when the ray struck this being's BODY — an exact hit, not a near miss. */
   onBody: boolean;
+  /**
+   * Which layer of the drawing the cursor found it in. Absent means the caller
+   * only knows body-or-not, and it is read as `PICK_BODY` / `PICK_MARK`.
+   */
+  layer?: number;
   /** Distance from the cursor to the being's screen point, in CSS pixels. */
   distPx: number;
   /** Distance from the eye, in metres. */
   depth: number;
 }
 
+export function pickLayerOf(c: PickCandidate): number {
+  return c.layer ?? (c.onBody ? PICK_BODY : PICK_MARK);
+}
+
 /**
  * The order a disambiguation list offers beings in.
  *
- * Bodies the ray actually struck come first, nearest to the eye first — you
- * pointed at a person, and the one in front is the one you meant. Everything
- * else follows by how far the cursor is from its mark. `id` breaks the last
- * tie, so the list does not reshuffle between two frames of a paused world and
- * the arrow keys walk a stable sequence.
+ * By what is drawn on top: the layer first, then nearest to the eye — the being
+ * in front is the one drawn over the one behind it, and is the one you meant —
+ * then nearest to the cursor. `id` breaks the last tie, so the list does not
+ * reshuffle between two frames of a paused world and the arrow keys walk a
+ * stable sequence.
  */
 export function orderCandidates(cands: readonly PickCandidate[]): PickCandidate[] {
   return cands.slice().sort((a, b) => {
-    if (a.onBody !== b.onBody) return a.onBody ? -1 : 1;
-    if (a.onBody && b.onBody) {
-      if (a.depth !== b.depth) return a.depth - b.depth;
-      return a.id - b.id;
-    }
-    if (a.distPx !== b.distPx) return a.distPx - b.distPx;
+    const la = pickLayerOf(a);
+    const lb = pickLayerOf(b);
+    if (la !== lb) return la - lb;
     if (a.depth !== b.depth) return a.depth - b.depth;
+    if (a.distPx !== b.distPx) return a.distPx - b.distPx;
     return a.id - b.id;
   });
+}
+
+/**
+ * One being's patch of screen: the box its drawn figure covers, the point the
+ * view reports it at, and how far away it is.
+ */
+export interface BodyBox {
+  id: number;
+  /** The point `screenPositionOf` reports — where a driver aims. */
+  x: number;
+  y: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  /** Metres from the eye. */
+  depth: number;
+}
+
+/**
+ * Who is standing in front of this being, at the exact point the view reports
+ * it at — or `null` when that pixel is its own.
+ *
+ * Bodies are drawn opaque and in depth order, so a being behind another being
+ * is not in the picture at that point, however large and well drawn it is. Six
+ * rounds of probes never said so: `visibleIds()` offered beings whose reported
+ * position belonged to somebody standing in front of them, a reviewer pointed a
+ * real mouse at each one, and the card that opened was — correctly — about the
+ * being that WAS drawn there. The identification score went to 3/10 and the
+ * picking was not the thing that was wrong.
+ *
+ * `slack` keeps two beings at the same depth from covering each other: a metre
+ * apart on the same line of sight is a crowd, not an occlusion.
+ */
+export function coveringBody(boxes: readonly BodyBox[], id: number, slack = 0.5): number | null {
+  let self: BodyBox | undefined;
+  for (const b of boxes) if (b.id === id) { self = b; break; }
+  if (!self) return null;
+  let front: BodyBox | null = null;
+  for (const b of boxes) {
+    if (b.id === id || b.depth > self.depth - slack) continue;
+    if (self.x < b.x0 || self.x > b.x1 || self.y < b.y0 || self.y > b.y1) continue;
+    if (front === null || b.depth < front.depth) front = b;
+  }
+  return front === null ? null : front.id;
 }
 
 /** Step through a disambiguation list, wrapping — the arrow keys' whole behaviour. */

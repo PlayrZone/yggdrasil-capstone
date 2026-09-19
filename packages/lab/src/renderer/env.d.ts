@@ -28,9 +28,15 @@ export interface WorldProbe {
    * twenty-nine targets turned out to have three body pixels or fewer.
    */
   visibleIds(): number[];
-  /** Whether this being is readable, and which of the four ways it is not. */
+  /**
+   * Whether this being is readable, and which of the five ways it is not — the
+   * fifth being that somebody is standing in FRONT of it. Bodies are opaque
+   * and drawn in depth order, so a being behind another being is not in the
+   * picture at the point this view reports it at; `coveredBy` names who is.
+   */
   visibilityOf(id: number): {
-    visible: boolean; markPx: number; bodyPx: number; inFrame: boolean; collapsed: boolean; behindLand: boolean; reason: string;
+    visible: boolean; markPx: number; bodyPx: number; inFrame: boolean; collapsed: boolean;
+    behindLand: boolean; coveredBy: number | null; reason: string;
   } | null;
   screenPositionOf(id: number): { x: number; y: number } | null;
   /** Where it stands, in scene units — the frame `placeCamera` takes. */
@@ -66,7 +72,14 @@ export interface WorldProbe {
    * being got a name this frame, how many that was, and how many are drawn.
    * NEAR's legend points at this number, so the claim can never outrun it.
    */
-  labelAudit(): { claim: string; withinM: number; expected: number; shown: number };
+  labelAudit(): { claim: string; withinM: number; expected: number; shown: number; within: number };
+  /**
+   * The scale bar, as drawn: a round span in METRES, the pixels it covers, the
+   * words printed over it, and the metres-per-pixel it was measured from at the
+   * ground under the view centre. `px ≈ metres / metresPerPx`, in every band —
+   * round six printed "200 UNITS" under 1.9 m of ground.
+   */
+  scaleBar(): { metres: number; px: number; label: string; metresPerPx: number };
   /** The crowd counts drawn over the world, and where each one sits. */
   clustersShown(): { count: number; x: number; y: number }[];
   /**
@@ -163,6 +176,8 @@ export interface WorldProbe {
     distance: number; inFrame: boolean; visible: boolean; crowded: boolean;
     /** True while this being's pictogram and arrow are withheld as unattributable. */
     marksHeld: boolean; specimen: boolean;
+    /** Where the subject is on screen — what the card places itself clear of. */
+    mark: { x: number; y: number; r: number } | null;
   } | null;
   /** Every being the view holds, exactly as the roster lists it. */
   rosterRows(): RosterRow[];
@@ -177,10 +192,22 @@ export interface WorldProbe {
     cluster: number; count: number; matched: number;
     mix: MixSegment[]; activities: { word: string; count: number }[]; ids: number[];
   } | null;
-  /** Where the crowd chips are on the canvas, so one can be pointed at. */
-  chipsOnScreen(): { cluster: number; x: number; y: number; count: number }[];
+  /**
+   * Where the crowd chips are on the canvas, how big each is drawn, and whether
+   * it found a spot covering nothing — a chip may never sit on a pin, and
+   * `clear: false` is the view admitting it had to shrink and fade one instead.
+   */
+  chipsOnScreen(): { cluster: number; x: number; y: number; count: number; halfW: number; halfH: number; clear: boolean }[];
   /** Every being under the cursor, in the order the disambiguation list offers them. */
   hoverCandidates(): number[];
+  /**
+   * What the MOUSE would pick at this screen point — the pointer handler's own
+   * code path, not a second implementation of it. Client coordinates, the ones
+   * `screenPositionOf` returns. `layer` is 0 for a body the ray struck, 1 for
+   * the drawn figure's footprint, 2 for the ground mark, plus 3 for anything
+   * only visible through the land.
+   */
+  pickAtScreen(x: number, y: number): { id: number; layer: number; onBody: boolean; distPx: number; depth: number }[];
   /** The one being the card is describing and the view is highlighting. */
   hoveredId(): number | null;
   /**

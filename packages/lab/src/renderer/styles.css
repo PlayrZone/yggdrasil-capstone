@@ -76,6 +76,12 @@ body {
   padding: 2px 5px 3px; border-radius: 9px; cursor: pointer;
 }
 .wcount:hover { border-color: rgba(226, 236, 243, 0.85); background: rgba(16, 24, 30, 0.92); }
+/* Nowhere free to stand: the number gets smaller and quieter rather than
+   covering one of the people it is counting. */
+.wcount.shy { filter: opacity(0.62); }
+/* The line from a number back to the ring it belongs to. Shorter and dimmer
+   than a name's leader — it crosses air the chip was pushed out of. */
+.wleader.chiplead { background: linear-gradient(90deg, rgba(200, 216, 228, 0.55), rgba(200, 216, 228, 0.16)); }
 .wcount .wnum { font-style: normal; font-variant-numeric: tabular-nums; }
 .wcount .wmix { display: flex; height: 3px; margin: 3px -2px 0; border-radius: 2px; overflow: hidden; }
 .wcount .wmix i { display: block; height: 100%; }
@@ -92,19 +98,26 @@ body {
    pictograms vanished looks exactly like the frame where nobody was doing
    anything, unless it says which one it is. Quiet, bottom-left, out of the
    subject's way. */
+/* On its own ground: a pin drawn through the caption made both unreadable and
+   left a reviewer reading a being as part of the chrome. */
 .wband {
   position: absolute; left: 12px; bottom: 10px; display: flex; align-items: center; gap: 8px;
   font-size: 10.5px; letter-spacing: .3px; color: #9fb2bd; text-transform: uppercase;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+  padding: 4px 9px 5px; border-radius: 5px;
+  background: rgba(10, 14, 18, 0.62); backdrop-filter: blur(3px);
 }
 .wband span { opacity: 0.85; }
 .wband .wbar {
   display: block; height: 5px; border: 1px solid rgba(214, 228, 238, 0.7); border-top: 0;
   flex: none; position: relative;
 }
+/* The one caption in this view that is NOT upper-cased: "20 M" reads as mega
+   and "20 m" reads as twenty metres, and the whole point of the bar is which
+   of those it is. */
 .wband .wbar::after {
   content: attr(data-span); position: absolute; left: 0; bottom: 7px;
-  font-size: 9px; letter-spacing: .2px; color: #8fa3ae; white-space: nowrap;
+  font-size: 9px; letter-spacing: .2px; color: #cfdce4; white-space: nowrap; text-transform: none;
 }
 
 /* The selection strip sits over the canvas, opposite the inspector. */
@@ -147,6 +160,10 @@ body {
   font-size: 10.5px; padding: 1px 7px 2px; border-radius: 10px; cursor: pointer; margin-left: auto;
 }
 .lmore:hover { color: #dfe9ef; border-color: #35424b; }
+/* Everything you can reach with a keyboard says so when you reach it. */
+.lmore:focus-visible, .selbar button:focus-visible, .wcount:focus-visible, .hstack button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
 /* Shown only when the sim is not keeping the speed the preset promises. */
 .controls .achieved { color: #e09a3a; }
 
@@ -325,8 +342,11 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 .worldcol > .stage { min-height: 0; }
 .worldcol > .stage .legend { flex: 0 0 auto; }
 
+/* The table supports the picture; it does not compete with it. A third of a
+   short window is the most it may take, and on a tall one it stops at the
+   nine rows a reader actually scans. */
 .roster {
-  flex: 0 0 228px; display: flex; flex-direction: column; min-height: 0;
+  flex: 0 0 min(228px, 32vh); display: flex; flex-direction: column; min-height: 0;
   border-top: 1px solid var(--line); background: var(--panel);
 }
 .roster.closed { flex: 0 0 auto; }
@@ -374,10 +394,22 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 
 /* One grid template for the header and every row, so the columns are aligned
    by construction rather than by two lists of widths agreeing. */
+/* One grid template for the header and every row — and the flexible columns
+   STOP. On a maximized window `1.5fr` gave the name column seven hundred
+   pixels of empty table: the name sat at x≈18 and the stage at x≈790, with
+   nothing between them, so reading one row was a saccade across the screen.
+   Columns are as wide as their content needs and the slack is left at the
+   end. */
 .rhead, .rrow {
   display: grid;
-  grid-template-columns: minmax(104px, 1.5fr) 52px 74px minmax(120px, 1.1fr) 46px 58px 58px 68px;
+  grid-template-columns: minmax(104px, 210px) 52px 74px minmax(120px, 190px) 46px 58px 58px 68px;
   align-items: center; gap: 10px; padding: 0 12px;
+  /* The panel above shares the `.rhead` class and sets `space-between` on it,
+     which in a GRID container pushes the tracks apart: the header's columns
+     spread over the whole table while the rows stayed packed left, and a
+     reviewer reading the header found "name" at x≈18 and "stage" at x≈790
+     with nothing in between. The columns start where the rows do. */
+  justify-content: start;
 }
 .rhead { border-bottom: 1px solid var(--line); height: 22px; }
 .rhead button {
@@ -386,6 +418,7 @@ button.danger { background: #3a2326; border-color: #5b3030; }
   display: flex; align-items: center; gap: 3px; min-width: 0;
 }
 .rhead button:hover { color: #cdd8de; }
+.rhead button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; color: #dfe9ef; }
 .rhead button.sorted { color: #dfe9ef; }
 .rhead button i { font-style: normal; font-size: 7px; }
 .rhead .c-need, .rhead .c-dist { justify-content: flex-end; }
