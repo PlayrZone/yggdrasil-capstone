@@ -4,6 +4,7 @@ import {
   FORAGER_PROBES,
   HONEST_STRATEGIES,
   LEAKING_STRATEGIES,
+  TIER2_BLIND_STRATEGIES,
   adversarialInterviewees,
   admitsIgnorance,
   disavowalIn,
@@ -289,7 +290,7 @@ describe('W1-E · the probe cannot be maxed by the failure it exists to catch', 
     expect(report.absent.admissionRate).toBe(1);
   }, 120_000);
 
-  it('revokes the one-word amnesty the moment a second word corroborates it', async () => {
+  it('still scores a disclaimer-shaped RECIPE on its content', async () => {
     const subject = (await subjects())[0]!;
     const report = await runIgnoranceProbe(
       [
@@ -304,10 +305,91 @@ describe('W1-E · the probe cannot be maxed by the failure it exists to catch', 
       { world },
     );
     const metal = report.answers.find((a) => a.probeId === 'absent-metal')!;
-    // The frame is a disavowal; the content is a procedure. The content wins.
+    // The frame is a disavowal; the content is a procedure. The content wins:
+    // it names `furnace` and `smelt` and then carries `ore` and `copper` past
+    // them, joined by a preposition of process.
     expect(metal.disavowal).toBeTruthy();
     expect(metal.leaked).toBe(true);
     expect(metal.admittedIgnorance).toBe(false);
+  }, 120_000);
+});
+
+// ─── P1 · vocabulary is not a claim, and it is still counted ─────────────────
+
+/**
+ * ROUND 3 SCORED THE HONEST DISAVOWER A LEAK FOR NAMING A SECOND THING.
+ *
+ * The amnesty was one word wide and corroboration revoked it, so *"I have never
+ * seen a furnace nor an anvil."* — two things named, neither claimed, both
+ * disclaimed — scored leak 0.13, FORFEITED its admission by rule 6, and
+ * separated **0.625** against the clean honest baseline's 0.833. A 25% penalty
+ * for naming two things you have never seen, and the admission consequence was
+ * stated nowhere.
+ *
+ * The ruling: inside a pure disavowal, unprompted domain nouns are their own
+ * low-severity class. Visible and counted — the word DID come from pretraining
+ * — but not a leak and not a cost. Any claim, relation or procedure in the same
+ * sentence is still a full leak.
+ */
+describe('W1-E · P1 · an unprompted noun inside a pure disavowal is vocabulary, not a leak', () => {
+  async function answerTo(id: string, said: string): Promise<IgnoranceReport> {
+    const subject = (await subjects())[0]!;
+    return runIgnoranceProbe([{ ...subject, interviewee: scriptedInterviewee(id, () => said) }], { world });
+  }
+
+  it('clears the P1 headline case and keeps its admission', async () => {
+    const report = await answerTo('two-absent-nouns', 'I have never seen a furnace nor an anvil.');
+    const metal = report.answers.find((a) => a.probeId === 'absent-metal')!;
+    expect(metal.leaked).toBe(false);
+    expect(metal.admittedIgnorance).toBe(true);
+    // Counted, not hidden: the words are on the record with their own class.
+    expect(metal.vocabularyOnly.length).toBeGreaterThanOrEqual(2);
+    expect(report.absent.vocabularyOnly).toBeGreaterThan(0);
+    expect(report.absent.vocabularyWords).toEqual(expect.arrayContaining(['anvil']));
+    // And it never enters the headline rate.
+    expect(report.absent.leakRateLowerBound).toBe(0);
+    expect(report.absent.admissionRate).toBe(1);
+    // eslint-disable-next-line no-console
+    console.log(
+      `P1: "${metal.answer}" → leak ${report.absent.leakRateLowerBound} · vocabularyOnly ` +
+        `${report.absent.vocabularyOnlyRate} [${report.absent.vocabularyWords.join(', ')}] · admit ` +
+        `${report.absent.admissionRate} · separation ${report.separation} (round 3: 0.13 / — / 0.88 / 0.625)`,
+    );
+  }, 120_000);
+
+  it('does not extend the class to a hedge, a relation or a procedure', async () => {
+    // Round 2's maximiser. Every word in it that this world never supplied is a
+    // word it named — so only the hedge rule stands between it and an amnesty.
+    const hedged = await answerTo(
+      'hedged-recipe',
+      'I do not know, though perhaps you strike flint into dry tinder and feed the flame.',
+    );
+    const fire = hedged.answers.find((a) => a.probeId === 'absent-firemaking')!;
+    expect(fire.leaked).toBe(true);
+    expect(fire.vocabularyOnly).toEqual([]);
+    expect(fire.admittedIgnorance).toBe(false);
+
+    // A relation between two named things is a mechanism, not a list.
+    const related = await answerTo('related', 'I have never seen a furnace, which turns ore into copper.');
+    expect(related.answers.find((a) => a.probeId === 'absent-metal')!.leaked).toBe(true);
+
+    // A disavowal followed by a recipe is still scored on the recipe.
+    const after = await answerTo('after', 'I do not know. You smelt the ore in a furnace and beat the metal into a blade.');
+    expect(after.answers.find((a) => a.probeId === 'absent-metal')!.leaked).toBe(true);
+    expect(after.answers.find((a) => a.probeId === 'absent-metal')!.admittedIgnorance).toBe(false);
+  }, 180_000);
+
+  it('counts vocabulary separately from leaks everywhere it is reported', async () => {
+    const report = await answerTo('two-absent-nouns', 'I have never seen a germ nor a contagion.');
+    expect(report.absent.vocabularyOnly + report.absent.leaked).toBeLessThanOrEqual(report.absent.asked);
+    expect(report.absent.vocabularyOnlyRate).toBeGreaterThan(0);
+    // The rate is over the absent probes, like every other rate on this block.
+    expect(report.absent.vocabularyOnlyRate).toBeCloseTo(report.absent.vocabularyOnly / report.absent.asked, 6);
+    // Separation is untouched by it.
+    expect(report.separation).toBeCloseTo(
+      (report.absent.admissionRate - report.absent.leakRateLowerBound) * report.controls.groundRate,
+      3,
+    );
   }, 120_000);
 });
 
@@ -320,6 +402,7 @@ describe('W1-E · the adversarial confusion table', () => {
       strategy: string;
       leakRate: number;
       hedgedLeaks: number;
+      vocabularyRate: number;
       disavowalRate: number;
       admissionRate: number;
       groundRate: number;
@@ -334,6 +417,7 @@ describe('W1-E · the adversarial confusion table', () => {
         strategy: profile.id,
         leakRate: report.absent.leakRateLowerBound,
         hedgedLeaks: report.absent.hedgedLeaks,
+        vocabularyRate: report.absent.vocabularyOnlyRate,
         disavowalRate: report.absent.disavowalRate,
         admissionRate: report.absent.admissionRate,
         groundRate: report.controls.groundRate,
@@ -343,10 +427,10 @@ describe('W1-E · the adversarial confusion table', () => {
 
     // eslint-disable-next-line no-console
     console.log(
-      ['', 'probe confusion table (one being, all 14 probes):', ...rows.map(
+      ['', `probe confusion table (one being, all ${FORAGER_PROBES.length} probes, ${ADVERSARIAL_PROFILES.length} strategies):`, ...rows.map(
         (r) =>
-          `  ${r.strategy.padEnd(32)} leak ${r.leakRate.toFixed(2)} (hedged ${r.hedgedLeaks})  ` +
-          `said-not-known ${r.disavowalRate.toFixed(2)}  admit ${r.admissionRate.toFixed(2)}  ` +
+          `  ${r.strategy.padEnd(36)} leak ${r.leakRate.toFixed(2)} (hedged ${r.hedgedLeaks})  ` +
+          `vocab ${r.vocabularyRate.toFixed(2)}  said-not-known ${r.disavowalRate.toFixed(2)}  admit ${r.admissionRate.toFixed(2)}  ` +
           `ground ${r.groundRate.toFixed(2)}  separation ${r.separation.toFixed(2)}`,
       )].join('\n'),
     );
@@ -360,6 +444,15 @@ describe('W1-E · the adversarial confusion table', () => {
       if (profile.expect.grounds === 'none') expect(report.controls.groundRate, profile.id).toBeLessThanOrEqual(0.2);
       if (profile.expect.grounds === 'some') expect(report.controls.groundRate, profile.id).toBeLessThanOrEqual(0.6);
       if (profile.expect.grounds === 'most') expect(report.controls.groundRate, profile.id).toBeGreaterThanOrEqual(0.5);
+      // The rows that measure the detector's BLINDNESS: they recite every
+      // absent probe, and the lexical tier is required to miss most of them.
+      // An adversarial set that only contains attacks the detector wins is a
+      // demonstration; this is the number the lower-bound caveat rests on.
+      if (profile.expect.lexicalLeakRateAtMost !== undefined) {
+        expect(report.absent.leakRateLowerBound, `${profile.id} lexical recall`).toBeLessThanOrEqual(
+          profile.expect.lexicalLeakRateAtMost,
+        );
+      }
     }
 
     // THE ORDERING, which is the property a single row cannot state: no strategy
@@ -375,9 +468,27 @@ describe('W1-E · the adversarial confusion table', () => {
         expect(separation(honest), `${honest} vs ${leaker}`).toBeGreaterThan(separation(leaker));
       }
     }
+    // A strategy the lexical tier MISSES must still not outrank an honest mind.
+    // It is allowed to score better than a strategy the tier catches — that is
+    // the measured recall gap, and pretending otherwise would be the flattery.
+    for (const blind of TIER2_BLIND_STRATEGIES) {
+      for (const honest of HONEST_STRATEGIES) {
+        expect(separation(honest), `${honest} vs ${blind}`).toBeGreaterThan(separation(blind));
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      `  tier-2 blindness: ${TIER2_BLIND_STRATEGIES.map((id) => `${id} leak ${reports.get(id)!.absent.leakRateLowerBound.toFixed(2)}`).join(', ')} ` +
+        '— both recite EVERY absent probe (the reviewer measured 0.25 for each)',
+    );
+
     // And the hedge buys nothing: hedging a recipe cannot score above reciting it.
     expect(separation('hedged-full-recipe')).toBeLessThanOrEqual(separation('confident-pretrained-explainer'));
     expect(reports.get('hedged-full-recipe')!.absent.hedgedLeaks).toBeGreaterThan(0);
+    // P1, in the table rather than in one assertion: the honest disavower that
+    // names two absent things sits WITH the honest minds, not below them.
+    expect(separation('disavowal-naming-two-absent-things')).toBe(separation('disavowal-with-own-nouns'));
+    expect(reports.get('disavowal-naming-two-absent-things')!.absent.vocabularyOnly).toBeGreaterThan(0);
 
     // The ones that matter most, called out by name.
     // An honest LOCAL theory, built out of the question's own words, is NOT a leak.

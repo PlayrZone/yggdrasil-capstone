@@ -83,6 +83,24 @@ export interface PositionCheck {
   undetermined: boolean;
 }
 
+/**
+ * WHAT THE RUN SAID ABOUT ITSELF, and why an aggregate refuses a verdict
+ * without it.
+ *
+ * Round 3 computed `integrity.degraded` on the A/B result and then never showed
+ * it to the judge: a 1,120-call block in which arm B ran 60% on the world's
+ * reflex policy would have printed `usableForVerdict: true` and read as a win
+ * for the architecture. Detection that changes nothing is not detection. So an
+ * aggregate is told, it refuses a verdict when the run is degraded, and it
+ * refuses one when it has not been told at all — silence is not an attestation.
+ */
+export interface RunAttestation {
+  /** True when any pre-registered integrity threshold was crossed. */
+  degraded: boolean;
+  /** Which ones, in words. Empty when it is not degraded. */
+  reasons: readonly string[];
+}
+
 export interface JudgeAggregate {
   judge: string;
   /** Which two arms this aggregate contrasts. */
@@ -109,6 +127,15 @@ export interface JudgeAggregate {
    * decisive fraction, and the power of the rule at the declared effect.
    */
   design: JudgeGateDesign;
+  /**
+   * Was this aggregate computed under the pre-registered rule, untouched? False
+   * on the exploratory path, and then `usableForVerdict` is false too.
+   */
+  preRegistered: boolean;
+  /** Why this aggregate is exploratory, when it is. Null on the verdict path. */
+  exploratoryReason: string | null;
+  /** What the run attested about itself, or null when nothing was attested. */
+  integrity: RunAttestation | null;
   /** False when the judge is position-biased, indecisive, or the design cannot decide. */
   usableForVerdict: boolean;
   /** The caveat in words, always present. */
@@ -116,17 +143,41 @@ export interface JudgeAggregate {
   judged: PairOutcome[];
 }
 
+/**
+ * THE EXPLORATORY PATH — the only way a gate value can be moved, and it costs
+ * the verdict.
+ *
+ * Round 3's `judgeTraces` took `options.gate` on the ordinary path. Passing
+ * `{alpha: 0.9, minDecisiveRate: 0.01, declaredEffect: 0.99}` over a rigged
+ * 21-of-40 split (exact two-sided p = 0.8746) printed `usableForVerdict: true`.
+ * The rule's own values travelled on `design`, so a reader who already knew the
+ * canonical numbers could catch it — and nothing bound the artefact to them.
+ *
+ * Now there is no `gate` on the verdict path at all. A caller who wants to ask
+ * "what would a looser rule have said?" says so out loud, and the answer is
+ * stamped: every overridden value is listed in `design.overrides` beside the
+ * pre-registered one, `preRegistered` is false, and `usableForVerdict` is false
+ * WHATEVER the numbers are.
+ */
+export interface ExploratoryGate {
+  /** Why this is being asked. Required: an unexplained override is not exploration. */
+  reason: string;
+  /** Fields to move. Anything omitted keeps its pre-registered value. */
+  gate?: Partial<Omit<JudgeGateRule, 'justification'>>;
+}
+
 export interface AggregateOptions {
   /** z for the interval. Default 1.96 (95%). */
   z?: number;
-  alpha?: number;
   /** Which two arms the pairs contrast. Default A vs B. */
   arms?: [ArmId, ArmId];
   /**
-   * The pre-registered gate. Default `JUDGE_GATE` — declared in `stats.ts`, not
-   * chosen per run, because a rule picked after the numbers are in is not a rule.
+   * What the run that produced these traces said about its own integrity.
+   * REQUIRED for a verdict — see `RunAttestation`.
    */
-  gate?: JudgeGateRule;
+  integrity?: RunAttestation;
+  /** Ask a different question, and be told it is a different question. */
+  exploratory?: ExploratoryGate;
 }
 
 export async function judgeTraces(
@@ -154,7 +205,11 @@ export async function judgeTraces(
   const arms = options.arms ?? (['A', 'B'] as [ArmId, ArmId]);
   const armOf = new Map(key.unseal().map((k) => [k.traceId, k.arm]));
   const z = options.z ?? 1.96;
-  const gate: JudgeGateRule = options.gate ?? (options.alpha !== undefined ? { ...JUDGE_GATE, alpha: options.alpha } : JUDGE_GATE);
+  // THE VERDICT PATH READS THE CONSTANT. There is no parameter that moves it;
+  // `exploratory` builds a different rule and forfeits the verdict for it.
+  const gate: JudgeGateRule = options.exploratory?.gate
+    ? { ...JUDGE_GATE, ...options.exploratory.gate }
+    : JUDGE_GATE;
   const alpha = gate.alpha;
 
   const wins = { A: 0, B: 0, ties: 0, inconsistent: 0 };
@@ -222,8 +277,40 @@ export async function judgeTraces(
   const exactP = exactBinomialTwoSided(wins.A, decisivePairs);
   const consistencyRate = counted > 0 ? round(consistentPairs / counted) : 0;
 
+  const exploratory = options.exploratory ?? null;
+  const attestation = options.integrity ?? null;
   const reasons: string[] = [];
   if (counted === 0) reasons.push('no pairs were judged');
+  // R2: an overridden rule can never be a verdict, whatever it prints.
+  if (exploratory) {
+    reasons.push(
+      `this aggregate was computed on the EXPLORATORY path (${exploratory.reason}) — ` +
+        (design.overrides.length > 0
+          ? `${design.overrides.map((o) => `${o.field} ${o.preRegistered} → ${o.used}`).join(', ')}; `
+          : 'no gate value was moved, but the path itself is exploratory; ') +
+        'a rule chosen after the numbers are in is not a pre-registration',
+    );
+  }
+  // R5: detection that changes nothing is not detection.
+  if (!attestation) {
+    reasons.push(
+      'no run integrity was attested: an aggregate that has not been told whether the arms actually ran their own ' +
+        'minds is not a verdict about the arms',
+    );
+  } else if (attestation.degraded) {
+    reasons.push(
+      `the run is DEGRADED, so these traces are not the arms' own behaviour — ${attestation.reasons.join('; ')}`,
+    );
+  }
+  // R1: an under-powered block cannot return a verdict of any sign.
+  if (counted > 0 && !design.adequatelyPowered) {
+    reasons.push(
+      `${counted} pairs reaches power ${design.power} under the pre-registered assumptions (effect ` +
+        `${design.declaredEffect}, tie rate ${design.assumedTieRate}, position ${design.assumedPositionLeftRate}); ` +
+        `the rule needs ${design.pairsForTargetPower ?? 'more than the search cap'} pairs for ${design.targetPower}. ` +
+        'This block is EXPLORATORY: "not significant" here is an absence of measurement, not a null result',
+    );
+  }
   // The decisive fraction comes FIRST: an indecisive judge is a finding about
   // the judge, and quoting a win rate over four pairs out of thirty would be
   // reporting the tail of a distribution as its middle.
@@ -269,12 +356,16 @@ export async function judgeTraces(
       undetermined: decisivePositions === 0,
     },
     design,
+    preRegistered: exploratory === null && design.preRegistered,
+    exploratoryReason: exploratory?.reason ?? null,
+    integrity: attestation,
     usableForVerdict: reasons.length === 0,
     note:
       reasons.length === 0
         ? `${wins.A} of ${decisivePairs} decisive pairs (${counted} judged); exact two-sided p = ${exactP}; the rule needed ` +
-          `${design.minimumWins}; orders agreed on ${consistencyRate}. This design has power ${design.power} at a ` +
-          `per-showing win rate of ${design.declaredEffect} and prints USABLE at ${design.typeIError} under a judge that cannot tell them apart.`
+          `${design.minimumWins}; orders agreed on ${consistencyRate}. Pre-registered rule ${design.ruleHash.slice(0, 12)}: ` +
+          `power ${design.power} at a per-showing win rate of ${design.declaredEffect} under an assumed tie rate of ` +
+          `${design.assumedTieRate}, and USABLE at ${design.typeIError} under a judge that cannot tell them apart.`
         : `NOT USABLE FOR A VERDICT — ${reasons.join('; ')}.`,
     judged,
   };

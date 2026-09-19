@@ -13,8 +13,8 @@ import { ArmRouterBackend } from './baseline/BaselineAgentBackend.js';
 import { BudgetExhaustedError, RunHalt } from './budget.js';
 import type { CallBudget } from './budget.js';
 import { describeBackendSpec, isPaidSpec } from './door.js';
-import { computeArmMetrics, metricValues } from './metrics.js';
-import type { ArmMetrics, ArmObservation } from './metrics.js';
+import { INTEGRITY_THRESHOLDS, computeArmMetrics, integrityBreaches, metricValues } from './metrics.js';
+import type { ArmIntegrity, ArmMetrics, ArmObservation } from './metrics.js';
 import type { ProbeSubject } from './ignorance.js';
 import { minimumDetectableEffect, multipleComparisonNote, pairedBootstrap } from './stats.js';
 import type { DesignPower, MultipleComparisonNote, PairedResult, PairedSample } from './stats.js';
@@ -128,13 +128,34 @@ export interface ContrastResult {
   design: DesignPower;
 }
 
+/**
+ * WHETHER ANYTHING THE ARMS DECIDED ACTUALLY HAPPENED — and whether that is
+ * allowed to change anything.
+ *
+ * Round 3 reported `fallbackRateByArm` and a boolean, and then let a degraded
+ * run print a full contrast table and a `usableForVerdict: true` verdict
+ * anyway: *"a 1,120-call block in which arm B ran 60% on the reflex policy
+ * would print `usableForVerdict: true` and read as a win for the
+ * architecture."* It also had no channel at all for the failure it was actually
+ * sitting on — every non-Idle act in the proof run refused by the body.
+ *
+ * So: the counters per arm (`ArmIntegrity`), the PRE-REGISTERED thresholds they
+ * are read against (`INTEGRITY_THRESHOLDS`), and one `degraded` flag that
+ * `judgeTraces` is handed and refuses a verdict on.
+ */
 export interface RunIntegrity {
   /** Every backend error the run saw. Surfaced, never folded into behaviour. */
   backendErrors: readonly { at: string; message: string }[];
   /** Share of thinks that fell back to the world's reflex policy, per arm. */
   fallbackRateByArm: Record<string, number>;
-  /** True when any arm fell back at all: those moments are policy, not mind. */
+  /** The full counters, per arm, pooled over seeds. */
+  byArm: Record<string, ArmIntegrity>;
+  /** The thresholds those counters were read against, echoed so a reader need not look them up. */
+  thresholds: typeof INTEGRITY_THRESHOLDS;
+  /** True when any arm crossed any of them. */
   degraded: boolean;
+  /** Which ones, in words. Empty when it is not degraded. */
+  reasons: string[];
   note: string;
 }
 
@@ -219,7 +240,7 @@ export async function runAb(spec: AbSpec, config: AbConfig, mode: AbMode = 'popu
   const rawTraces: RawBeingTrace[] = [];
   const subjects: Partial<Record<ArmId, ProbeSubject[]>> = {};
   const sentPrompts: Partial<Record<ArmId, SentPrompt[]>> = {};
-  const fallbackByArm = new Map<ArmId, { fell: number; thinks: number }>();
+  const integrityByArm = new Map<ArmId, ArmIntegrity[]>();
 
   let built: BuiltArm[] = [];
   for (const seed of seeds) {
@@ -236,10 +257,7 @@ export async function runAb(spec: AbSpec, config: AbConfig, mode: AbMode = 'popu
       metrics[run.arm] = computed;
       rawTraces.push(...run.traces);
       (subjects[run.arm] ??= []).push(...run.subjects);
-      const tally = fallbackByArm.get(run.arm) ?? { fell: 0, thinks: 0 };
-      tally.fell += computed.fallbackRate * computed.thinks;
-      tally.thinks += computed.thinks;
-      fallbackByArm.set(run.arm, tally);
+      (integrityByArm.get(run.arm) ?? setDefault(integrityByArm, run.arm)).push(computed.integrity);
     }
     for (const arm of built) {
       const sent = arm.sentPrompts();
@@ -255,7 +273,7 @@ export async function runAb(spec: AbSpec, config: AbConfig, mode: AbMode = 'popu
     minMoments: spec.minTraceMoments ?? 2,
   });
   const manifest = buildManifest(spec, config, mode, world, blinded.manifest, spentBefore);
-  const integrity = integrityOf(halt, fallbackByArm);
+  const integrity = integrityOf(halt, integrityByArm);
 
   if (halt.stopped) {
     // NO verdict fields. A flag next to a metric table is a table somebody
@@ -340,29 +358,79 @@ function valueOf(metrics: ArmMetrics, metric: string): number {
   return metricValues(metrics).find((v) => v.metric === metric)?.value ?? 0;
 }
 
-function integrityOf(halt: RunHalt, byArm: ReadonlyMap<ArmId, { fell: number; thinks: number }>): RunIntegrity {
+function setDefault(map: Map<ArmId, ArmIntegrity[]>, arm: ArmId): ArmIntegrity[] {
+  const fresh: ArmIntegrity[] = [];
+  map.set(arm, fresh);
+  return fresh;
+}
+
+function integrityOf(halt: RunHalt, byArm: ReadonlyMap<ArmId, readonly ArmIntegrity[]>): RunIntegrity {
   const fallbackRateByArm: Record<string, number> = {};
-  let anyFallback = false;
-  for (const [arm, tally] of byArm) {
-    const rate = tally.thinks > 0 ? Math.round((tally.fell / tally.thinks) * 10000) / 10000 : 0;
-    fallbackRateByArm[arm] = rate;
-    if (rate > 0) anyFallback = true;
+  const pooled: Record<string, ArmIntegrity> = {};
+  const reasons: string[] = [];
+  for (const [arm, perSeed] of byArm) {
+    const total = poolIntegrity(perSeed);
+    pooled[arm] = total;
+    fallbackRateByArm[arm] = total.fallbackRate;
+    reasons.push(...integrityBreaches(arm, total));
   }
   const notes: string[] = [];
   if (halt.backendErrors.length > 0) {
     notes.push(`${halt.backendErrors.length} backend errors, first: ${halt.backendErrors[0]?.message ?? ''}`);
   }
-  if (anyFallback) {
+  for (const [arm, total] of Object.entries(pooled)) {
     notes.push(
-      'some thinks fell back to the world\'s reflex policy: those moments are the WORLD acting, not the arm\'s mind, ' +
-        'and both arms share that policy, so a difference in fallback rate is a difference in how often each mind failed.',
+      `${arm}: ${total.decisions} decisions, ${total.placeBearingDecisions} carrying a place, ` +
+        `${total.parsedIntact} parsed intact, ${total.accepted} accepted / ${total.refused} refused ` +
+        `(${total.refusalRate}), idle ${total.idleShare}, reflex fallbacks ${total.llmFallbacks}.`,
+    );
+  }
+  if (reasons.length > 0) {
+    notes.push(
+      'DEGRADED — a pre-registered integrity threshold was crossed, so these traces are not a clean measurement of ' +
+        'the arms and no aggregate over them may be a verdict.',
     );
   }
   return {
     backendErrors: halt.backendErrors,
     fallbackRateByArm,
-    degraded: anyFallback,
-    note: notes.length > 0 ? notes.join(' ') : 'no backend errors, no fallbacks: every moment is the arm\'s own mind.',
+    byArm: pooled,
+    thresholds: INTEGRITY_THRESHOLDS,
+    degraded: reasons.length > 0,
+    reasons,
+    note: notes.join(' '),
+  };
+}
+
+/** Sum one arm's per-seed counters into the arm's own row. Rates are recomputed, never averaged. */
+function poolIntegrity(rows: readonly ArmIntegrity[]): ArmIntegrity {
+  const sum = (pick: (row: ArmIntegrity) => number): number => rows.reduce((total, row) => total + pick(row), 0);
+  const decisions = sum((r) => r.decisions);
+  const accepted = sum((r) => r.accepted);
+  const refused = sum((r) => r.refused);
+  const intact = sum((r) => r.parsedIntact);
+  const idle = sum((r) => r.idle);
+  const fallbacks = sum((r) => r.llmFallbacks);
+  const reasons = new Map<string, number>();
+  for (const row of rows) for (const entry of row.refusalsByReason) reasons.set(entry.reason, (reasons.get(entry.reason) ?? 0) + entry.count);
+  const loss = rows.find((row) => row.firstArgumentLoss !== undefined)?.firstArgumentLoss;
+  const rate = (n: number, d: number): number => (d > 0 ? Math.round((n / d) * 10000) / 10000 : 0);
+  return {
+    decisions,
+    placeBearingDecisions: sum((r) => r.placeBearingDecisions),
+    parsedIntact: intact,
+    parsedIntactRate: rate(intact, decisions),
+    ...(loss ? { firstArgumentLoss: loss } : {}),
+    accepted,
+    refused,
+    refusalRate: rate(refused, accepted + refused),
+    refusalsByReason: [...reasons]
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count || (a.reason < b.reason ? -1 : 1)),
+    idle,
+    idleShare: rate(idle, decisions),
+    llmFallbacks: fallbacks,
+    fallbackRate: rate(fallbacks, decisions),
   };
 }
 

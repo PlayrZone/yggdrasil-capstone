@@ -1,24 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
-  JUDGE_GATE,
-  blindTraces,
+  MIN_PAIRED_SEEDS,
   exactBinomialTwoSided,
   foragerAdapter,
-  judgeGatePower,
   judgeTraces,
   minimumDetectableEffect,
   minimumDetectableWins,
+  minimumPairedSeeds,
   multipleComparisonNote,
   pairTraces,
   pairedBootstrap,
-  pairsForJudgePower,
   pairsForSweep,
   runAb,
+  signFlipPermutation,
   studentTQuantile,
   swapArmLabels,
   wilsonInterval,
 } from '../src/index.js';
-import type { ArmId, BlindTrace, RawBeingTrace, Side, TraceJudgement, TracePair } from '../src/index.js';
+import type { TraceJudgement, TracePair } from '../src/index.js';
 
 /**
  * THE STATISTICS — and the four things round 1 claimed without them.
@@ -281,20 +280,12 @@ describe('W1-E · the judge is counted by the PAIR', () => {
 // ─── The gate, and whether it can ever print USABLE ──────────────────────────
 
 /**
- * ROUND 2's GATE COULD NOT PASS ITS OWN ALTERNATIVE.
- *
- * `minimumDetectableWins(30)` = 21 is sized on ALL pairs; the verdict compared
- * `wins.A`, which counts only pairs whose two orders AGREED. At a true 0.70 per
- * showing a pair is decisive for A with probability 0.49, so E[wins.A] = 14.7
- * and P(wins.A ≥ 21) = 1.6% — while the sign test on the same data is
- * significant 82.7% of the time. The block would have printed NOT USABLE
- * almost whatever the traces showed.
- *
- * The rule is coherent now, and this is the test that would have caught it:
- * the gate is driven end to end by a judge with a KNOWN per-showing win rate,
- * and what comes out is compared against the power the design claims.
+ * THE GATE MOVED OUT. Round 3's block lived here and was sized on a model with
+ * no tie mass and no position check, which is the whole of R1. The gate, its
+ * power model, the 2,000-run simulation that pins the two together at four tie
+ * rates and two position rates, and the pre-registration control (R2) are now
+ * `test/eval-gate.test.ts`.
  */
-const GATE_PAIRS = 30;
 
 /** Deterministic, seeded, and not the engine's own PRNG — this is an independent check. */
 function lcg(seed: number): () => number {
@@ -305,113 +296,108 @@ function lcg(seed: number): () => number {
   };
 }
 
-function simulationPairs(count: number): { pairs: TracePair[]; key: ReturnType<typeof blindTraces>['key']; armOf: Map<string, ArmId> } {
-  const moment = {
-    t: 0, day: 1, night: false, season: 'spring',
-    felt: [{ drive: 'hunger', pressure: 40 }],
-    perceived: [{ kind: 'berryBush', count: 1 }],
-    others: 0,
-    carried: [{ kind: 'berry', count: 1 }],
-    thought: 'the same words in every trace',
-    did: ['Wait()'],
-    said: [],
-    happened: null,
-  };
-  const lives: RawBeingTrace[] = [];
-  for (const arm of ['A', 'B'] as const) {
-    for (let i = 0; i < count; i++) lives.push({ runId: `sim-${arm}`, arm, beingId: i + 1, moments: [{ ...moment }] });
-  }
-  const blinded = blindTraces(lives, foragerAdapter, { seed: 'gate-sim', secret: 'gate-sim-secret', minMoments: 1 });
-  const armOf = new Map(blinded.key.unseal().map((k) => [k.traceId, k.arm]));
-  const byArm = (arm: ArmId): BlindTrace[] => blinded.traces.filter((t) => armOf.get(t.traceId) === arm);
-  const a = byArm('A');
-  const b = byArm('B');
-  const pairs = a.map((left, at) => ({ pairId: `sim-${at}`, left, right: b[at]! }));
-  return { pairs, key: blinded.key, armOf };
-}
+// ─── P6 · the test that decides, and the interval that is quoted ─────────────
 
-/** A judge that prefers arm A on each SHOWING with probability `w`, and nothing else. */
-function stochasticJudge(w: number, armOf: Map<string, ArmId>, rng: () => number): { id: string; compare: (p: TracePair) => Promise<TraceJudgement> } {
-  return {
-    id: `stochastic-${w}`,
-    compare: (pair: TracePair): Promise<TraceJudgement> => {
-      const leftIsA = armOf.get(pair.left.traceId) === 'A';
-      const picksA = rng() < w;
-      const preference: Side = picksA === leftIsA ? 'left' : 'right';
-      return Promise.resolve({
-        preference,
-        confidence: 1,
-        reasons: ['simulated'],
-        byCriterion: { pursues: preference, consistent: preference, reactive: preference, social: preference, ignorance: preference },
-      });
-    },
-  };
-}
+/**
+ * ROUND 3 QUOTED A t INTERVAL AND MEASURED ITS COVERAGE ON NORMAL DIFFERENCES.
+ *
+ * The reviewer measured it on right-skewed ones — which `dietBreadth`,
+ * `deaths:*` and `distinctPlanShapes` are — and got **0.893 / 0.827 / 0.831** at
+ * n = 2 / 5 / 8 against a nominal 0.95, while the coverage table in the README
+ * named no distribution at all. An interval that says 95% and delivers 83% is
+ * worse than no interval, because it is quoted.
+ *
+ * So the PRIMARY test is an exact sign-flip permutation test, which assumes
+ * only that the paired differences are exchangeable in sign under the null —
+ * the one thing a seed-paired A/B actually guarantees. The t interval stays as
+ * the quoted CI, with its coverage MEASURED on four distributions and printed,
+ * and the minimum n at which any verdict may be printed is a constant.
+ */
+describe('W1-E · P6 · the primary paired test is an exact permutation test', () => {
+  it('enumerates all 2^n sign flips at these n, and is exact', () => {
+    // Three positive differences: the observed mean is the most extreme of the
+    // 8 arrangements, and its mirror is equally extreme — so p = 2/8.
+    const three = signFlipPermutation([0.1, 0.2, 0.3], { seed: 'p6' })!;
+    expect(three.method).toBe('exact-enumeration');
+    expect(three.draws).toBe(8);
+    expect(three.p).toBeCloseTo(0.25, 6);
+    expect(three.floorP).toBeCloseTo(0.25, 6);
+    expect(three.couldReachAlpha).toBe(false);
 
-async function gateRate(w: number, reps: number, seed: number): Promise<number> {
-  const { pairs, key, armOf } = simulationPairs(GATE_PAIRS);
-  const rng = lcg(seed);
-  let printed = 0;
-  for (let rep = 0; rep < reps; rep++) {
-    const aggregate = await judgeTraces(pairs, key, stochasticJudge(w, armOf, rng), { arms: ['A', 'B'] });
-    if (aggregate.usableForVerdict) printed++;
-  }
-  return printed / reps;
-}
+    const six = signFlipPermutation([1, 2, 3, 4, 5, 6], { seed: 'p6' })!;
+    expect(six.draws).toBe(64);
+    expect(six.p).toBeCloseTo(2 / 64, 6);
+    expect(six.couldReachAlpha).toBe(true);
 
-describe('W1-E · the judge gate is coherent, and its power is printed rather than hoped for', () => {
-  it('sizes the threshold on the DECISIVE pairs, which is the count the verdict uses', () => {
-    // Round 2's number, kept visible: it is correct about 30 pairs and was
-    // compared against a count over a different denominator.
-    expect(minimumDetectableWins(30).minimumWins).toBe(21);
-    const design = judgeGatePower(30);
-    expect(design.expectedDecisiveRate).toBeCloseTo(0.58, 6);
-    // eslint-disable-next-line no-console
-    console.log(
-      `gate design at ${design.declaredEffect} per showing: ${design.pairs} pairs → power ${design.power}, ` +
-        `type I ${design.typeIError}, expected decisive rate ${design.expectedDecisiveRate}; ` +
-        `${pairsForJudgePower(0.8)} pairs would be needed for 0.80 power`,
-    );
-    // The number round 2 could have printed for itself: 1.6%.
-    expect(design.power).toBeGreaterThan(0.7);
-    expect(design.typeIError).toBeLessThanOrEqual(JUDGE_GATE.alpha);
-    expect(pairsForJudgePower(0.8)).toBeGreaterThan(30);
+    // A sweep with one dissenter is not the extreme arrangement any more.
+    const mixed = signFlipPermutation([1, 2, 3, 4, 5, -6], { seed: 'p6' })!;
+    expect(mixed.p).toBeGreaterThan(six.p);
   });
 
-  it('prints USABLE at the claimed power when the judge really prefers one arm 0.70 of the time', async () => {
-    const claimed = judgeGatePower(GATE_PAIRS).power;
-    const measured = await gateRate(0.7, 400, 20260919);
-    // eslint-disable-next-line no-console
-    console.log(`gate simulation at w = 0.70: claimed power ${claimed}, measured ${measured.toFixed(3)} over 400 runs`);
-    expect(measured).toBeGreaterThan(0.6);
-    expect(Math.abs(measured - claimed)).toBeLessThanOrEqual(0.07);
-  }, 180_000);
+  it('states the minimum n at which any verdict may be printed, and marks rows below it', () => {
+    // 2/2^5 = 0.0625 > 0.05: five seeds cannot produce a significant result
+    // however clean the sweep, exactly as five judged pairs cannot.
+    expect(minimumPairedSeeds(0.05)).toBe(6);
+    expect(MIN_PAIRED_SEEDS).toBe(6);
+    expect(minimumPairedSeeds(0.01)).toBe(8);
+    const five = pairedBootstrap(
+      'planSuccessRate',
+      [0.3, 0.25, 0.4, 0.2, 0.35].map((delta, i) => ({ seed: `s${i}`, a: delta, b: 0 })),
+      { seed: 'fixed' },
+    );
+    expect(five.n).toBe(5);
+    expect(five.verdictEligible).toBe(false);
+    expect(five.permutation!.p).toBeCloseTo(2 / 32, 6);
+    expect(five.permutation!.couldReachAlpha).toBe(false);
 
-  it('prints USABLE no more often than alpha when the judge cannot tell them apart', async () => {
-    const claimed = judgeGatePower(GATE_PAIRS).typeIError;
-    const measured = await gateRate(0.5, 400, 77777);
-    // eslint-disable-next-line no-console
-    console.log(`gate simulation at w = 0.50: claimed ${claimed}, measured ${measured.toFixed(3)} over 400 runs`);
-    expect(measured).toBeLessThanOrEqual(JUDGE_GATE.alpha + 0.02);
-  }, 180_000);
+    const six = pairedBootstrap(
+      'planSuccessRate',
+      [0.3, 0.25, 0.4, 0.2, 0.35, 0.28].map((delta, i) => ({ seed: `s${i}`, a: delta, b: 0 })),
+      { seed: 'fixed' },
+    );
+    expect(six.verdictEligible).toBe(true);
+    expect(six.permutation!.p).toBeLessThanOrEqual(0.05);
+  });
 
-  it('refuses a verdict when the judge could not make up its mind, and says that is the finding', async () => {
-    // 0.5 per showing means ~half the pairs flip with the order: the decisive
-    // fraction, not the win rate, is what fails here.
-    const { pairs, key, armOf } = simulationPairs(GATE_PAIRS);
-    const aggregate = await judgeTraces(pairs, key, stochasticJudge(0.5, armOf, lcg(5)), { arms: ['A', 'B'] });
-    expect(aggregate.design.decisiveRate).toBeLessThan(0.7);
-    if (!aggregate.design.enoughDecisive) {
-      expect(aggregate.usableForVerdict).toBe(false);
-      expect(aggregate.note).toContain('cannot make up its mind');
+  it('samples above n = 20 rather than enumerating, and says which it did', () => {
+    const many = Array.from({ length: 24 }, (_, i) => 0.2 + i * 0.01);
+    const test = signFlipPermutation(many, { seed: 'mc', draws: 4000 })!;
+    expect(test.method).toBe('monte-carlo');
+    expect(test.draws).toBe(4000);
+    expect(test.p).toBeLessThan(0.01);
+    // Seeded: the same call twice is the same answer.
+    expect(signFlipPermutation(many, { seed: 'mc', draws: 4000 })!.p).toBe(test.p);
+  });
+
+  it('holds its level on SKEWED differences, where the quoted t interval does not', () => {
+    // The permutation test is exact under exchangeability whatever the shape,
+    // so its type I rate is at or below alpha on every distribution below. The
+    // t interval's coverage is the table in the next test.
+    const rng = lcg(31337);
+    const draws = { normal: normalDraw(rng), lognormal: lognormalDraw(rng), heavy: heavyDraw(rng) } as const;
+    const rows: string[] = [];
+    for (const [name, draw] of Object.entries(draws)) {
+      for (const n of [6, 8, 12]) {
+        let rejected = 0;
+        const trials = 1500;
+        for (let trial = 0; trial < trials; trial++) {
+          // TRUE NULL: differences with median 0 under sign symmetry.
+          const values = Array.from({ length: n }, () => (rng() < 0.5 ? draw() : -draw()));
+          const test = signFlipPermutation(values, { seed: `null-${name}-${n}-${trial}` })!;
+          if (test.p <= 0.05) rejected++;
+        }
+        const rate = rejected / trials;
+        rows.push(`  ${name.padEnd(9)} n=${n}: type I ${rate.toFixed(4)}`);
+        expect(rate, `${name} n=${n}`).toBeLessThanOrEqual(0.06);
+      }
     }
-    // Whatever it decided, the threshold is over the decisive pairs.
-    expect(aggregate.design.decisivePairs).toBe(aggregate.decisivePairs);
-    expect(aggregate.design.minimumWins).toBe(minimumDetectableWins(aggregate.decisivePairs).minimumWins);
-  }, 60_000);
+    // eslint-disable-next-line no-console
+    console.log(['', 'sign-flip permutation, 1,500 null samples, alpha 0.05:', ...rows].join('\n'));
+  }, 300_000);
 });
 
-// ─── The interval that actually covers ───────────────────────────────────────
+// ─── The interval that actually covers, on four distributions ────────────────
+
 
 describe('W1-E · the paired interval is not anti-conservative', () => {
   it('uses the small-sample t quantile rather than 1.96', () => {
@@ -438,37 +424,90 @@ describe('W1-E · the paired interval is not anti-conservative', () => {
     expect(five.bootstrapCi!.high - five.bootstrapCi!.low).toBeLessThan(five.ci!.high - five.ci!.low);
   });
 
-  it('covers at about its nominal rate — measured, not claimed', () => {
-    // Per-seed differences drawn from a known distribution with a known mean.
-    // Round 2 quoted a raw percentile bootstrap, which at n = 5 covers ~0.80
-    // against a nominal 0.95 and at n = 2 is literally [min, max] of two points.
+  /**
+   * THE COVERAGE TABLE, ON FOUR DISTRIBUTIONS AND FOUR n — the README's version
+   * of it named no distribution, and the one it was measured on was the only
+   * one it covers.
+   *
+   * `dietBreadth`, `deaths:*` and `distinctPlanShapes` are right-skewed counts,
+   * and the reviewer measured the quoted t interval at **0.893 / 0.827 / 0.831**
+   * on lognormal differences at n = 2 / 5 / 8. That row is reproduced here and
+   * printed, and the README quotes THIS table rather than the normal row alone.
+   */
+  it('prints its coverage by DISTRIBUTION and by n, because only one of them was ever measured', () => {
     const trueMean = 0.3;
     const rng = lcg(424242);
-    const normal = (): number => {
-      // Box–Muller, from the same deterministic stream.
-      const u = Math.max(1e-12, rng());
-      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+    const shapes: Record<string, () => number> = {
+      normal: normalDraw(rng),
+      'skewed (lognormal)': lognormalDraw(rng),
+      'heavy-tailed (t3)': heavyDraw(rng),
+      'contaminated 90/10': mixtureDraw(rng),
     };
     const rows: string[] = [];
-    for (const n of [2, 5, 8]) {
-      let t = 0;
-      let bca = 0;
-      const trials = 2000;
-      for (let trial = 0; trial < trials; trial++) {
-        const samples = Array.from({ length: n }, (_, i) => ({ seed: `s${i}`, a: trueMean + normal() * 0.2, b: 0 }));
-        const result = pairedBootstrap('m', samples, { seed: `cover-${n}-${trial}`, resamples: 400 });
-        if (result.ci && result.ci.low <= trueMean && result.ci.high >= trueMean) t++;
-        if (result.bootstrapCi && result.bootstrapCi.low <= trueMean && result.bootstrapCi.high >= trueMean) bca++;
+    const worstQuoted: Record<string, number> = {};
+    for (const [name, draw] of Object.entries(shapes)) {
+      const cells: string[] = [];
+      for (const n of [2, 5, 8, 12]) {
+        let t = 0;
+        let bca = 0;
+        const trials = 2000;
+        for (let trial = 0; trial < trials; trial++) {
+          const samples = Array.from({ length: n }, (_, i) => ({ seed: `s${i}`, a: trueMean + draw() * 0.2, b: 0 }));
+          const result = pairedBootstrap('m', samples, { seed: `cover-${name}-${n}-${trial}`, resamples: 300 });
+          if (result.ci && result.ci.low <= trueMean && result.ci.high >= trueMean) t++;
+          if (result.bootstrapCi && result.bootstrapCi.low <= trueMean && result.bootstrapCi.high >= trueMean) bca++;
+        }
+        cells.push(`n=${n} t ${(t / trials).toFixed(3)} / BCa ${(bca / trials).toFixed(3)}`);
+        worstQuoted[name] = Math.min(worstQuoted[name] ?? 1, t / trials);
       }
-      rows.push(`  n=${n}: student-t ${(t / trials).toFixed(3)} · BCa bootstrap ${(bca / trials).toFixed(3)} (nominal 0.950)`);
-      // The one that is QUOTED has to cover. The BCa one is reported beside it
-      // and is allowed to be worse, which is why it is not the headline.
-      expect(t / trials).toBeGreaterThan(0.9);
+      rows.push(`  ${name.padEnd(20)} ${cells.join('  ·  ')}`);
     }
     // eslint-disable-next-line no-console
-    console.log(['', 'paired-interval coverage over 2,000 samples per n:', ...rows].join('\n'));
-  }, 120_000);
+    console.log(
+      ['', 'quoted t interval and reported BCa, coverage over 2,000 samples per cell (nominal 0.950):', ...rows].join('\n'),
+    );
+    // The normal row is the only one that meets its nominal rate, and the
+    // skewed one is the reason the permutation test above is the primary.
+    expect(worstQuoted['normal']!).toBeGreaterThan(0.93);
+    expect(worstQuoted['skewed (lognormal)']!).toBeLessThan(0.93);
+  }, 300_000);
 });
+
+// ─── Shapes a per-seed difference actually takes ─────────────────────────────
+
+/** Box–Muller from a supplied stream: mean 0, SD 1. */
+function normalDraw(rng: () => number): () => number {
+  return () => {
+    const u = Math.max(1e-12, rng());
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+  };
+}
+
+/** Right-skewed and centred: `dietBreadth`, `deaths:*` and plan-shape counts are this shape. */
+function lognormalDraw(rng: () => number): () => number {
+  const normal = normalDraw(rng);
+  const mean = Math.exp(0.5);
+  return () => (Math.exp(normal()) - mean) / 2;
+}
+
+/** Student-t with 3 degrees of freedom: the same centre, much fatter tails. */
+function heavyDraw(rng: () => number): () => number {
+  const normal = normalDraw(rng);
+  return () => {
+    let chi = 0;
+    for (let i = 0; i < 3; i++) {
+      const z = normal();
+      chi += z * z;
+    }
+    return normal() / Math.sqrt(Math.max(1e-9, chi / 3));
+  };
+}
+
+/** Ninety per cent tight, ten per cent wide — one seed behaving very differently. */
+function mixtureDraw(rng: () => number): () => number {
+  const normal = normalDraw(rng);
+  return () => (rng() < 0.9 ? normal() : normal() * 5);
+}
 
 /** The shipped rule-based judge, reached without importing the class twice. */
 async function featureJudge(pair: TracePair): Promise<TraceJudgement> {

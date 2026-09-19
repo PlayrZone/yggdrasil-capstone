@@ -1,3 +1,4 @@
+import { wireFieldsOf } from '../contract/actions.js';
 import type { WorldAdapter } from '../contract/adapter.js';
 import type { CognitionOutcome, CognitionRecordV2 } from '../record/types.js';
 import { planShape } from '../training/corpus.js';
@@ -66,6 +67,117 @@ export interface ArmMetrics {
   /** Outputs the parser refused, over thinks — a mind that cannot be read is not a mind. */
   unparsedRate: number;
   fallbackRate: number;
+  /** Did anything this arm decided actually HAPPEN? See `ArmIntegrity`. */
+  integrity: ArmIntegrity;
+}
+
+/**
+ * DID ANYTHING THE ARM DECIDED ACTUALLY HAPPEN.
+ *
+ * Round 3 had no channel for this at all. Across twelve traces of the run that
+ * gates the whole pilot, the arms decided **104 Craft (104 refused), 52 Gather
+ * (52 refused) and 52 Idle** — every non-Idle act in the run was refused by the
+ * body — and `integrity` said `degraded: false`, `fallbackRateByArm {A:0,B:0}`,
+ * *"every moment is the arm's own mind"*. It was: the minds were simply doing
+ * nothing, and the headline `planSuccessRate` delta of 0.8769 was one arm idling
+ * against the other being refused.
+ *
+ * Worse, the failure that would have INVERTED the proof was invisible for the
+ * same reason. `ScriptedBackend` stringified its own `MindOutput`, so
+ * `{"kind":"MoveTo","place":{…}}` parsed to `{"kind":"MoveTo"}` — the
+ * destination silently dropped — and nothing noticed, because no arm ever
+ * emitted a place. `parsedIntact` is the counter that would have: it compares
+ * the ARGUMENTS in the raw model text against the arguments that survived the
+ * parser, per act, and any loss is a wire-format break.
+ */
+export interface ArmIntegrity {
+  /** Decisions this arm made — one per think that came back. */
+  decisions: number;
+  /** …of which carried a place on at least one act. 0 with a broken codec. */
+  placeBearingDecisions: number;
+  /** Decisions whose every raw argument survived the parser. */
+  parsedIntact: number;
+  parsedIntactRate: number;
+  /** The first act whose arguments were lost, for a reader who wants the case. */
+  firstArgumentLoss?: { act: string; lost: string[]; raw: string };
+  /** Plan steps the body carried out. */
+  accepted: number;
+  /** Plan steps the body refused, with its own reason. */
+  refused: number;
+  refusalRate: number;
+  /** The body's reasons, most frequent first — what the arm kept being told. */
+  refusalsByReason: { reason: string; count: number }[];
+  /** Decisions whose whole plan was a wait, or nothing at all. */
+  idle: number;
+  idleShare: number;
+  /** Thinks that fell back to the world's reflex policy: those are not this mind. */
+  llmFallbacks: number;
+  fallbackRate: number;
+}
+
+/**
+ * THE PRE-REGISTERED INTEGRITY THRESHOLDS. Declared here, once, with the
+ * reasoning — the same discipline `JUDGE_GATE` is under, because a threshold
+ * chosen after the counts are in is not a threshold.
+ */
+export const INTEGRITY_THRESHOLDS = Object.freeze({
+  /**
+   * Four acts in five refused means the arm is not operating in this world —
+   * it is being told "no" and carrying on. Round 3's proof ran at 1.00.
+   */
+  maxRefusalRate: 0.8,
+  /** Four decisions in five doing nothing is not behaviour to judge. Round 3's faithful arm: 1.00. */
+  maxIdleShare: 0.8,
+  /**
+   * More than one think in twenty replaced by the world's reflex policy and the
+   * arm is partly the world. Not zero: a single flaky transport error voiding a
+   * 1,500-call block creates pressure to re-run until clean, which is a worse
+   * failure than a stated 5% floor. The exact count always travels beside it.
+   */
+  maxFallbackRate: 0.05,
+  /**
+   * ANY argument lost between what the mind decided and what the parser read is
+   * a broken wire format, and there is no acceptable rate of it.
+   */
+  minParsedIntactRate: 1,
+});
+
+/** Which pre-registered thresholds this arm crossed, in words. Empty is clean. */
+export function integrityBreaches(arm: ArmId, integrity: ArmIntegrity): string[] {
+  const out: string[] = [];
+  if (integrity.decisions === 0) {
+    out.push(`arm ${arm} made no decisions at all`);
+    return out;
+  }
+  if (integrity.refusalRate > INTEGRITY_THRESHOLDS.maxRefusalRate) {
+    out.push(
+      `arm ${arm} had ${integrity.refused} of ${integrity.accepted + integrity.refused} plan steps REFUSED by the body ` +
+        `(${integrity.refusalRate} > ${INTEGRITY_THRESHOLDS.maxRefusalRate})` +
+        (integrity.refusalsByReason[0] ? `, mostly "${integrity.refusalsByReason[0].reason}"` : ''),
+    );
+  }
+  if (integrity.idleShare > INTEGRITY_THRESHOLDS.maxIdleShare) {
+    out.push(
+      `arm ${arm} did nothing in ${integrity.idle} of ${integrity.decisions} decisions ` +
+        `(idle share ${integrity.idleShare} > ${INTEGRITY_THRESHOLDS.maxIdleShare})`,
+    );
+  }
+  if (integrity.fallbackRate > INTEGRITY_THRESHOLDS.maxFallbackRate) {
+    out.push(
+      `arm ${arm} fell back to the world's reflex policy on ${integrity.llmFallbacks} of ${integrity.decisions} thinks ` +
+        `(${integrity.fallbackRate} > ${INTEGRITY_THRESHOLDS.maxFallbackRate}): those moments are the WORLD acting, not this mind`,
+    );
+  }
+  if (integrity.parsedIntactRate < INTEGRITY_THRESHOLDS.minParsedIntactRate) {
+    const loss = integrity.firstArgumentLoss;
+    out.push(
+      `arm ${arm} LOST ARGUMENTS between decision and parse in ${integrity.decisions - integrity.parsedIntact} of ` +
+        `${integrity.decisions} decisions` +
+        (loss ? `, first: ${loss.act} lost [${loss.lost.join(', ')}] from ${loss.raw}` : '') +
+        ' — the wire format is broken and every act in this arm is suspect',
+    );
+  }
+  return out;
 }
 
 /** One comparable scalar out of an arm's metrics, named. */
@@ -85,12 +197,17 @@ export function computeArmMetrics(observation: ArmObservation, world: WorldAdapt
   let steps = 0;
   let executed = 0;
   let rejected = 0;
+  const refusalsByReason = new Map<string, number>();
   const eaten = new Set<string>();
   for (const outcome of outcomes) {
     for (const intent of outcome.intents) {
       steps++;
       if (intent.executed) executed++;
-      if (intent.rejected) rejected++;
+      if (intent.rejected) {
+        rejected++;
+        const reason = intent.rejectionReason ?? 'no reason given';
+        refusalsByReason.set(reason, (refusalsByReason.get(reason) ?? 0) + 1);
+      }
       if (!intent.executed || intent.objectKind === undefined) continue;
       const action = world.actionById.get(intent.kind);
       const kind = world.kindById.get(intent.objectKind);
@@ -139,7 +256,110 @@ export function computeArmMetrics(observation: ArmObservation, world: WorldAdapt
     speech,
     unparsedRate: rate(unparsed, records.length),
     fallbackRate: rate(fellBack, records.length),
+    integrity: armIntegrity(records, world, { executed, rejected, fellBack, refusalsByReason }),
   };
+}
+
+/**
+ * The integrity counters, read from the RECORD rather than from the mock.
+ *
+ * `attempts[last].raw` is the bytes the model (or the thing standing in for
+ * one) actually wrote; `parsedOutput` is what the parser made of them. Holding
+ * the two against each other, per act, is the only way to see an argument go
+ * missing — and an argument going missing is exactly how a mock stringifying
+ * its own `MindOutput` deleted every destination in the run without any metric
+ * moving.
+ */
+function armIntegrity(
+  records: readonly CognitionRecordV2[],
+  world: WorldAdapter,
+  tally: { executed: number; rejected: number; fellBack: number; refusalsByReason: ReadonlyMap<string, number> },
+): ArmIntegrity {
+  const placeFields = placeWireFields(world);
+  const waiting = new Set(world.actions.filter((a) => a.core === 'Wait').map((a) => a.id));
+  let placeBearing = 0;
+  let intact = 0;
+  let idle = 0;
+  let firstLoss: ArmIntegrity['firstArgumentLoss'] | undefined;
+
+  for (const record of records) {
+    const parsedPlan = record.parsedOutput.plan;
+    if (parsedPlan.length === 0 || parsedPlan.every((step) => waiting.has(step.kind))) idle++;
+
+    const rawPlan = rawPlanOf(record);
+    if (rawPlan === null) {
+      // Nothing readable came back, which `unparsedRate` already reports. It is
+      // not an argument LOSS — there was no argument to lose.
+      intact++;
+      continue;
+    }
+    if (rawPlan.some((step) => placeFields.some((field) => field in step) || 'place' in step)) placeBearing++;
+
+    let lostHere: { act: string; lost: string[]; raw: string } | null = null;
+    for (let at = 0; at < rawPlan.length && lostHere === null; at++) {
+      const raw = rawPlan[at]!;
+      const parsed = (parsedPlan[at] ?? {}) as Record<string, unknown>;
+      const lost = Object.keys(raw).filter((key) => raw[key] !== undefined && !(key in parsed));
+      if (lost.length > 0) {
+        lostHere = { act: String(raw['kind'] ?? '(no kind)'), lost, raw: JSON.stringify(raw).slice(0, 200) };
+      }
+    }
+    if (lostHere === null) intact++;
+    else firstLoss ??= lostHere;
+  }
+
+  const attempted = tally.executed + tally.rejected;
+  return {
+    decisions: records.length,
+    placeBearingDecisions: placeBearing,
+    parsedIntact: intact,
+    parsedIntactRate: rate(intact, records.length),
+    ...(firstLoss ? { firstArgumentLoss: firstLoss } : {}),
+    accepted: tally.executed,
+    refused: tally.rejected,
+    refusalRate: rate(tally.rejected, attempted),
+    refusalsByReason: [...tally.refusalsByReason]
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count || (a.reason < b.reason ? -1 : 1)),
+    idle,
+    idleShare: rate(idle, records.length),
+    llmFallbacks: tally.fellBack,
+    fallbackRate: rate(tally.fellBack, records.length),
+  };
+}
+
+/**
+ * The plan as the MODEL wrote it, out of the last attempt's raw bytes. Null
+ * when nothing JSON-shaped came back.
+ */
+function rawPlanOf(record: CognitionRecordV2): Record<string, unknown>[] | null {
+  const raw = record.attempts[record.attempts.length - 1]?.raw ?? '';
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw.slice(start, end + 1));
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const plan = (parsed as Record<string, unknown>)['plan'];
+    if (!Array.isArray(plan)) return null;
+    return plan.filter((step): step is Record<string, unknown> => typeof step === 'object' && step !== null);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The field names this world writes a place as, asked of the world's own
+ * declarations. Nothing here opens a place: a `PlaceRef` is opaque and the only
+ * thing read is which ARGUMENT NAMES a place expands into on the wire.
+ */
+function placeWireFields(world: WorldAdapter): string[] {
+  for (const action of world.actions) {
+    for (const param of action.params) {
+      if (param.type === 'place') return wireFieldsOf(world, param).map((field) => field.id);
+    }
+  }
+  return [];
 }
 
 /**

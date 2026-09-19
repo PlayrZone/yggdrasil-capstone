@@ -1,4 +1,5 @@
 import { hashSeed, mulberry32 } from '../body/prng.js';
+import { sha256Hex } from './commit.js';
 
 /**
  * THE STATISTICS, AND WHAT THEY ARE ALLOWED TO SAY.
@@ -120,10 +121,123 @@ export interface PairedResult {
   deltas: { seed: string; delta: number }[];
   /** Standardised effect (mean/sd). Null when the spread is zero or n < 2. */
   effectSize: number | null;
+  /**
+   * THE PRIMARY TEST — an exact sign-flip permutation test, not the t.
+   *
+   * *Round 3 quoted a paired Student-t interval and measured its coverage on
+   * NORMAL differences only. The reviewer measured it on right-skewed ones —
+   * which `dietBreadth`, `deaths:*` and `distinctPlanShapes` are — and it
+   * covers **0.827** at n = 5 against a nominal 0.95. The t interval stays,
+   * because a reader wants an interval and this one is the least-bad on offer,
+   * but the number that decides anything is this one: it assumes only that the
+   * paired differences are exchangeable in sign under the null, which is what a
+   * seed-paired A/B actually guarantees.*
+   */
+  permutation: PermutationTest | null;
+  /**
+   * False when this many seeds could not clear alpha however extreme the data.
+   * At n = 5 the smallest attainable two-sided p is 2/2^5 = 0.0625.
+   */
+  verdictEligible: boolean;
   /** How this row may be read. Exactly one metric per question is primary. */
   role: 'primary' | 'exploratory';
   /** The pre-registered question this row answers, when it is the primary one. */
   question?: string;
+}
+
+/**
+ * AN EXACT SIGN-FLIP PERMUTATION TEST ON PAIRED DIFFERENCES.
+ *
+ * Under the null "the two arms are exchangeable on a shared seed", flipping the
+ * sign of any subset of the per-seed differences is equally likely, so the
+ * reference distribution of the mean is its 2^n sign-flips. For n ≤ 20 that is
+ * enumerated — 1,048,576 arrangements at the top end, which is a few hundred
+ * milliseconds and worth it for an exact p. Above that it is sampled from a
+ * seeded stream, and `method` says which happened.
+ */
+export interface PermutationTest {
+  n: number;
+  /** |mean of the observed differences| — the statistic being permuted. */
+  statistic: number;
+  /** Two-sided p: the share of sign-flips at least as extreme. */
+  p: number;
+  method: 'exact-enumeration' | 'monte-carlo';
+  /** 2^n, or the number of draws taken. */
+  draws: number;
+  seed: string;
+  /** The smallest p this n could ever produce: 2 / 2^n. */
+  floorP: number;
+  /** False when even the most extreme arrangement could not clear alpha. */
+  couldReachAlpha: boolean;
+  alpha: number;
+}
+
+/**
+ * The fewest paired SEEDS at which any verdict may be printed: the smallest n
+ * whose floor p (2/2^n) clears alpha. Six at α = 0.05 — five seeds cannot
+ * produce a significant result however clean the sweep, which is the same fact
+ * `pairsForSweep` states for the judge.
+ */
+export function minimumPairedSeeds(alpha = 0.05): number {
+  for (let n = 1; n <= 64; n++) if (2 / Math.pow(2, n) <= alpha) return n;
+  return 64;
+}
+
+export const MIN_PAIRED_SEEDS: number = minimumPairedSeeds(0.05);
+
+export function signFlipPermutation(
+  values: readonly number[],
+  options: { alpha?: number; seed?: string; draws?: number } = {},
+): PermutationTest | null {
+  const n = values.length;
+  if (n < 1) return null;
+  const alpha = options.alpha ?? 0.05;
+  const seed = options.seed ?? 'permutation';
+  const total = values.reduce((s, v) => s + v, 0);
+  const statistic = Math.abs(total) / n;
+  const floorP = Math.min(1, 2 / Math.pow(2, n));
+  const tolerance = 1e-12;
+
+  if (n <= 20) {
+    const arrangements = 1 << n;
+    let atLeast = 0;
+    for (let mask = 0; mask < arrangements; mask++) {
+      let sum = 0;
+      for (let i = 0; i < n; i++) sum += (mask & (1 << i)) === 0 ? values[i]! : -values[i]!;
+      if (Math.abs(sum) / n >= statistic - tolerance) atLeast++;
+    }
+    return {
+      n,
+      statistic: round(statistic, 1e6),
+      p: round(atLeast / arrangements, 1e6),
+      method: 'exact-enumeration',
+      draws: arrangements,
+      seed,
+      floorP: round(floorP, 1e6),
+      couldReachAlpha: floorP <= alpha,
+      alpha,
+    };
+  }
+
+  const draws = options.draws ?? 20000;
+  const rng = mulberry32(hashSeed(`sign-flip:${seed}:${n}`));
+  let atLeast = 1; // the observed arrangement is one of the draws
+  for (let draw = 1; draw < draws; draw++) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += rng() < 0.5 ? values[i]! : -values[i]!;
+    if (Math.abs(sum) / n >= statistic - tolerance) atLeast++;
+  }
+  return {
+    n,
+    statistic: round(statistic, 1e6),
+    p: round(atLeast / draws, 1e6),
+    method: 'monte-carlo',
+    draws,
+    seed,
+    floorP: round(floorP, 1e6),
+    couldReachAlpha: floorP <= alpha,
+    alpha,
+  };
 }
 
 export interface BootstrapOptions {
@@ -131,6 +245,8 @@ export interface BootstrapOptions {
   resamples?: number;
   /** Two-sided coverage. Default 0.95. */
   level?: number;
+  /** The permutation test's threshold, and the one `verdictEligible` is read at. Default 0.05. */
+  alpha?: number;
 }
 
 /**
@@ -163,6 +279,7 @@ export function pairedBootstrap(
   const n = values.length;
   const meanDelta = n > 0 ? round(mean(values)) : 0;
   const sd = n > 1 ? round(standardDeviation(values)) : 0;
+  const alpha = options.alpha ?? 0.05;
   const base: PairedResult = {
     metric,
     n,
@@ -173,6 +290,8 @@ export function pairedBootstrap(
     bootstrapCi: null,
     deltas,
     effectSize: n > 1 && sd > 0 ? round(meanDelta / sd) : null,
+    permutation: signFlipPermutation(values, { alpha, seed: options.seed ?? metric }),
+    verdictEligible: n >= minimumPairedSeeds(alpha),
     role: 'exploratory',
   };
   if (n < 2) return base;
@@ -294,15 +413,23 @@ export interface JudgeDesignPower {
  * into a line the pilot recipe has to answer to.
  */
 export function minimumDetectableWins(pairs: number, alpha = 0.05): JudgeDesignPower {
+  const key = `${pairs}:${alpha}`;
+  const cached = winsCache.get(key);
+  if (cached) return cached;
   // p falls as k moves away from n/2, so the first k that clears alpha is the
   // smallest one that ever will.
+  let answer: JudgeDesignPower = { pairs, alpha, minimumWins: null, minimumWinRate: null, underpowered: true };
   for (let wins = Math.ceil(pairs / 2); wins <= pairs; wins++) {
     if (exactBinomialTwoSided(wins, pairs) <= alpha) {
-      return { pairs, alpha, minimumWins: wins, minimumWinRate: round(wins / pairs), underpowered: false };
+      answer = { pairs, alpha, minimumWins: wins, minimumWinRate: round(wins / pairs), underpowered: false };
+      break;
     }
   }
-  return { pairs, alpha, minimumWins: null, minimumWinRate: null, underpowered: true };
+  winsCache.set(key, answer);
+  return answer;
 }
+
+const winsCache = new Map<string, JudgeDesignPower>();
 
 /** The fewest pairs at which a clean sweep clears alpha. */
 export function pairsForSweep(alpha = 0.05): number {
@@ -313,29 +440,50 @@ export function pairsForSweep(alpha = 0.05): number {
 // ─── The judge gate: one rule, pre-registered, with its power printed ────────
 
 /**
- * THE GATE ROUND 2 COULD NOT PASS EVEN WHEN IT WAS RIGHT.
+ * THE GATE THAT COULD NOT RETURN A VERDICT, AND WHY THE POWER MODEL DID NOT SAY SO.
  *
- * It sized the threshold on ALL pairs — `minimumDetectableWins(30)` = 21 — and
- * then compared it against `wins.A`, which counts only pairs whose two orders
- * AGREED. At a true 0.70 per showing, a pair is decisive for A with probability
- * 0.70² = 0.49, so the expected `wins.A` over 30 pairs is 14.7 and
- * P(wins.A ≥ 21) is **1.6%** — while the sign test on the same data is
- * significant 82.7% of the time. The 840-call block would have printed
- * NOT USABLE almost whatever the traces showed.
+ * Round 2 sized the threshold on ALL pairs — `minimumDetectableWins(30)` = 21 —
+ * and compared it against `wins.A`, a count over DECISIVE pairs. Round 3 fixed
+ * the denominator and left the deeper fault: THE GATE AND ITS POWER MODEL WERE
+ * TWO DIFFERENT THINGS.
  *
- * The rule below is coherent because the threshold and the count share a
- * denominator, and it is pre-registered because it is declared HERE, once, and
- * the runner reads it rather than choosing per run:
+ *   `judgeTraces` demanded that `minDecisiveRate` (0.5) of **all judged pairs**
+ *   be decisive, and a pair is decisive only when both of its showings name the
+ *   same arm — so every tie and every order-flip counts against that
+ *   denominator. `judgeGatePower` modelled P(A) = w², P(B) = (1−w)² and the rest
+ *   "inconsistent", WITH NO TIE MASS AT ALL, and never modelled the position
+ *   check at all. With a per-showing tie rate q the true expected decisive rate
+ *   is (1−q)²(w² + (1−w)²) — 0.58 at q = 0, **0.284 at q = 0.30** — against a
+ *   fixed floor of 0.5. Break-even is q ≈ 0.072: a **7%** tie rate put the
+ *   1,120-call block at the knife edge, and the reviewer measured P(USABLE) =
+ *   **0.0015** at q = 0.30, w = 0.70, 40 pairs. The block bought no verdict and
+ *   nothing said so, because the number printed beside it came from a model in
+ *   which ties do not exist.
+ *
+ * So the gate and the model are ONE THING now. `judgeGatePower` enumerates the
+ * SAME rule `judgeTraces` applies — the decisive floor, the exact sign test over
+ * the decisive pairs, AND the position check that can void a verdict on its own
+ * — under a per-showing tie rate and a per-showing position preference, both of
+ * which are PRE-REGISTERED in `JUDGE_GATE` with the reasoning for their values.
+ * `test/eval-stats.test.ts` pins the enumeration against ≥ 2,000 runs through
+ * the real `judgeTraces` at four tie rates and two position rates.
+ *
+ * THE RULE, in the order `judgeTraces` applies it:
  *
  *   1. A pair is DECISIVE when both orders name the same arm; ties and
  *      order-flips are neither wins nor losses, and both are reported.
- *   2. At least `minDecisiveRate` of the judged pairs must be decisive. A judge
- *      that cannot make up its mind is a finding about the judge, not a verdict
- *      about the arms, and this is the line that says so out loud.
+ *   2. At least `minDecisiveRate` of the judged pairs must be decisive — a floor
+ *      set at HALF the decisive rate the pre-registration assumes, so a judge
+ *      twice as indecisive as pre-registered is reported as a finding about the
+ *      judge rather than as a verdict about the arms.
  *   3. The winner needs `minimumDetectableWins(decisivePairs, α)` wins OF THOSE
- *      DECISIVE PAIRS — the exact two-sided sign test at the declared α,
- *      conditioned on the number of non-ties, which is the standard sign test
- *      and not a threshold chosen after seeing the data.
+ *      DECISIVE PAIRS — the exact two-sided sign test conditioned on the
+ *      non-ties.
+ *   4. The position check must not exclude a half, and must not be unmeasured.
+ *   5. The run must have judged at least `pairsForJudgePower(targetPower)` pairs.
+ *      Below that the block is EXPLORATORY and may not print a verdict at all:
+ *      an under-powered block that returns "not significant" is not a null
+ *      result, it is an absence of measurement, and round 3 shipped one at 40.
  */
 export interface JudgeGateRule {
   alpha: number;
@@ -343,86 +491,359 @@ export interface JudgeGateRule {
   minDecisiveRate: number;
   /** The per-showing win rate the design is powered for. Declared, not hoped for. */
   declaredEffect: number;
+  /**
+   * PRE-REGISTERED: the share of showings on which the judge is expected to
+   * answer "tie". Sizing a design at q = 0 is what produced a 1,120-call block
+   * with 0.0015 power, so the assumption is declared and sized under.
+   */
+  assumedTieRate: number;
+  /**
+   * PRE-REGISTERED: the share of DECISIVE showings on which the judge is
+   * expected to name the LEFT trace. 0.5 is "no side preference".
+   */
+  assumedPositionLeftRate: number;
+  /** The power the design must reach under those assumptions before a verdict is allowed. */
+  targetPower: number;
+  /** Why those numbers, in words, so a reader is not left to guess. */
+  justification: string;
 }
 
-export const JUDGE_GATE: JudgeGateRule = { alpha: 0.05, minDecisiveRate: 0.5, declaredEffect: 0.7 };
+/**
+ * THE PRE-REGISTRATION. Deep-frozen: `Object.isFrozen(JUDGE_GATE)` was FALSE in
+ * round 3 and `judgeTraces` accepted `options.gate`, so a rigged 21-of-40 split
+ * at exact two-sided p = 0.8746 printed `usableForVerdict: true` under
+ * `{alpha: 0.9, minDecisiveRate: 0.01, declaredEffect: 0.99}`, and mutating
+ * `JUDGE_GATE.alpha` in place made the DEFAULT path print it. A rule that can be
+ * edited after the numbers are in is not a pre-registration; it is a naming
+ * convention.
+ */
+export const JUDGE_GATE: JudgeGateRule = deepFreeze({
+  alpha: 0.05,
+  // Half of 0.284 — the decisive rate the assumptions below imply at w = 0.70.
+  minDecisiveRate: 0.15,
+  declaredEffect: 0.7,
+  assumedTieRate: 0.3,
+  assumedPositionLeftRate: 0.5,
+  targetPower: 0.8,
+  justification:
+    'TIE RATE 0.30 per showing: the traces are 8 moments of a being a third of a sim day old, the judge is asked ' +
+    'which of two such records reads as more ALIVE, and "neither, really" is the honest answer to a large share of ' +
+    'them. The reviewer measured break-even for the old 0.5 decisive floor at q = 0.072 and observed that an LLM ' +
+    'judge on 8-moment traces will tie more than that; 0.30 is deliberately pessimistic, because a design sized ' +
+    'under an optimistic tie rate is the exact failure this number exists to prevent. A measured tie rate BELOW ' +
+    '0.30 leaves the block over-powered, which costs nothing. ' +
+    'POSITION LEFT RATE 0.50: a systematic side preference is a VETO, not a design parameter. It cannot be powered ' +
+    'against — measured on this same model, a judge that names the left trace 0.55 of the time plateaus at 0.70 ' +
+    'power and then FALLS as pairs are added, because the position interval narrows onto the bias — so the design ' +
+    'is sized for an unbiased judge and the position check voids the verdict if the judge turns out not to be one. ' +
+    'What a biased judge would do is printed rather than assumed away: at 64 pairs a 0.60 left rate reaches 0.345 ' +
+    'power at w = 0.70, and type I stays at or below alpha at every tie rate and every position rate.',
+});
+
+/** A stable digest of the rule, so an artefact can be bound to the text of it. */
+export function hashJudgeGate(rule: JudgeGateRule): string {
+  return sha256Hex(
+    `yggdrasil/judge-gate/v1:${rule.alpha}|${rule.minDecisiveRate}|${rule.declaredEffect}|` +
+      `${rule.assumedTieRate}|${rule.assumedPositionLeftRate}|${rule.targetPower}`,
+  );
+}
+
+export const JUDGE_GATE_HASH: string = hashJudgeGate(JUDGE_GATE);
+
+/** Every numeric field of a rule that differs from the pre-registration, with both values. */
+export function judgeGateOverrides(rule: JudgeGateRule): { field: string; preRegistered: number; used: number }[] {
+  const fields: readonly (keyof JudgeGateRule)[] = [
+    'alpha',
+    'minDecisiveRate',
+    'declaredEffect',
+    'assumedTieRate',
+    'assumedPositionLeftRate',
+    'targetPower',
+  ];
+  const out: { field: string; preRegistered: number; used: number }[] = [];
+  for (const field of fields) {
+    const used = rule[field];
+    const declared = JUDGE_GATE[field];
+    if (typeof used === 'number' && typeof declared === 'number' && used !== declared) {
+      out.push({ field, preRegistered: declared, used });
+    }
+  }
+  return out;
+}
+
+/** The conditions a power figure is computed AT. Defaults: the pre-registration's own. */
+export interface JudgeGateConditions {
+  /** Per-showing win rate for the first arm, among showings decided on merit. */
+  effect?: number;
+  /** Per-showing tie rate. */
+  tieRate?: number;
+  /** Share of decisive showings on which the judge names the LEFT trace. */
+  positionLeftRate?: number;
+}
 
 export interface JudgeGatePower {
   pairs: number;
   alpha: number;
   declaredEffect: number;
   minDecisiveRate: number;
-  /** P(a pair is decisive) at the declared effect: w² + (1−w)². */
+  /** The conditions this figure was computed at. */
+  tieRate: number;
+  positionLeftRate: number;
+  /** P(a pair is decisive) at these conditions — ties and position bias included. */
   expectedDecisiveRate: number;
   /**
-   * P(the gate prints USABLE **and** names the better arm) at the declared
-   * effect. An UPPER BOUND on what a run will actually print: the position
-   * check can void a verdict on its own, and this figure does not model it.
-   * `test/eval-stats.test.ts` simulates the whole gate and prints both.
+   * P(the gate prints USABLE **and** names the better arm) at these conditions.
+   * NOT an upper bound any more: the position check is enumerated with the rest,
+   * which is what round 3's figure was missing.
    */
   power: number;
   /** P(the gate prints USABLE for either arm) under a judge that cannot tell them apart. */
   typeIError: number;
+  /** P(the position check alone voids the verdict) at these conditions. */
+  positionVoidRate: number;
 }
 
 /**
  * The power of the rule above, computed exactly rather than simulated.
  *
- * The model is the one the two showings impose: with a per-showing win rate w,
- * a pair is won by A when BOTH orders say A (w²), by B when both say B
- * ((1−w)²), and is inconsistent otherwise (2w(1−w)). That trinomial is summed
- * over every (a, b) the gate would pass.
+ * THE MODEL, stated so it can be checked. Every pair is shown twice: once with
+ * the first arm on the LEFT and once with it on the right. A showing is a tie
+ * with probability q; otherwise the judge answers by POSITION with probability
+ * β = 2|p − ½| (naming the favoured side whatever sits on it) and by MERIT
+ * otherwise (naming the first arm with probability w). That gives nine outcomes
+ * per pair, exactly two of which are decisive, and the left/right tallies follow
+ * from the same nine — so the arm verdict and the position check are enumerated
+ * from ONE distribution rather than modelled apart.
+ *
+ * At q = 0 and p = ½ it collapses to the trinomial round 3 used, minus the
+ * position check that model never had: 0.800 at 40 pairs where round 3 printed
+ * 0.827, and 0.800 is what the real gate does.
  */
-export function judgeGatePower(pairs: number, rule: JudgeGateRule = JUDGE_GATE): JudgeGatePower {
-  const w = rule.declaredEffect;
-  return {
+export function judgeGatePower(
+  pairs: number,
+  rule: JudgeGateRule = JUDGE_GATE,
+  at: JudgeGateConditions = {},
+): JudgeGatePower {
+  const w = at.effect ?? rule.declaredEffect;
+  const q = at.tieRate ?? rule.assumedTieRate;
+  const p = at.positionLeftRate ?? rule.assumedPositionLeftRate;
+  const key = `${pairs}|${rule.alpha}|${rule.minDecisiveRate}|${w}|${q}|${p}`;
+  const cached = powerCache.get(key);
+  if (cached) return cached;
+
+  const alternative = pairCategories(w, q, p);
+  const answer: JudgeGatePower = {
     pairs,
     alpha: rule.alpha,
     declaredEffect: w,
     minDecisiveRate: rule.minDecisiveRate,
-    expectedDecisiveRate: round(w * w + (1 - w) * (1 - w)),
-    power: round(gateProbability(pairs, w, rule, 'winner'), 1e6),
-    typeIError: round(gateProbability(pairs, 0.5, rule, 'either'), 1e6),
+    tieRate: q,
+    positionLeftRate: p,
+    expectedDecisiveRate: round(alternative.pA + alternative.pB),
+    power: round(gateProbability(pairs, w, q, p, rule, 'winner', true), 1e6),
+    typeIError: round(gateProbability(pairs, 0.5, q, p, rule, 'either', true), 1e6),
+    positionVoidRate: round(1 - positionPassRate(pairs, w, q, p), 1e6),
+  };
+  if (powerCache.size > 4096) powerCache.clear();
+  powerCache.set(key, answer);
+  return answer;
+}
+
+const powerCache = new Map<string, JudgeGatePower>();
+
+/** The nine outcomes of one pair, as probabilities and left/right contributions. */
+interface PairCategories {
+  /** Both showings named the first arm. */
+  pA: number;
+  /** Both named the second. */
+  pB: number;
+  /** Everything else, with what it contributes to the left and right tallies. */
+  nonDecisive: { p: number; left: number; right: number }[];
+}
+
+function pairCategories(w: number, q: number, p: number): PairCategories {
+  const beta = Math.min(1, 2 * Math.abs(p - 0.5));
+  const favoursLeft = p >= 0.5;
+  const decided = 1 - q;
+  // X is the showing with the first arm on the LEFT; Y is the mirror. Every
+  // pair supplies exactly one of each, whichever order was called "forward".
+  const xA = decided * (favoursLeft ? beta + (1 - beta) * w : (1 - beta) * w);
+  const xB = decided * (favoursLeft ? (1 - beta) * (1 - w) : beta + (1 - beta) * (1 - w));
+  const yA = decided * (favoursLeft ? (1 - beta) * w : beta + (1 - beta) * w);
+  const yB = decided * (favoursLeft ? beta + (1 - beta) * (1 - w) : (1 - beta) * (1 - w));
+  return {
+    pA: xA * yA,
+    pB: xB * yB,
+    nonDecisive: [
+      { p: xA * yB, left: 2, right: 0 },
+      { p: xA * q, left: 1, right: 0 },
+      { p: xB * yA, left: 0, right: 2 },
+      { p: xB * q, left: 0, right: 1 },
+      { p: q * yA, left: 0, right: 1 },
+      { p: q * yB, left: 1, right: 0 },
+      { p: q * q, left: 0, right: 0 },
+    ].filter((row) => row.p > 0),
   };
 }
 
-function gateProbability(pairs: number, w: number, rule: JudgeGateRule, count: 'winner' | 'either'): number {
+/**
+ * P(the position check passes) for every possible number of decisive pairs, in
+ * one pass.
+ *
+ * A DECISIVE pair always contributes exactly one left and one right — both
+ * orders named the same arm, and that arm sat on each side once — so the only
+ * random part of the position tally comes from the non-decisive pairs, and the
+ * check factorises out of the arm count given how many pairs were decisive.
+ * That is what makes an exact enumeration affordable at these n.
+ */
+function positionPassByDecisive(pairs: number, w: number, q: number, p: number): Float64Array {
+  const { pA, pB, nonDecisive } = pairCategories(w, q, p);
+  const spare = Math.max(0, 1 - pA - pB);
+  const conditional = nonDecisive.map((row) => ({ ...row, p: spare > 0 ? row.p / spare : 0 }));
+  const stride = 2 * pairs + 2;
+  let distribution = new Float64Array(stride * stride);
+  distribution[0] = 1;
+  const pass = new Float64Array(pairs + 1);
+  for (let spareCount = 0; spareCount <= pairs; spareCount++) {
+    if (spareCount > 0) {
+      const next = new Float64Array(stride * stride);
+      const reach = 2 * (spareCount - 1);
+      for (let left = 0; left <= reach; left++) {
+        for (let right = 0; left + right <= reach; right++) {
+          const mass = distribution[left * stride + right] ?? 0;
+          if (mass === 0) continue;
+          for (const row of conditional) {
+            const at = (left + row.left) * stride + (right + row.right);
+            next[at] = (next[at] ?? 0) + mass * row.p;
+          }
+        }
+      }
+      distribution = next;
+    }
+    const decisive = pairs - spareCount;
+    const reach = 2 * spareCount;
+    let ok = 0;
+    for (let left = 0; left <= reach; left++) {
+      for (let right = 0; left + right <= reach; right++) {
+        const mass = distribution[left * stride + right] ?? 0;
+        if (mass === 0) continue;
+        const l = decisive + left;
+        const r = decisive + right;
+        // The two reasons `judgeTraces` voids a verdict on position, verbatim:
+        // an interval that excludes a half, and nothing decisive to measure.
+        if (l + r === 0) continue;
+        const interval = wilsonInterval(l, l + r, 1.96);
+        if (interval.low > 0.5 || interval.high < 0.5) continue;
+        ok += mass;
+      }
+    }
+    pass[decisive] = ok;
+  }
+  return pass;
+}
+
+function positionPassRate(pairs: number, w: number, q: number, p: number): number {
   if (pairs <= 0) return 0;
-  const pA = w * w;
-  const pB = (1 - w) * (1 - w);
-  const pTie = 1 - pA - pB;
+  const { pA, pB } = pairCategories(w, q, p);
+  const spare = Math.max(0, 1 - pA - pB);
+  const pass = positionPassByDecisive(pairs, w, q, p);
+  let total = 0;
+  for (let a = 0; a <= pairs; a++) {
+    for (let b = 0; a + b <= pairs; b++) {
+      const mass = trinomial(pairs, a, b, pA, pB, spare);
+      if (mass > 0) total += mass * (pass[a + b] ?? 0);
+    }
+  }
+  return Math.min(1, total);
+}
+
+function gateProbability(
+  pairs: number,
+  w: number,
+  q: number,
+  p: number,
+  rule: JudgeGateRule,
+  count: 'winner' | 'either',
+  includePosition: boolean,
+): number {
+  if (pairs <= 0) return 0;
+  const { pA, pB } = pairCategories(w, q, p);
+  const spare = Math.max(0, 1 - pA - pB);
   const needDecisive = Math.ceil(rule.minDecisiveRate * pairs);
-  // The threshold depends only on how many pairs were decisive, so it is
-  // computed once per decisive count rather than once per outcome.
-  const threshold = new Map<number, number | null>();
-  const minimumFor = (decisive: number): number | null => {
-    if (!threshold.has(decisive)) threshold.set(decisive, minimumDetectableWins(decisive, rule.alpha).minimumWins);
-    return threshold.get(decisive) ?? null;
-  };
+  const pass = includePosition ? positionPassByDecisive(pairs, w, q, p) : null;
 
   let total = 0;
   for (let a = 0; a <= pairs; a++) {
     for (let b = 0; a + b <= pairs; b++) {
       const decisive = a + b;
       if (decisive < needDecisive) continue;
-      const minimum = minimumFor(decisive);
+      const minimum = minimumDetectableWins(decisive, rule.alpha).minimumWins;
       if (minimum === null) continue;
       const passes = count === 'winner' ? a >= minimum : a >= minimum || b >= minimum;
       if (!passes) continue;
-      total += Math.exp(
-        logGamma(pairs + 1) - logGamma(a + 1) - logGamma(b + 1) - logGamma(pairs - decisive + 1) +
-          a * Math.log(pA) + b * Math.log(pB) + (pairs - decisive) * (pTie > 0 ? Math.log(pTie) : -Infinity),
-      );
+      const mass = trinomial(pairs, a, b, pA, pB, spare);
+      if (mass <= 0) continue;
+      total += pass ? mass * (pass[decisive] ?? 0) : mass;
     }
   }
   return Math.min(1, total);
 }
 
-/** The fewest pairs at which the gate reaches `power` at the declared effect. */
-export function pairsForJudgePower(power = 0.8, rule: JudgeGateRule = JUDGE_GATE, cap = 400): number | null {
-  for (let pairs = 2; pairs <= cap; pairs++) if (judgeGatePower(pairs, rule).power >= power) return pairs;
-  return null;
+function trinomial(n: number, a: number, b: number, pA: number, pB: number, pRest: number): number {
+  const rest = n - a - b;
+  if ((a > 0 && pA <= 0) || (b > 0 && pB <= 0) || (rest > 0 && pRest <= 0)) return 0;
+  const logP =
+    logGamma(n + 1) -
+    logGamma(a + 1) -
+    logGamma(b + 1) -
+    logGamma(rest + 1) +
+    (a > 0 ? a * Math.log(pA) : 0) +
+    (b > 0 ? b * Math.log(pB) : 0) +
+    (rest > 0 ? rest * Math.log(pRest) : 0);
+  return Math.exp(logP);
 }
+
+/**
+ * The fewest pairs at which the gate reaches `power` under the PRE-REGISTERED
+ * conditions — the number the pilot recipe has to buy.
+ *
+ * Two phases, because the exact model is cubic in the number of pairs: the
+ * position-free probability is an upper bound on the full one, so the cheap
+ * model gives a lower bound on the answer and the expensive one runs only from
+ * there. Null when no n up to `cap` reaches it, which is the honest answer for
+ * a judge with a real side preference — adding pairs narrows the position
+ * interval onto the bias, so the verdict is voided MORE often, not less.
+ */
+export function pairsForJudgePower(
+  power: number = JUDGE_GATE.targetPower,
+  rule: JudgeGateRule = JUDGE_GATE,
+  cap = 200,
+  at: JudgeGateConditions = {},
+): number | null {
+  const w = at.effect ?? rule.declaredEffect;
+  const q = at.tieRate ?? rule.assumedTieRate;
+  const p = at.positionLeftRate ?? rule.assumedPositionLeftRate;
+  const key = `${power}|${rule.alpha}|${rule.minDecisiveRate}|${w}|${q}|${p}|${cap}`;
+  const cached = pairsCache.get(key);
+  if (cached !== undefined) return cached;
+
+  let from = 2;
+  for (let pairs = 2; pairs <= cap; pairs++) {
+    from = pairs;
+    if (gateProbability(pairs, w, q, p, rule, 'winner', false) >= power) break;
+  }
+  let answer: number | null = null;
+  for (let pairs = from; pairs <= cap; pairs++) {
+    if (judgeGatePower(pairs, rule, { effect: w, tieRate: q, positionLeftRate: p }).power >= power) {
+      answer = pairs;
+      break;
+    }
+  }
+  pairsCache.set(key, answer);
+  return answer;
+}
+
+const pairsCache = new Map<string, number | null>();
 
 /** What THIS run's gate decided on, and what the rule could ever have decided. */
 export interface JudgeGateDesign {
@@ -440,16 +861,37 @@ export interface JudgeGateDesign {
   /** True when even a sweep of the decisive pairs could not be significant. */
   underpowered: boolean;
   declaredEffect: number;
+  /** The pre-registered assumptions this design was sized under. */
+  assumedTieRate: number;
+  assumedPositionLeftRate: number;
   /** Power of this rule at the declared effect, for the number of pairs JUDGED. */
   power: number;
+  targetPower: number;
+  /** Pairs this rule needs to reach `targetPower` under those assumptions. */
+  pairsForTargetPower: number | null;
+  /** False when fewer pairs were judged than that. An exploratory block. */
+  adequatelyPowered: boolean;
+  /** What a block of this size may be called. A verdict needs `confirmatory`. */
+  role: 'confirmatory' | 'exploratory';
   expectedDecisiveRate: number;
   typeIError: number;
+  positionVoidRate: number;
+  /** Was the rule the pre-registered one, value for value? */
+  preRegistered: boolean;
+  ruleHash: string;
+  /** Every value that differs from `JUDGE_GATE`, with both numbers. */
+  overrides: { field: string; preRegistered: number; used: number }[];
+  /** The pre-registration's own words for why the assumptions are what they are. */
+  justification: string;
 }
 
 export function judgeGateDesign(pairs: number, decisivePairs: number, rule: JudgeGateRule = JUDGE_GATE): JudgeGateDesign {
   const wins = minimumDetectableWins(decisivePairs, rule.alpha);
   const power = judgeGatePower(pairs, rule);
   const decisiveRate = pairs > 0 ? round(decisivePairs / pairs) : 0;
+  const overrides = judgeGateOverrides(rule);
+  const needed = pairsForJudgePower(rule.targetPower, rule);
+  const adequatelyPowered = needed !== null && pairs >= needed;
   return {
     pairs,
     decisivePairs,
@@ -461,11 +903,30 @@ export function judgeGateDesign(pairs: number, decisivePairs: number, rule: Judg
     minimumWinRate: wins.minimumWinRate,
     underpowered: wins.underpowered,
     declaredEffect: power.declaredEffect,
+    assumedTieRate: rule.assumedTieRate,
+    assumedPositionLeftRate: rule.assumedPositionLeftRate,
     power: power.power,
+    targetPower: rule.targetPower,
+    pairsForTargetPower: needed,
+    adequatelyPowered,
+    role: adequatelyPowered && overrides.length === 0 ? 'confirmatory' : 'exploratory',
     expectedDecisiveRate: power.expectedDecisiveRate,
     typeIError: power.typeIError,
+    positionVoidRate: power.positionVoidRate,
+    preRegistered: overrides.length === 0,
+    ruleHash: hashJudgeGate(rule),
+    overrides,
+    justification: rule.justification,
   };
 }
+
+/** Freeze an object and everything reachable from it. `Object.freeze` is one level deep. */
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  for (const key of Object.getOwnPropertyNames(value)) deepFreeze((value as Record<string, unknown>)[key]);
+  return Object.freeze(value);
+}
+
 
 // ─── Many comparisons ────────────────────────────────────────────────────────
 

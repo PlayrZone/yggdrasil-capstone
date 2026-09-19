@@ -2,6 +2,7 @@ import { actionForCore, kindsWithTag } from '../contract/actions.js';
 import type { ActionBinding } from '../contract/actions.js';
 import type { WorldAdapter } from '../contract/adapter.js';
 import type { Intent, MindOutput, ObservedResource, ThinkInput, Utterance } from '../contract/types.js';
+import { encodeOutput } from '../contract/wire.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { ThinkPrompt } from '../consciousness/prompt.js';
 import { isInterview, questionIn } from './interview.js';
@@ -37,9 +38,26 @@ abstract class ScriptedBackend implements IMindBackend {
     return this.modelId;
   }
 
+  /**
+   * A MOCK PLAYS THE MODEL, SO IT WRITES WHAT A MODEL WRITES.
+   *
+   * It used to `JSON.stringify` its own `MindOutput`, which since W1-B4 carries
+   * `place: PlaceRef` — so it wrote `{"kind":"MoveTo","place":{"x":5,"y":7}}`
+   * where a model writes `{"kind":"MoveTo","x":5,"y":7}`, and `parseMindOutput`,
+   * which reads the world's own place fields at the TOP level, dropped the
+   * destination: measured, `{"kind":"MoveTo","place":{…}}` parsed to
+   * `{"kind":"MoveTo"}`. `MockMindBackend` had the same bug and was fixed in
+   * `48c9c46`; this file was not, and the only reason the proof did not invert
+   * is that the faithful mock's Move branch was unreachable (R3).
+   *
+   * `encodeOutput` is the codec that already exists for the body and the
+   * recorder. Everything that stands in for a model under `eval/**` goes
+   * through it, and `test/eval-proof.test.ts` plants the old bug back and
+   * requires the run to be REFUSED as degraded.
+   */
   complete(prompt: ThinkPrompt, input: ThinkInput): Promise<string> {
     if (isInterview(prompt)) return Promise.resolve(this.answer(questionIn(prompt) ?? '', input));
-    return Promise.resolve(JSON.stringify(this.decide(input)));
+    return Promise.resolve(JSON.stringify(encodeOutput(this.world, this.decide(input))));
   }
 
   /** Direct access for a caller that already holds the situation. */
@@ -73,8 +91,29 @@ function carriedFood(world: WorldAdapter, input: ThinkInput): string | undefined
 /** The first perceived thing this world tags as a place food comes from. */
 function foodSourceInSight(world: WorldAdapter, input: ThinkInput): ObservedResource | undefined {
   const sources = new Set(kindsWithTag(world, 'foodSource'));
-  return input.worldView.resources.find((r) => sources.has(r.kind));
+  return input.worldView.resources.find((r) => sources.has(r.kind) && r.stock > 0);
 }
+
+/**
+ * The nearest perceived thing worth walking to: a food source first, then
+ * anything at all that is still stocked. Nearness is asked of the WORLD — a
+ * place is an opaque token here and `space.distance` is the only question a
+ * mind may put to one.
+ */
+function nearest(world: WorldAdapter, input: ThinkInput, from: readonly ObservedResource[]): ObservedResource | undefined {
+  let best: ObservedResource | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const seen of from) {
+    if (seen.stock <= 0) continue;
+    const distance = world.space.distance(input.snapshot.place, seen.place);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = seen;
+    }
+  }
+  return best;
+}
+
 
 /** An intent carrying only the arguments this world's action declares. */
 function intentFor(action: ActionBinding | undefined, args: Partial<Intent>): Intent[] {
@@ -92,31 +131,53 @@ function intentFor(action: ActionBinding | undefined, args: Partial<Intent>): In
 export class FaithfulMockBackend extends ScriptedBackend {
   readonly modelId = 'mock/faithful';
 
+  /**
+   * IT ACTS ON WHAT IT ACTUALLY PERCEIVES AND HOLDS (R3).
+   *
+   * Round 3's version gated every branch on a PRESSING DRIVE, and at 900 ticks
+   * no drive is pressing — so across twelve traces the faithful arm emitted
+   * `Idle` fifty-two times, its Move branch was never reached once, and the
+   * `planSuccessRate` delta of 0.8769 that the mock proof rests on was arm A
+   * idling against arm B being refused. An arm that does nothing cannot prove
+   * an instrument can tell doing from not-doing.
+   *
+   * The ladder below is the plain one, and every rung comes from the situation
+   * rather than from a threshold: eat what you carry, walk to the nearest thing
+   * you can see and take from it, otherwise take what is under your feet, and
+   * only then wait and ask. Nothing here names a forager noun — food is
+   * `kindsWithTag(world, 'edible')`, a source is `'foodSource'`, and the verbs
+   * are core verbs — so it runs unchanged on the toy world.
+   */
   protected decide(input: ThinkInput): MindOutput {
     const drive = pressingDrive(this.world, input);
     const food = carriedFood(this.world, input);
-    const source = foodSourceInSight(this.world, input);
+    const tick = input.worldView.tick;
     const utterances: Utterance[] = [];
 
-    if (drive && food) {
+    if (food) {
       return {
-        goals: [{ id: 1, description: `ease ${drive}`, need: drive, createdTick: input.worldView.tick }],
+        goals: [{ id: 1, description: `ease ${drive ?? 'what may come'}`, ...(drive ? { need: drive } : {}), createdTick: tick }],
         plan: intentFor(actionForCore(this.world, 'Use'), { objectKind: food }),
         utterances,
-        thought: `${drive} presses me. I carry ${food}. I will eat ${food}.`,
+        thought: `I carry ${food}. I will eat ${food} while I have it.`,
       };
     }
-    if (drive && source) {
+
+    const source = foodSourceInSight(this.world, input) ?? nearest(this.world, input, input.worldView.resources);
+    if (source) {
       return {
-        goals: [{ id: 1, description: `ease ${drive}`, need: drive, createdTick: input.worldView.tick }],
+        goals: [{ id: 1, description: `reach the ${source.kind}`, ...(drive ? { need: drive } : {}), createdTick: tick }],
+        // The place is carried through as the world's own opaque handle and
+        // written out by `encodeOutput`; nothing here reads a coordinate.
         plan: [
           ...intentFor(actionForCore(this.world, 'Move'), { place: source.place }),
           ...intentFor(actionForCore(this.world, 'Take'), { targetId: source.id }),
         ],
         utterances,
-        thought: `${drive} presses me. I see ${source.kind}. I will go to it and gather from it.`,
+        thought: `I see ${source.kind}. I will go to it and take from it.`,
       };
     }
+
     const other = input.worldView.agents[0];
     if (other) {
       utterances.push({ targetId: other.id, speechAct: 'request', text: 'Do you know where there is more to eat?' });
@@ -125,7 +186,7 @@ export class FaithfulMockBackend extends ScriptedBackend {
       goals: [],
       plan: intentFor(actionForCore(this.world, 'Wait'), { durationTicks: 20 }),
       utterances,
-      thought: 'Nothing presses me. I do not know what lies past what I can see.',
+      thought: 'I can see nothing I know how to use. I do not know what lies past what I can see.',
     };
   }
 
@@ -188,10 +249,18 @@ export class OmniscientMockBackend extends ScriptedBackend {
     const drive = pressingDrive(this.world, input);
     const thought = LEAKY_THOUGHTS[this.turn % LEAKY_THOUGHTS.length] ?? LEAKY_THOUGHTS[0]!;
     this.turn++;
-    // Collect, then work it twice — a PROCEDURE, which is what `leakActs`
-    // calls a technique rather than the single experiment the world invites.
+    // It is a plain agent, not a paralytic: it walks to what it sees and picks
+    // it up like anyone would. *Round 3's version took a node it had not walked
+    // to, so all 52 of its Gathers were refused `out-of-range` and every
+    // non-Idle act in the whole proof run was a refusal — which is how a
+    // `planSuccessRate` delta of 0.8769 came to mean "arm A idled while arm B
+    // was refused".* What still separates it is what it CLAIMS: collect, then
+    // work it twice — a PROCEDURE, which `leakActs` calls a technique rather
+    // than the single experiment this world actually invites.
+    const target = nearest(this.world, input, input.worldView.resources);
     const plan: Intent[] = [
-      ...intentFor(actionForCore(this.world, 'Take'), { targetId: input.worldView.resources[0]?.id ?? 0 }),
+      ...(target ? intentFor(actionForCore(this.world, 'Move'), { place: target.place }) : []),
+      ...intentFor(actionForCore(this.world, 'Take'), { targetId: target?.id ?? 0 }),
       ...intentFor(actionForCore(this.world, 'Combine'), {}),
       ...intentFor(actionForCore(this.world, 'Combine'), {}),
     ];

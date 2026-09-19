@@ -433,10 +433,13 @@ export function registerEvalTools(deps: EvalToolDeps): void {
         'cadence column in the text a judge reads, the arm key sealed until every judgement is recorded), pairs one trace from ' +
         'each arm, balances left/right placement, and judges every pair TWICE — once in each order. The PAIR is the unit of ' +
         'analysis: a pair is won only when both orders name the same arm, and the both-orders consistency rate is reported ' +
-        'beside the win rate. The verdict gate is pre-registered and coherent: the threshold is the exact two-sided sign test ' +
-        'over the DECISIVE pairs (the same count the verdict uses, not over every pair judged), at least half the pairs must ' +
-        'be decisive at all — an indecisive judge is a finding about the judge — and the power of that whole rule at the ' +
-        'declared effect ships on the result. Returns the win rate with a Wilson interval and an exact p, a per-criterion ' +
+        'beside the win rate. The verdict gate is PRE-REGISTERED and deep-frozen in the engine, and no argument here can ' +
+        'move it: the threshold is the exact two-sided sign test over the DECISIVE pairs, a pre-registered share of pairs ' +
+        'must be decisive at all — an indecisive judge is a finding about the judge — the position check must not exclude ' +
+        'a half, the run must not be DEGRADED (an arm that was mostly refused, mostly idle or mostly running on the ' +
+        "world's reflex policy is not that arm's behaviour), and the block must have judged enough pairs to reach the " +
+        'pre-registered power under a pre-registered TIE RATE. Below that it is labelled exploratory and cannot print a ' +
+        'verdict of either sign. Returns the win rate with a Wilson interval and an exact p, a per-criterion ' +
         'breakdown, and a position-bias check with its own interval. The blinding permutation is drawn from a per-run secret ' +
         'that appears in no output; the manifest carries only its hash, which verifies once the key is unsealed. The default ' +
         'judge is a deterministic rule-based mock over arm-free trace features; the LLM judge needs allowPaid AND a named budget.',
@@ -465,7 +468,14 @@ export function registerEvalTools(deps: EvalToolDeps): void {
           doorContext(chosen),
         );
         const pairing = pairTraces(result.traces, result.key, seeds.join('+'), arms);
-        const aggregate = await judgeTraces(pairing.pairs, result.key, judge, { arms });
+        // THE RUN'S OWN INTEGRITY REACHES THE VERDICT. Round 3 computed
+        // `degraded` and never showed it to the judge, so a block in which an
+        // arm ran mostly on the world's reflex policy would still have printed
+        // `usableForVerdict: true` and read as a win for the architecture.
+        const aggregate = await judgeTraces(pairing.pairs, result.key, judge, {
+          arms,
+          integrity: { degraded: result.integrity.degraded, reasons: result.integrity.reasons },
+        });
         return { result, aggregate, pairing };
       });
 

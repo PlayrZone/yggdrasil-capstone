@@ -100,7 +100,7 @@ function momentOf(
   start: number,
   around: readonly string[],
 ): TraceMoment {
-  const input = deserializeThinkInput(record.thinkInput);
+  const input = deserializeThinkInput(record.thinkInput, world);
   const decided = record.resolvedOutput ?? record.parsedOutput;
   const perceived = new Map<string, number>();
   for (const r of input.worldView.resources) perceived.set(r.kind, (perceived.get(r.kind) ?? 0) + 1);
@@ -168,54 +168,107 @@ const REF_MARK = ' ref:';
  * aggregator, and records that it happened so a test can prove judging came
  * first.
  */
+/**
+ * WHERE THE SECRET AND THE ARM MAP ACTUALLY LIVE.
+ *
+ * `private` is a TypeScript fact and nothing else. Round 3's key held
+ * `entries`, `secret`, `unsealCount`, `publicSeed` and `commitment` as ordinary
+ * enumerable own properties, so the 128-bit secret AND the complete
+ * `traceId → arm` map came out of `Object.entries(key)`, `Object.assign({}, key)`,
+ * `{...key}`, `structuredClone(key)`, `Object.getOwnPropertyNames(key)` and
+ * `util.inspect(key)` — the last being exactly what `console.log(result)`
+ * prints. Only `JSON.stringify` was guarded, by `toJSON`, and the README's
+ * *"the secret is in **no** result, manifest, spend log or tool output"* was
+ * false of the result object every agent holds.
+ *
+ * A module-level `WeakMap` is the fix rather than `#private` fields, because a
+ * `#field` is still shown by `util.inspect` in current Node. Nothing outside
+ * this module can reach this map, an instance carries no own data property at
+ * all, and the two publishable values are prototype GETTERS — so a spread, a
+ * clone and an inspect all produce something with nothing in it.
+ */
+interface SealedState {
+  entries: readonly TraceKey[];
+  secret: string;
+  publicSeed: string;
+  commitment: string;
+  unsealCount: number;
+}
+
+const SEALED = new WeakMap<SealedTraceKey, SealedState>();
+
+function stateOf(key: SealedTraceKey): SealedState {
+  const held = SEALED.get(key);
+  if (!held) throw new Error('this sealed key was not constructed by blindTraces — it holds nothing');
+  return held;
+}
+
+/** What every disclosure route is allowed to show. Reveals neither arm nor secret. */
+interface SealedFacade {
+  sealed: true;
+  size: number;
+  publicSeed: string;
+  commitment: string;
+}
+
+const INSPECT = Symbol.for('nodejs.util.inspect.custom');
+
 export class SealedTraceKey {
-  private readonly entries: readonly TraceKey[];
-  private readonly secret: string;
-  private unsealCount = 0;
+  constructor(entries: readonly TraceKey[], publicSeed: string, secret: string) {
+    SEALED.set(this, {
+      entries: entries.map((e) => ({ ...e })),
+      secret,
+      publicSeed,
+      commitment: commitTo(secret),
+      unsealCount: 0,
+    });
+  }
 
   /** The public label of the run. It keys NOTHING. */
-  readonly publicSeed: string;
-  /** `sha256(secret)`. Safe to publish; useless until the secret is disclosed. */
-  readonly commitment: string;
+  get publicSeed(): string {
+    return stateOf(this).publicSeed;
+  }
 
-  constructor(entries: readonly TraceKey[], publicSeed: string, secret: string) {
-    this.entries = entries.map((e) => ({ ...e }));
-    this.publicSeed = publicSeed;
-    this.secret = secret;
-    this.commitment = commitTo(secret);
+  /** `sha256(secret)`. Safe to publish; useless until the secret is disclosed. */
+  get commitment(): string {
+    return stateOf(this).commitment;
   }
 
   get size(): number {
-    return this.entries.length;
+    return stateOf(this).entries.length;
   }
 
   /** Has anybody looked? The blinding tests assert this is still 0 mid-judging. */
   get unsealed(): boolean {
-    return this.unsealCount > 0;
+    return stateOf(this).unsealCount > 0;
   }
 
   /** Every handle, in the order the traces were returned in. No arms. */
   handles(): readonly string[] {
-    return this.entries.map((e) => e.traceId);
+    return stateOf(this).entries.map((e) => e.traceId);
   }
 
   /** The handles of one arm — for PAIRING, which happens before any judging. */
   handlesOf(arm: ArmId): readonly string[] {
-    return this.entries.filter((e) => e.arm === arm).map((e) => e.traceId);
+    return stateOf(this)
+      .entries.filter((e) => e.arm === arm)
+      .map((e) => e.traceId);
   }
 
   /** Which arms are represented at all. */
   arms(): readonly ArmId[] {
-    return [...new Set(this.entries.map((e) => e.arm))];
+    return [...new Set(stateOf(this).entries.map((e) => e.arm))];
   }
 
   /**
    * Break the seal. Called by `judgeTraces` AFTER every judgement is recorded,
-   * and by a caller that is reporting rather than judging.
+   * and by a caller that is reporting rather than judging. Still the only door,
+   * and still one-way-logged.
    */
   unseal(): readonly TraceKey[] {
-    this.unsealCount++;
-    return this.entries.map((e) => ({ ...e }));
+    const state = stateOf(this);
+    state.unsealCount++;
+    return state.entries.map((e) => ({ ...e }));
   }
 
   /**
@@ -228,28 +281,41 @@ export class SealedTraceKey {
    * reproduces the same handles in the same order.
    */
   disclose(): { secret: string; publicSeed: string; commitment: string } {
-    if (this.unsealCount === 0) {
+    const state = stateOf(this);
+    if (state.unsealCount === 0) {
       throw new Error('the blinding secret is disclosed only after unseal(): a sealed key that answers questions is not sealed');
     }
-    return { secret: this.secret, publicSeed: this.publicSeed, commitment: this.commitment };
+    return { secret: state.secret, publicSeed: state.publicSeed, commitment: state.commitment };
   }
 
-  /**
-   * SERIALISING A SEALED KEY MUST NOT UNSEAL IT. `private` is a TypeScript
-   * fact, not a JavaScript one: without this, `JSON.stringify(result)` — which
-   * is what a reader or an agent does with a result object — printed every
-   * entry and the secret beside them.
-   */
-  toJSON(): { sealed: true; size: number; publicSeed: string; commitment: string } {
-    return { sealed: true, size: this.entries.length, publicSeed: this.publicSeed, commitment: this.commitment };
+  /** `JSON.stringify(result)` — what a reader or an agent reaches for first. */
+  toJSON(): SealedFacade {
+    return this.facade();
+  }
+
+  /** `util.inspect(key)` — what `console.log(result)` prints. */
+  [INSPECT](): SealedFacade {
+    return this.facade();
+  }
+
+  /** `String(key)` and template interpolation. */
+  toString(): string {
+    const { size, publicSeed, commitment } = this.facade();
+    return `SealedTraceKey(sealed, ${size} handles, seed ${publicSeed}, commitment ${commitment.slice(0, 12)})`;
+  }
+
+  private facade(): SealedFacade {
+    const state = stateOf(this);
+    return { sealed: true, size: state.entries.length, publicSeed: state.publicSeed, commitment: state.commitment };
   }
 
   /** Swap which arm every handle belongs to — the label-swap control. */
   relabelled(swap: (arm: ArmId) => ArmId): SealedTraceKey {
+    const state = stateOf(this);
     return new SealedTraceKey(
-      this.entries.map((e) => ({ ...e, arm: swap(e.arm) })),
-      this.publicSeed,
-      this.secret,
+      state.entries.map((e) => ({ ...e, arm: swap(e.arm) })),
+      state.publicSeed,
+      state.secret,
     );
   }
 }

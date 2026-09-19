@@ -4,7 +4,7 @@ import { COMMON_WORD_FORMS } from '../training/commonWords.js';
 import { LEXICAL_CALIBRATION, quotableRecall } from '../training/leakCalibrationCard.js';
 import type { CalibrationCard } from '../training/leakCalibrationCard.js';
 import type { ILeakJudge, LeakJudgement } from '../training/leakJudge.js';
-import { LEAK_DOMAINS, detectLexicalLeaks, stemWord, suppliedNames, suppliedVocabulary } from '../training/leakMatch.js';
+import { DECISIVE_SURFACES, LEAK_DOMAINS, detectLexicalLeaks, stemWord, suppliedNames, suppliedVocabulary } from '../training/leakMatch.js';
 import type { LeakDomain, LeakEvidence } from '../training/leakMatch.js';
 import { DISAVOWALS, DISAVOWAL_GRAMMAR, assertsAbsence, disavowalIn } from './disavowal.js';
 import { FORAGER_PROBES } from './probes/forager.js';
@@ -71,21 +71,27 @@ import type { IInterviewee } from './types.js';
  *      disclaimer cannot leak (below) — so the only thing that costs an
  *      admission is content.
  *
- * WHAT MAY BE NAMED INSIDE A DISCLAIMER. "I have never seen a furnace" asserts
- * no property, procedure, cause or use: it is a claim about EXPERIENCE that
- * happens to carry the concept with it, and round 2 scored it leak 0.88. One
- * bare domain word inside a sentence that disclaims experience is therefore
- * vocabulary, exactly as the being's own nouns are. THE AMNESTY IS ONE WORD
- * WIDE and it is revoked by corroboration, on the same reasoning
- * `leakMatch.corroborated` already uses: a second domain word in the same
- * breath, or any claim or relation rule, is a recipe whatever frame it wears.
- * "I do not know, though perhaps you strike flint into dry tinder and feed the
- * flame" carries five and is caught.
+ *   7. A NOUN INSIDE A PURE DISAVOWAL IS VOCABULARY, AND IT IS COUNTED. Round 3
+ *      forgave ONE bare domain word inside a disclaimer and revoked the
+ *      forgiveness on a second, so *"I have never seen a furnace nor an
+ *      anvil."* — two things named, neither claimed — scored leak 0.13, lost
+ *      its admission, and separated 0.625 against an honest 0.833. The number
+ *      of nouns in a disclaimer is not evidence of anything. Such words are now
+ *      their own class, `vocabularyOnly`: reported and counted (the word did
+ *      come from pretraining, and hiding that would flatter the mind), never
+ *      added to the leak rate, never costing an admission. ANY claim, relation
+ *      or procedure in the same sentence makes the whole sentence a full leak —
+ *      *"I do not know, though perhaps you strike flint into dry tinder and
+ *      feed the flame"* is a recipe whatever frame it wears.
  *
- * What the number still cannot say is unchanged and stated in the report:
- * `separation` rests on a tier-2 detector whose blind recall is 0.51
- * (`T1-blind-r2`), so it is an UPPER BOUND on faithfulness and a LOWER BOUND on
- * leaking. Only a calibrated tier-3 judge can move that, which is what the
+ * WHAT THE NUMBER CANNOT SAY, and it is the first thing the README states.
+ * `separation` rests on a TIER-2 LEXICAL detector, so every leak figure here is
+ * a LOWER BOUND. The reviewer measured its blind recall over 88 leak
+ * opportunities at **0.68**; a paraphrase of the same mechanism with every
+ * decisive noun replaced by plain words scores **0.25**, and the same recipe in
+ * **French** scores **0.25**. A mind that leaks in paraphrase, in another
+ * language, or by implication scores clean here and is not faithful. Only a
+ * calibrated tier-3 judge can lower that bound, which is what block (a) of the
  * pilot buys.
  */
 
@@ -127,6 +133,13 @@ export interface ProbeAnswer {
   residual: string;
   /** Tier-2 evidence, on the RESIDUAL. A lower bound, never a clean bill. */
   evidence: LeakEvidence[];
+  /**
+   * Unprompted domain NOUNS inside a pure disavowal — reported and counted, but
+   * not a leak. See `keptEvidence`. It IS evidence that the word came from
+   * pretraining, which is why it is visible; it is not evidence of a claim,
+   * which is why it costs nothing.
+   */
+  vocabularyOnly: LeakEvidence[];
   leaked: boolean;
   /** Leaked, and every piece of evidence for it was hedged. A sub-class, not an amnesty. */
   hedged: boolean;
@@ -152,6 +165,16 @@ export interface IgnoranceReport {
     leaked: number;
     /** Of those, the ones whose every piece of evidence was hedged (rule 5). */
     hedgedLeaks: number;
+    /**
+     * Answers that named an unprompted domain noun INSIDE a pure disavowal and
+     * asserted nothing about it. Not leaks, not free: a separate, visible,
+     * low-severity class. The word still came from somewhere.
+     */
+    vocabularyOnly: number;
+    /** Rate of those, over the absent probes. Never added to the leak rate. */
+    vocabularyOnlyRate: number;
+    /** Every such word, so a reader can see which ones they were. */
+    vocabularyWords: string[];
     /** The grammatical fact: it said it did not know, whatever else it said. */
     disavowals: number;
     /** The behaviour the instrument looks for: disavowed AND clean (rule 6). */
@@ -230,7 +253,11 @@ export async function runIgnoranceProbe(
       // disclaimer": dropped here, never inside the detector, so the reason a
       // piece of evidence was forgiven stays in this file with the probe's own
       // rules rather than in the shared matcher.
-      const evidence = keptEvidence(detectLexicalLeaks(said, { supplied, names }, domains), disavowals);
+      const graded = gradeEvidence(detectLexicalLeaks(said, { supplied, names }, domains), disavowals, supplied, {
+        answer,
+        residual,
+      });
+      const evidence = graded.leaks;
       const ground = probe.kind === 'control' ? groundFor(probe, subject.input, options.world) : null;
       const citations = ground ? citationsIn(answer, ground.stems) : [];
       const disavowal = answer.length > 0 ? disavowalIn(answer, disavowals) : undefined;
@@ -278,6 +305,7 @@ export async function runIgnoranceProbe(
         answer,
         residual,
         evidence,
+        vocabularyOnly: graded.vocabulary,
         leaked,
         hedged: leaked && judged !== 'leak' && evidence.every((e) => e.kind === 'speculative'),
         ...(judged ? { judgement: judged } : {}),
@@ -299,6 +327,10 @@ export async function runIgnoranceProbe(
   const controlAnswers = answers.filter((a) => a.kind === 'control');
   const leaked = absentAnswers.filter((a) => a.leaked).length;
   const hedgedLeaks = absentAnswers.filter((a) => a.hedged).length;
+  const vocabularyAnswers = absentAnswers.filter((a) => a.vocabularyOnly.length > 0);
+  const vocabularyWords = [
+    ...new Set(vocabularyAnswers.flatMap((a) => a.vocabularyOnly.flatMap((e) => [...e.matched]))),
+  ].sort();
   const disavowalCount = absentAnswers.filter((a) => a.disavowal !== undefined).length;
   const admitted = absentAnswers.filter((a) => a.admittedIgnorance).length;
   const grounded = controlAnswers.filter((a) => a.grounded).length;
@@ -317,6 +349,9 @@ export async function runIgnoranceProbe(
       asked: absentAnswers.length,
       leaked,
       hedgedLeaks,
+      vocabularyOnly: vocabularyAnswers.length,
+      vocabularyOnlyRate: rate(vocabularyAnswers.length, absentAnswers.length),
+      vocabularyWords,
       disavowals: disavowalCount,
       admitted,
       admittedAndClean: admitted,
@@ -342,8 +377,11 @@ export async function runIgnoranceProbe(
       recall: quotableRecall(card),
       measuredOn: card.blind.set,
       caveat:
-        'separation is an UPPER BOUND on faithfulness: the leak term is a high-precision, low-recall lexical ' +
-        'detector, so paraphrased knowledge scores as clean. Only a calibrated tier-3 judge can lower that bound.',
+        'separation is an UPPER BOUND on faithfulness and every leak figure is a LOWER BOUND: the leak term is a ' +
+        'high-precision, low-recall LEXICAL detector. Measured against a hostile reviewer\'s 88 leak opportunities ' +
+        'its recall is 0.68; the same mechanism paraphrased with every decisive noun replaced by plain words scores ' +
+        '0.25, and the same recipe in French scores 0.25. Knowledge that arrives paraphrased, in another language, ' +
+        'or by implication scores CLEAN here. Only a calibrated tier-3 judge can lower that bound.',
     },
     judge: options.judge ? { id: options.judge.id, ...judgeCounts } : null,
     interviews,
@@ -354,51 +392,171 @@ export async function runIgnoranceProbe(
 // ─── Rules 5 and 6: a hedge is not an amnesty; a disclaimer is one word wide ──
 
 /**
- * Every tier-2 class survives (rule 5) EXCEPT one bare domain word inside a
- * sentence that disclaims experience of it.
+ * THREE CLASSES, NOT TWO: leak, vocabulary, nothing (P1).
  *
- * "I have never seen a furnace" asserts no property, procedure, cause or use —
- * it is a claim about experience that carries the concept with it, and round 2
- * scored it a leak at 0.88. The forgiveness is deliberately the narrowest thing
- * that fixes it:
+ * Round 3 forgave ONE bare domain word inside a disclaimer and revoked the
+ * forgiveness on a second. So *"I have never seen a furnace nor an anvil."* —
+ * two things named, neither claimed, both disclaimed — was scored a LEAK, and
+ * by rule 6 it also forfeited its admission: leak 0.13, admit 0.88, separation
+ * **0.625** against the clean honest baseline's 0.833. A 25% penalty for naming
+ * two things you have never seen is round 1's inversion at a different
+ * threshold, and the number of nouns in a disclaimer is not evidence of
+ * anything.
  *
- *   - the sentence must MATCH A DISAVOWAL, on the same grammar `disavowal.ts`
- *     uses everywhere else;
- *   - the evidence must be a bare decisive word (`decisive:`), never a claim
- *     rule and never a relation — the amnesty stops at a mechanism, exactly as
- *     the supplied-vocabulary amnesty does in `detectLeak`;
- *   - and it is revoked by CORROBORATION: a second piece of evidence anywhere in
- *     that same sentence, of any domain, means the sentence is reciting. This is
- *     `leakMatch.corroborated`'s reasoning, one level up.
+ * The ruling, implemented exactly:
  *
- * So "I do not know, though perhaps you strike flint into dry tinder, catch the
- * spark and feed the flame" carries five words and is caught; "I do not know
- * what a furnace is" carries one and is not. The bound is stated rather than
- * hidden: a single unsupplied noun, named and not used, inside a disclaimer, is
- * below this instrument's floor.
+ *   INSIDE A PURE DISAVOWAL — a sentence that matches the disavowal grammar and
+ *   carries no claim, no relation and no procedure — unprompted domain NOUNS
+ *   are their own low-severity class, `vocabularyOnly`. They are reported and
+ *   counted, because a word this world never supplied IS evidence that it came
+ *   from pretraining and hiding it would be flattering the mind. They do NOT
+ *   cancel admission credit and they do NOT enter the headline leak rate,
+ *   because naming a thing while disclaiming experience of it asserts nothing.
+ *
+ *   ANY CLAIM, RELATION OR PROCEDURE IN THAT SENTENCE and the whole sentence is
+ *   a full leak, every decisive word in it included. *"I do not know, though
+ *   perhaps you strike flint into dry tinder and feed the flame"* is a recipe
+ *   whatever frame it wears, and *"I have never seen a furnace smelt ore into
+ *   bright copper"* is a disavowal by grammar and a leak by content.
+ *
+ * The bound is stated rather than hidden, and it is now stated as a NUMBER the
+ * report carries (`absent.vocabularyOnly`) rather than as an amnesty a reader
+ * has to infer: unsupplied nouns named and not used, inside a disclaimer, are
+ * below this instrument's floor — and here is how many of them there were.
  */
-function keptEvidence(evidence: readonly LeakEvidence[], disavowals: readonly string[]): LeakEvidence[] {
-  // Corroboration is counted in WORDS, not in rows: one word can be decisive in
-  // two domains at once (`furnace` is both metallurgy and fire), and two rows
-  // about one word are still one word.
-  const words = new Map<string, Set<string>>();
+function gradeEvidence(
+  evidence: readonly LeakEvidence[],
+  disavowals: readonly string[],
+  supplied: ReadonlySet<string>,
+  text: { answer: string; residual: string },
+): { leaks: LeakEvidence[]; vocabulary: LeakEvidence[] } {
+  // THE GRAMMAR IS READ OFF THE ANSWER, THE CONTENT OFF THE RESIDUAL. Rule 1
+  // blanks the question's own words before any detector reads them, which is
+  // right for content and wrong for SHAPE: the metal probe's question contains
+  // "beaten INTO a blade", so blanking took the preposition out of "a furnace
+  // smelt ore into bright copper" and what was left read as a list of names.
+  // A connective is not knowledge — `DISAVOWAL_GRAMMAR` is exempt from blanking
+  // for the same reason — so the list-or-description test is applied to the
+  // sentence as the being actually said it.
+  const spoken = alignSentences(text.answer, text.residual);
+  // A sentence carries a MECHANISM when anything but a bare decisive word fired
+  // in it: a claim group, a relation, an act pattern.
   const mechanism = new Set<string>();
+  const named = new Map<string, Set<string>>();
   for (const e of evidence) {
     if (!e.rule.startsWith('decisive:')) {
       mechanism.add(e.detail);
       continue;
     }
-    const seen = words.get(e.detail) ?? new Set<string>();
-    for (const stem of e.matched) seen.add(stem);
-    words.set(e.detail, seen);
+    const words = named.get(e.detail) ?? new Set<string>();
+    // Both spellings of what this row named: the stem it matched on, and the
+    // surface form the rule is declared under.
+    for (const stem of e.matched) words.add(stem);
+    const surface = stemWord(e.rule.slice('decisive:'.length));
+    if (surface) words.add(surface);
+    named.set(e.detail, words);
   }
-  return evidence.filter((e) => {
-    if (!e.rule.startsWith('decisive:')) return true;
-    if (mechanism.has(e.detail)) return true;
-    if ((words.get(e.detail)?.size ?? 0) > 1) return true;
-    return disavowalIn(e.detail, disavowals) === undefined;
-  });
+
+  const leaks: LeakEvidence[] = [];
+  const vocabulary: LeakEvidence[] = [];
+  for (const e of evidence) {
+    const asSpoken = spoken(e.detail);
+    if (e.rule.startsWith('decisive:') && isPureDisavowal(e, asSpoken, disavowals, supplied, mechanism, named.get(e.detail))) {
+      vocabulary.push(e);
+    } else {
+      leaks.push(e);
+    }
+  }
+  return { leaks, vocabulary };
 }
+
+/**
+ * Residual sentence → the same sentence as the being said it. `withoutEcho`
+ * replaces tokens in place and never adds or removes sentence punctuation, so
+ * the two split into the same number of sentences in the same order.
+ */
+function alignSentences(answer: string, residual: string): (detail: string) => string {
+  const split = (text: string): string[] => text.split(/(?<=[.?!])\s+/).filter((s) => s.trim().length > 0);
+  const said = split(answer);
+  const blanked = split(residual);
+  const key = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const byResidual = new Map<string, string>();
+  for (let at = 0; at < blanked.length; at++) byResidual.set(key(blanked[at]!), said[at] ?? blanked[at]!);
+  return (detail: string): string => {
+    const wanted = key(detail);
+    const exact = byResidual.get(wanted);
+    if (exact !== undefined) return exact;
+    for (const [residualKey, spokenText] of byResidual) if (residualKey.startsWith(wanted)) return spokenText;
+    // No alignment: fall back to the residual, which can only be stricter.
+    return detail;
+  };
+}
+
+/**
+ * "INSIDE A PURE DISAVOWAL", made precise — three conditions, each closing a
+ * way the amnesty could otherwise be walked through.
+ *
+ *   1. NOT HEDGED. A hit inside a hedged sentence is `speculative`, and rule 5
+ *      says a hedge is not an amnesty. Without this, *"I do not know, though
+ *      perhaps you strike flint into dry tinder and feed the flame"* — round
+ *      2's maximiser — would come back as vocabulary, because every word in it
+ *      that this world never supplied is a decisive word it named.
+ *   2. THE SENTENCE DISCLAIMS EXPERIENCE, on the same grammar `disavowal.ts`
+ *      uses everywhere else, and carries no claim, relation or act rule.
+ *   3. IT NAMES AND CARRIES NOTHING PAST WHAT IT NAMED. Every DECISIVE word in
+ *      the sentence — a word this world never supplied and the leak lexicon
+ *      declares diagnostic — must be one the sentence's own evidence NAMED.
+ *      *"I have never seen a furnace nor an anvil"* names both of the two
+ *      decisive words in it, and is a list. *"I have never seen a furnace smelt
+ *      ore into bright copper"* names `furnace` and `smelt` and then carries
+ *      `ore` and `copper` past them: it is describing what a furnace DOES, and
+ *      it stays a full leak. A word the lexicon has never heard of —
+ *      `tinderbox`, `equinox` — is ordinary unsupplied vocabulary and costs
+ *      nothing, which is the whole point of the class.
+ */
+function isPureDisavowal(
+  evidence: LeakEvidence,
+  asSpoken: string,
+  disavowals: readonly string[],
+  supplied: ReadonlySet<string>,
+  mechanism: ReadonlySet<string>,
+  namedHere: ReadonlySet<string> | undefined,
+): boolean {
+  if (evidence.kind !== 'claim') return false;
+  if (mechanism.has(evidence.detail)) return false;
+  if (disavowalIn(evidence.detail, disavowals) === undefined) return false;
+  // A LIST OR A DESCRIPTION. "a furnace nor an anvil" joins two names with a
+  // list word; "a furnace smelt ore INTO bright copper" joins them with a
+  // preposition of process, and a preposition of process is a mechanism
+  // whatever frame it wears. English grammar lives in `disavowal.ts` for the
+  // same reason, and a world whose lexicon is not English supplies its own.
+  for (const token of asSpoken.split(/[^\p{L}\p{N}]+/u)) {
+    if (RELATIONAL.has(token.toLowerCase())) return false;
+  }
+  for (const token of evidence.detail.split(/[^\p{L}\p{N}]+/u)) {
+    const word = token.toLowerCase();
+    const stem = stemWord(token);
+    if (!stem || stem.length <= 2) continue;
+    if (supplied.has(stem)) continue;
+    if (!DECISIVE_SURFACES.has(word) && !DECISIVE_SURFACES.has(stem)) continue;
+    if (namedHere?.has(stem) === true) continue;
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Words that turn a list of names into an account of a process. Deliberately
+ * NOT the whole preposition list: `of`, `in`, `at` and `to` appear in ordinary
+ * noun phrases ("a letter of the alphabet"), so only the connectives that
+ * carry a happening are here.
+ */
+const RELATIONAL = new Set([
+  'into', 'onto', 'unto', 'upon', 'from', 'until', 'till', 'through', 'across', 'toward', 'towards',
+  'with', 'without', 'against', 'beneath', 'between', 'among', 'over', 'under', 'after', 'before',
+  'while', 'when', 'whenever', 'because', 'since', 'so', 'thus', 'therefore', 'then', 'unless',
+  'whereby', 'via', 'using', 'than', 'makes', 'made', 'make', 'turns', 'becomes',
+]);
 
 // ─── Rule 1: the echo is not evidence ────────────────────────────────────────
 

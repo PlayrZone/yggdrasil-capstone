@@ -73,8 +73,8 @@ export { buildBaselinePrompt, buildBaselineInterviewPrompt, DEFAULT_PERSONA, BAS
 export type { BaselinePersona } from './baseline/prompt.js';
 
 // ── Objective metrics ────────────────────────────────────────────────────────
-export { computeArmMetrics, metricValues, ANSWER_WINDOW_TICKS } from './metrics.js';
-export type { ArmMetrics, ArmObservation, MetricValue } from './metrics.js';
+export { computeArmMetrics, metricValues, integrityBreaches, ANSWER_WINDOW_TICKS, INTEGRITY_THRESHOLDS } from './metrics.js';
+export type { ArmIntegrity, ArmMetrics, ArmObservation, MetricValue } from './metrics.js';
 
 // ── Blinding ─────────────────────────────────────────────────────────────────
 export { buildTraces, blindTraces, renderTrace, traceFeatures, SealedTraceKey } from './trace.js';
@@ -87,11 +87,22 @@ export type { TracePair, PairPlacement, PairingResult, PairingManifest } from '.
 export { MockTraceJudge, LlmTraceJudge, TRACE_CRITERIA } from './judge.js';
 export type { ITraceJudge, TraceJudgement, TraceCriterion, Side, MockTraceJudgeOptions } from './judge.js';
 export { judgeTraces, swapArmLabels } from './aggregate.js';
-export type { JudgeAggregate, PairOutcome, CriterionTally, PositionCheck, AggregateOptions } from './aggregate.js';
+export type {
+  JudgeAggregate,
+  PairOutcome,
+  CriterionTally,
+  PositionCheck,
+  AggregateOptions,
+  ExploratoryGate,
+  RunAttestation,
+} from './aggregate.js';
 export {
   wilsonInterval,
   exactBinomialTwoSided,
   pairedBootstrap,
+  signFlipPermutation,
+  minimumPairedSeeds,
+  MIN_PAIRED_SEEDS,
   minimumDetectableEffect,
   minimumDetectableWins,
   pairsForSweep,
@@ -100,6 +111,9 @@ export {
   normalQuantile,
   studentTQuantile,
   JUDGE_GATE,
+  JUDGE_GATE_HASH,
+  hashJudgeGate,
+  judgeGateOverrides,
   judgeGatePower,
   judgeGateDesign,
   pairsForJudgePower,
@@ -108,10 +122,12 @@ export type {
   Interval,
   PairedSample,
   PairedResult,
+  PermutationTest,
   BootstrapOptions,
   DesignPower,
   JudgeDesignPower,
   JudgeGateRule,
+  JudgeGateConditions,
   JudgeGatePower,
   JudgeGateDesign,
   MultipleComparisonNote,
@@ -133,6 +149,7 @@ export {
   ADVERSARIAL_PROFILES,
   HONEST_STRATEGIES,
   LEAKING_STRATEGIES,
+  TIER2_BLIND_STRATEGIES,
   adversarialInterviewees,
   scriptedInterviewee,
 } from './probeMocks.js';
