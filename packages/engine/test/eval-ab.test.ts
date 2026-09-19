@@ -5,6 +5,7 @@ import {
   buildThinkPrompt,
   carriesEpistemicInstruction,
   contrastsFor,
+  epistemicFactorDiff,
   foragerAdapter,
   runAb,
   stripEpistemicInstruction,
@@ -31,7 +32,10 @@ import type { AbSpec, ArmSpec, PreRegisteredQuestion, ThinkPrompt } from '../src
 const world = foragerAdapter;
 const faithful = { kind: 'mock', mind: 'faithful' } as const;
 const omniscient = { kind: 'mock', mind: 'omniscient' } as const;
-const SPEC: AbSpec = { seeds: ['w1e-ab'], ticks: 480, cohortSize: 4, agentCount: 16 };
+// The blinding secret is injected because these tests assert reproducible
+// HANDLES. In a real run it is drawn fresh from the host's CSPRNG and never
+// published — see `test/eval-blinding.test.ts`.
+const SPEC: AbSpec = { seeds: ['w1e-ab'], ticks: 480, cohortSize: 4, agentCount: 16, blindSecret: 'ab-test-secret' };
 const AB: ArmSpec[] = [
   { id: 'A', backend: faithful },
   { id: 'B', backend: omniscient },
@@ -61,6 +65,42 @@ describe('W1-E · the epistemic instruction is a factor, not a property of an ar
     // The ablation is not silently a no-op when the prompt is reworded.
     const reworded: ThinkPrompt = { system: 'nothing of the kind here', user: '' };
     expect(() => stripEpistemicInstruction(reworded)).toThrow(/cannot find the line it removes/);
+  });
+
+  it('says exactly what differs between the two ablations, because it is NOT verbatim', () => {
+    const diff = epistemicFactorDiff();
+    // eslint-disable-next-line no-console
+    console.log(
+      [
+        '',
+        'the epistemic factor, diffed (embedded in eval/README.md):',
+        '  removed from A (A−):',
+        ...diff.removedFromA.split('\n').map((l) => `    ${l}`),
+        '  given to B+:',
+        ...diff.givenToBPlus.split('\n').map((l) => `    ${l}`),
+        `  only in A's wording:  ${diff.onlyInA.join(', ')}`,
+        `  only in B+'s wording: ${diff.onlyInBPlus.join(', ')}`,
+        ...diff.readings.map((r) => `  ${r.contrast.padEnd(8)} isolates ${r.isolates} — BUT ${r.caveat}`),
+      ].join('\n'),
+    );
+
+    // ROUND 2's README SAID "added, VERBATIM". It is not, and the 2×2 is
+    // therefore not orthogonal: A→A− and B→B+ move different factor levels.
+    expect(diff.identical).toBe(false);
+    expect(diff.onlyInA).toContain('stories');
+    expect(diff.onlyInA).toContain('memories');
+    expect(diff.onlyInA).toContain('people');
+    expect(diff.onlyInBPlus).toContain('remember');
+    // Both versions still carry the part that does the work, or the factor is
+    // not one factor at all.
+    for (const shared of ['You have no knowledge of the world beyond this.', 'Do not invent facts.']) {
+      expect(diff.givenToBPlus).toContain(shared);
+      expect(diff.removedFromA.replace(/\n/g, ' ')).toContain(shared);
+    }
+    // Every contrast states what it CANNOT attribute, beside what it can.
+    expect(diff.readings).toHaveLength(5);
+    for (const reading of diff.readings) expect(reading.caveat.length).toBeGreaterThan(0);
+    expect(diff.readings.find((r) => r.contrast === 'A vs B+')!.caveat).toContain('not the same text');
   });
 
   it('names every contrast the arms present can support', () => {
@@ -114,7 +154,7 @@ describe('W1-E · the epistemic instruction is a factor, not a property of an ar
 });
 
 describe('W1-E · seeds, pairing and pre-registration', () => {
-  it('is deterministic given the backends', async () => {
+  it('is deterministic given the backends and an injected blinding secret', async () => {
     const one = await runAb({ ...SPEC }, { arms: AB });
     const two = await runAb({ ...SPEC }, { arms: AB });
     if (!one.usable || !two.usable) throw new Error('no verdict');
@@ -122,7 +162,15 @@ describe('W1-E · seeds, pairing and pre-registration', () => {
     expect(two.contrasts).toEqual(one.contrasts);
     expect(two.traces.map((t) => t.text)).toEqual(one.traces.map((t) => t.text));
     expect(two.traces.map((t) => t.traceId)).toEqual(one.traces.map((t) => t.traceId));
-  }, 180_000);
+    // The BEHAVIOUR is deterministic; the blinding is not, unless a caller asks
+    // for it to be. Without the secret the same run draws different handles,
+    // which is the whole of the P3 fix and is measured in eval-blinding.
+    const { blindSecret: _omitted, ...unkeyed } = SPEC;
+    const free = await runAb(unkeyed, { arms: AB });
+    if (!free.usable) throw new Error('no verdict');
+    expect(free.traces.map((t) => t.text).sort()).toEqual(one.traces.map((t) => t.text).sort());
+    expect(free.traces.map((t) => t.traceId)).not.toEqual(one.traces.map((t) => t.traceId));
+  }, 240_000);
 
   it('computes one difference PER SEED and carries an interval only when it has one', async () => {
     const single = await runAb({ ...SPEC, seeds: ['s1'] }, { arms: AB });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blindTraces, foragerAdapter, judgeTraces, pairTraces, runAb, wilsonInterval } from '../src/index.js';
+import { blindTraces, foragerAdapter, judgeTraces, pairTraces, runAb, verifyCommitment, wilsonInterval } from '../src/index.js';
 import type { ArmId, BlindTrace, RawBeingTrace, SealedTraceKey, TraceJudgement, TracePair } from '../src/index.js';
 
 /**
@@ -39,7 +39,9 @@ import type { ArmId, BlindTrace, RawBeingTrace, SealedTraceKey, TraceJudgement, 
  */
 
 const world = foragerAdapter;
-const SPEC = { seeds: ['w1e-blind'], ticks: 900, cohortSize: 6, agentCount: 16 } as const;
+/** Tests are entitled to know the answer; a run is not entitled to a guessable one. */
+const SECRET = '0f1e2d3c4b5a69788796a5b4c3d2e1f0';
+const SPEC = { seeds: ['w1e-blind'], ticks: 900, cohortSize: 6, agentCount: 16, blindSecret: SECRET } as const;
 const MOCK_A = { id: 'A' as const, backend: { kind: 'mock', mind: 'faithful' } as const };
 const MOCK_B = { id: 'B' as const, backend: { kind: 'mock', mind: 'omniscient' } as const };
 
@@ -195,8 +197,8 @@ describe('W1-E · the handle carries no information', () => {
   it('sits at chance on identical lives — and wins outright once round 1\'s handles are put back', () => {
     const lives = identicalLives(6);
 
-    const clean = blindTraces(lives, world, { seed: 'handle-check', minMoments: 1 });
-    const planted = blindTraces(lives, world, { seed: 'handle-check', minMoments: 1, plantTell: 'ordered' });
+    const clean = blindTraces(lives, world, { seed: 'handle-check', secret: SECRET, minMoments: 1 });
+    const planted = blindTraces(lives, world, { seed: 'handle-check', secret: SECRET, minMoments: 1, plantTell: 'ordered' });
 
     const cleanAccuracy = looAccuracy(rowsOf(clean.traces, clean.key, metadataFeatures), ['A', 'B']);
     const plantedAccuracy = looAccuracy(rowsOf(planted.traces, planted.key, metadataFeatures), ['A', 'B']);
@@ -219,7 +221,7 @@ describe('W1-E · the handle carries no information', () => {
   });
 
   it('refuses to hand a handle to the text of a real trace', () => {
-    const { traces } = blindTraces(identicalLives(3), world, { seed: 'no-handle', minMoments: 1 });
+    const { traces } = blindTraces(identicalLives(3), world, { seed: 'no-handle', secret: SECRET, minMoments: 1 });
     for (const trace of traces) {
       expect(trace.text).not.toContain(trace.traceId);
       expect(trace.traceId).toMatch(/^trace-[0-9a-z]{6}$/);
@@ -315,8 +317,13 @@ describe('W1-E · format tells on a real run', () => {
     // Round 1's order was every A and then every B — two blocks.
     const blocks = sequence.filter((arm, at) => at === 0 || arm !== sequence[at - 1]).length;
     expect(blocks).toBeGreaterThan(2);
-    expect(result.manifest.blinding.scheme).toBe('seeded-permutation/opaque-handle');
-    expect(result.manifest.blinding.handleSeed).toBe('w1e-blind');
+    expect(result.manifest.blinding.scheme).toBe('sealed-secret-permutation/opaque-handle');
+    expect(result.manifest.blinding.publicSeed).toBe('w1e-blind');
+    // The manifest carries a COMMITMENT, never the key. Round 2's `handleSeed`
+    // WAS the key: it is gone, and nothing has replaced it.
+    expect(result.manifest.blinding.commitment).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(result.manifest)).not.toContain(SECRET);
+    expect(Object.keys(result.manifest.blinding)).not.toContain('handleSeed');
   }, 120_000);
 
   it('prints the same lines in the same order every moment, whatever happened', async () => {
@@ -335,7 +342,122 @@ describe('W1-E · format tells on a real run', () => {
   }, 120_000);
 });
 
-// ─── 3. The seal ─────────────────────────────────────────────────────────────
+// ─── 3. The permutation is not re-derivable from anything published ──────────
+
+/**
+ * ROUND 2's ATTACK, AS A FUNCTION. The reviewer re-ran the PUBLIC `blindTraces`
+ * on a dummy pool of the same size, in the documented pooled-arm order, with
+ * the seed the manifest printed — and recovered 8 of 8 arms by position,
+ * without ever touching the key.
+ *
+ * It takes only what a run PUBLISHES, plus optionally a secret, so the same
+ * function proves both halves: with the secret it still recovers everything
+ * (the blinding really is only as strong as the secret), and with everything
+ * the artefacts contain it is at chance.
+ */
+function attackByReblinding(
+  published: { publicSeed: string; traces: number; armsInOrder: readonly ArmId[] },
+  secret: string | undefined,
+): number {
+  const half = Math.floor(published.traces / 2);
+  // The documented pooled order: arm A's traces, then arm B's.
+  const dummy = identicalLives(half);
+  const guess = blindTraces(dummy, world, {
+    seed: published.publicSeed,
+    ...(secret !== undefined ? { secret } : {}),
+    minMoments: 1,
+  });
+  const guessed = guess.key.unseal().map((k) => k.arm);
+  let correct = 0;
+  for (let at = 0; at < Math.min(guessed.length, published.armsInOrder.length); at++) {
+    if (guessed[at] === published.armsInOrder[at]) correct++;
+  }
+  return correct;
+}
+
+describe('W1-E · the blinding cannot be inverted by anyone holding the result', () => {
+  it('is recovered 100% by the secret and at chance by every published artefact', async () => {
+    const result = await runAb({ ...SPEC, cohortSize: 4 }, { arms: [MOCK_A, MOCK_B] });
+    if (!result.usable) throw new Error(result.reason);
+    const truth = result.key.unseal().map((k) => k.arm);
+    const n = result.traces.length;
+    expect(n).toBeGreaterThanOrEqual(6);
+
+    // EVERYTHING A READER IS HANDED: the result object as it serialises, the
+    // manifest, the blinded traces with their text and features, the spend and
+    // ceiling lines, the integrity block. `subjects` and `sentPrompts` are
+    // arm-keyed by construction and are not a blinding question.
+    const published = JSON.stringify({
+      manifest: result.manifest,
+      traces: result.traces,
+      perSeed: result.perSeed,
+      contrasts: result.contrasts,
+      integrity: result.integrity,
+      // A reader holding the live object stringifies the whole thing, key and
+      // all. `SealedTraceKey.toJSON` is what keeps that honest.
+      key: result.key,
+    });
+    expect(published).not.toContain(SECRET);
+    expect(published).not.toMatch(/"(secret|handleSeed)"/);
+    expect(published).toContain(result.manifest.blinding.commitment);
+
+    const holder = { publicSeed: result.manifest.blinding.publicSeed, traces: n, armsInOrder: truth };
+    // WITH THE SECRET: total recovery. The blinding is exactly as strong as the
+    // secret and no stronger, and a test that could not show that would not be
+    // evidence of anything.
+    expect(attackByReblinding(holder, SECRET)).toBe(n);
+
+    // WITHOUT IT: the attacker may try as often as they like. Pooled over many
+    // attempts, a re-blinding recovers arms at chance.
+    let correct = 0;
+    const attempts = 300;
+    for (let i = 0; i < attempts; i++) correct += attackByReblinding(holder, undefined);
+    const accuracy = correct / (attempts * n);
+    const interval = wilsonInterval(correct, attempts * n);
+    // eslint-disable-next-line no-console
+    console.log(
+      `blinding/attacker: with the secret ${n}/${n} (1.000) · from the published artefacts ` +
+        `${accuracy.toFixed(3)} Wilson [${interval.low}, ${interval.high}] over ${attempts * n} predictions`,
+    );
+    expect(interval.low).toBeLessThanOrEqual(0.5);
+    expect(interval.high).toBeGreaterThanOrEqual(0.5);
+  }, 180_000);
+
+  it('discloses the secret only after unsealing, and the commitment then verifies', async () => {
+    const result = await runAb({ ...SPEC, cohortSize: 3 }, { arms: [MOCK_A, MOCK_B] });
+    if (!result.usable) throw new Error(result.reason);
+    // Before: a sealed key that answers questions is not sealed.
+    expect(() => result.key.disclose()).toThrow(/only after unseal/);
+
+    const before = result.traces.map((t) => t.traceId);
+    result.key.unseal();
+    const { secret, commitment } = result.key.disclose();
+    expect(commitment).toBe(result.manifest.blinding.commitment);
+    expect(verifyCommitment(secret, commitment)).toBe(true);
+    expect(verifyCommitment('not-the-secret', commitment)).toBe(false);
+
+    // AUDITABILITY: with the disclosed secret, the same run reproduces the same
+    // handles in the same order — so "the handles were shuffled by something
+    // you did not have" is checkable rather than promised.
+    const again = await runAb({ ...SPEC, cohortSize: 3, blindSecret: secret }, { arms: [MOCK_A, MOCK_B] });
+    if (!again.usable) throw new Error(again.reason);
+    expect(again.traces.map((t) => t.traceId)).toEqual(before);
+  }, 180_000);
+
+  it('draws a different permutation every run when nothing is injected', async () => {
+    const spec = { seeds: ['w1e-blind'], ticks: 480, cohortSize: 4, agentCount: 16 } as const;
+    const one = await runAb({ ...spec }, { arms: [MOCK_A, MOCK_B] });
+    const two = await runAb({ ...spec }, { arms: [MOCK_A, MOCK_B] });
+    if (!one.usable || !two.usable) throw new Error('no verdict');
+    // Same world, same seeds, same behaviour — different handles, because the
+    // secret is fresh. Round 2's handles were a function of the run seed.
+    expect(two.traces.map((t) => t.text).sort()).toEqual(one.traces.map((t) => t.text).sort());
+    expect(two.traces.map((t) => t.traceId)).not.toEqual(one.traces.map((t) => t.traceId));
+    expect(two.manifest.blinding.commitment).not.toBe(one.manifest.blinding.commitment);
+  }, 180_000);
+});
+
+// ─── 4. The seal ─────────────────────────────────────────────────────────────
 
 describe('W1-E · the key is sealed until every judgement is recorded', () => {
   it('is never unsealed while a judge is being asked, and a pair carries no arm', async () => {

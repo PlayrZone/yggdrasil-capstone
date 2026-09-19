@@ -114,7 +114,11 @@ describe('the eval tools are registered and free by default', () => {
       budget: unknown;
       perSeed: { metrics: Record<string, { thinks: number }> }[];
       contrasts: { label: string; primary: { metric: string } | null; exploratory: unknown[] }[];
-      manifest: { arms: { id: string; paid: boolean }[]; ceiling: unknown; blinding: { scheme: string } };
+      manifest: {
+        arms: { id: string; paid: boolean }[];
+        ceiling: unknown;
+        blinding: { scheme: string; publicSeed: string; commitment: string };
+      };
       traceCount: number;
       traces: { traceId: string }[];
     };
@@ -127,10 +131,21 @@ describe('the eval tools are registered and free by default', () => {
     expect(value.contrasts[0]!.primary?.metric).toBe('planSuccessRate');
     expect(value.contrasts[0]!.exploratory.length).toBeGreaterThan(5);
     expect(value.manifest.arms.every((a) => a.paid === false)).toBe(true);
-    expect(value.manifest.blinding.scheme).toBe('seeded-permutation/opaque-handle');
+    expect(value.manifest.blinding.scheme).toBe('sealed-secret-permutation/opaque-handle');
     expect(value.traceCount).toBeGreaterThan(0);
     expect(audits).toHaveLength(0);
     expect(fetchCalls).toBe(0);
+
+    // P3. THE TOOL OUTPUT IS AN ARTEFACT LIKE ANY OTHER, and a reader holding
+    // it must not be able to re-derive the permutation. Round 2 returned the
+    // manifest beside the traces with `handleSeed` in it — the key to the
+    // blinding — and re-running the public `blindTraces` with it recovered 8 of
+    // 8 arms. What ships now is a commitment and nothing else.
+    expect(value.manifest.blinding.commitment).toMatch(/^[0-9a-f]{64}$/);
+    const json = JSON.stringify(value);
+    expect(json).not.toMatch(/"(secret|blindSecret|handleSeed)"/);
+    // …and no arm label travels with any handle.
+    for (const trace of value.traces) expect(json).not.toContain(`"${trace.traceId}":"A"`);
   }, 90_000);
 
   it('runs the four-arm decomposition when asked for it', async () => {
@@ -169,7 +184,15 @@ describe('the eval tools are registered and free by default', () => {
       usableForVerdict: boolean;
       position: { biased: boolean; leftRate: number };
       pairing: { balancedPlacement: boolean };
-      whatThisManyPairsCouldDecide: { underpowered: boolean };
+      whatThisManyPairsCouldDecide: {
+        underpowered: boolean;
+        pairs: number;
+        decisivePairs: number;
+        minimumWins: number | null;
+        power: number;
+        typeIError: number;
+      };
+      ifEveryPairHadBeenDecisive: { minimumWins: number | null };
     };
     expect(value.judge).toBe('mock-feature-judge');
     expect(value.showings).toBe(value.pairs * 2);
@@ -182,6 +205,18 @@ describe('the eval tools are registered and free by default', () => {
     // three pairs cannot reach significance whatever they say.
     expect(value.whatThisManyPairsCouldDecide.underpowered).toBe(true);
     expect(value.usableForVerdict).toBe(false);
+    // P2. The sizing the tool prints is now the sizing the verdict USED: the
+    // threshold is over DECISIVE pairs, not over every pair judged. Round 2
+    // printed `minimumDetectableWins(pairs)` here and gated on it, which is a
+    // threshold for a count the verdict never computed.
+    const design = value.whatThisManyPairsCouldDecide;
+    expect(design.decisivePairs).toBeLessThanOrEqual(design.pairs);
+    expect(design.typeIError).toBeLessThanOrEqual(0.05);
+    // At three pairs the power at the declared effect is exactly ZERO — no
+    // outcome of this design could ever print USABLE — and the tool says so in
+    // a number rather than leaving the caller to work it out from `underpowered`.
+    expect(design.power).toBe(0);
+    expect(value.ifEveryPairHadBeenDecisive.minimumWins).toBe(null);
   }, 90_000);
 });
 

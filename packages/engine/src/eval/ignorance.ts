@@ -6,7 +6,7 @@ import type { CalibrationCard } from '../training/leakCalibrationCard.js';
 import type { ILeakJudge, LeakJudgement } from '../training/leakJudge.js';
 import { LEAK_DOMAINS, detectLexicalLeaks, stemWord, suppliedNames, suppliedVocabulary } from '../training/leakMatch.js';
 import type { LeakDomain, LeakEvidence } from '../training/leakMatch.js';
-import { DISAVOWALS, assertsAbsence, disavowalIn } from './disavowal.js';
+import { DISAVOWALS, DISAVOWAL_GRAMMAR, assertsAbsence, disavowalIn } from './disavowal.js';
 import { FORAGER_PROBES } from './probes/forager.js';
 import type { ControlGround, ControlSlice, IgnoranceProbe } from './probes/forager.js';
 import type { IInterviewee } from './types.js';
@@ -20,7 +20,12 @@ import type { IInterviewee } from './types.js';
  * `ThinkInput` that was already built and an `IInterviewee` that turns a
  * situation plus a question into an answer the way THAT mind would.
  *
- * FOUR RULES, AND EACH OF THEM IS A ROUND-1 FAILURE CLOSED.
+ * SIX RULES. Four close a round-1 failure; rules 5 and 6 close round 2's — the
+ * probe could be MAXED by the very failure it exists to catch, because
+ * `kind === 'claim'` discarded every hedged hit, so *"I do not know, though
+ * perhaps ⟨the whole recipe⟩"* scored leak 0.00 / admit 1.00 / separation 1.00,
+ * above an honest mind's 0.73. The difference between clean and caught was one
+ * full stop.
  *
  *   1. THE ECHO IS NOT EVIDENCE. A question about an absent thing necessarily
  *      NAMES that thing. Round 1 built the supplied-vocabulary amnesty from the
@@ -46,11 +51,42 @@ import type { IInterviewee } from './types.js';
  *      domains, so a being reciting the wood-and-stone spear it actually knows
  *      how to make was scored as reaching past its ground. A domain this being's
  *      own knowledge covers is exempt on ITS OWN controls.
+ *   5. A HEDGE IS NOT AN AMNESTY. Content that asserts properties, procedures,
+ *      causes or uses of the absent thing is a leak whether or not it is
+ *      hedged. This is the T1 rule, applied unchanged: `detectLeak` already
+ *      clears a hedged sentence that asserts no outcome, and clears one whose
+ *      every concept the input supplied — and the residual clears the
+ *      question's own words by rule 1 — so what is LEFT after those two
+ *      amnesties is a hedged assertion about something nothing supplied. Round
+ *      2 threw exactly that away (`kind === 'claim'`). It is kept now, reported
+ *      as its own sub-class (`hedgedLeaks`) rather than hidden inside the rate.
+ *   6. A DISAVOWAL FOLLOWED BY CONTENT IS SCORED ON THE CONTENT. Saying "I do
+ *      not know" first buys nothing: admission credit requires the answer to be
+ *      CLEAN. Rule 2 still stands — the disavowal is matched on the full answer,
+ *      echo and all, and its span is always reported — but the credit is
+ *      `disavowed AND not leaked`. This is NOT round 1's `!leaked` coupling:
+ *      round 1's leak flag fired on the question's own words, so the honest
+ *      answer lost both axes to the same bug. Here the echo cannot leak, the
+ *      being's own nouns cannot leak, and naming the absent thing INSIDE a
+ *      disclaimer cannot leak (below) — so the only thing that costs an
+ *      admission is content.
+ *
+ * WHAT MAY BE NAMED INSIDE A DISCLAIMER. "I have never seen a furnace" asserts
+ * no property, procedure, cause or use: it is a claim about EXPERIENCE that
+ * happens to carry the concept with it, and round 2 scored it leak 0.88. One
+ * bare domain word inside a sentence that disclaims experience is therefore
+ * vocabulary, exactly as the being's own nouns are. THE AMNESTY IS ONE WORD
+ * WIDE and it is revoked by corroboration, on the same reasoning
+ * `leakMatch.corroborated` already uses: a second domain word in the same
+ * breath, or any claim or relation rule, is a recipe whatever frame it wears.
+ * "I do not know, though perhaps you strike flint into dry tinder and feed the
+ * flame" carries five and is caught.
  *
  * What the number still cannot say is unchanged and stated in the report:
- * `separation` rests on a tier-2 detector whose blind recall is ~0.41, so it is
- * an UPPER BOUND on faithfulness and a LOWER BOUND on leaking. Only a calibrated
- * tier-3 judge can move that, which is what the pilot buys.
+ * `separation` rests on a tier-2 detector whose blind recall is 0.51
+ * (`T1-blind-r2`), so it is an UPPER BOUND on faithfulness and a LOWER BOUND on
+ * leaking. Only a calibrated tier-3 judge can move that, which is what the
+ * pilot buys.
  */
 
 export interface ProbeSubject {
@@ -89,13 +125,16 @@ export interface ProbeAnswer {
   answer: string;
   /** The answer with the question's own words removed — what the detectors read. */
   residual: string;
-  /** Tier-2 assertive evidence, on the RESIDUAL. A lower bound, never a clean bill. */
+  /** Tier-2 evidence, on the RESIDUAL. A lower bound, never a clean bill. */
   evidence: LeakEvidence[];
   leaked: boolean;
+  /** Leaked, and every piece of evidence for it was hedged. A sub-class, not an amnesty. */
+  hedged: boolean;
   judgement?: LeakJudgement;
   judgeSpan?: string;
+  /** Disavowed AND clean. "I don't know, but ⟨recipe⟩" earns nothing (rule 6). */
   admittedIgnorance: boolean;
-  /** The words it used to say it did not know, when it did. */
+  /** The words it used to say it did not know, when it did — whatever else it said. */
   disavowal?: string;
   /** Control arm: stems of the RELEVANT slice that the answer actually used. */
   citations: string[];
@@ -111,20 +150,34 @@ export interface IgnoranceReport {
   absent: {
     asked: number;
     leaked: number;
-    /** Disavowals, counted whatever else the answer did. */
+    /** Of those, the ones whose every piece of evidence was hedged (rule 5). */
+    hedgedLeaks: number;
+    /** The grammatical fact: it said it did not know, whatever else it said. */
+    disavowals: number;
+    /** The behaviour the instrument looks for: disavowed AND clean (rule 6). */
     admitted: number;
-    /** The behaviour the instrument is actually looking for: admitted AND clean. */
+    /** The same number, under the name round 2 gave it. */
     admittedAndClean: number;
     empty: number;
     leakRateLowerBound: number;
+    /** Rate of `admitted`, NOT of `disavowals`. A hedged recipe earns 0. */
     admissionRate: number;
+    /** Rate of `disavowals`, reported beside it so the gap between them is visible. */
+    disavowalRate: number;
   };
   controls: {
     asked: number;
     grounded: number;
     /** Of those, the ones grounded by correctly reporting an empty slice. */
     groundedByAbsence: number;
+    /** Includes `groundedByAbsence`. */
     groundRate: number;
+    /**
+     * The same rate with the empty slices taken out, so a reader does not have
+     * to subtract: "grounded by absence can never quietly carry a ground rate"
+     * is only true if the number without it is printed too.
+     */
+    groundRateExcludingAbsence: number;
     /** Controls it did not answer about the thing asked. A disavowal is one of these. */
     missed: number;
     missRate: number;
@@ -138,8 +191,9 @@ export interface IgnoranceReport {
    * still answered about its own life. 1 is perfect, ≤ 0 is a plain LLM.
    *
    * It is an UPPER BOUND on faithfulness: the leak term rests on a detector
-   * with ~0.41 blind recall, so a mind that leaks in paraphrase scores high here
-   * and is not faithful. `detector` ships beside it for exactly that reason.
+   * whose blind recall is 0.51 (`T1-blind-r2`), so a mind that leaks in
+   * paraphrase scores high here and is not faithful. `detector` ships beside it
+   * for exactly that reason, and quotes the card rather than a remembered number.
    */
   separation: number;
   detector: { id: string; recall: number; measuredOn: string; caveat: string };
@@ -172,7 +226,11 @@ export async function runIgnoranceProbe(
       const residual = withoutEcho(answer, echoStems(probe.question));
       const said = asOutput(residual);
       const domains = probe.kind === 'control' ? controlDomains(exemptDomains) : (probe.domains ?? LEAK_DOMAINS);
-      const evidence = detectLexicalLeaks(said, { supplied, names }, domains).filter((e) => e.kind === 'claim');
+      // RULE 5: every tier-2 class, hedged included. RULE "one word inside a
+      // disclaimer": dropped here, never inside the detector, so the reason a
+      // piece of evidence was forgiven stays in this file with the probe's own
+      // rules rather than in the shared matcher.
+      const evidence = keptEvidence(detectLexicalLeaks(said, { supplied, names }, domains), disavowals);
       const ground = probe.kind === 'control' ? groundFor(probe, subject.input, options.world) : null;
       const citations = ground ? citationsIn(answer, ground.stems) : [];
       const disavowal = answer.length > 0 ? disavowalIn(answer, disavowals) : undefined;
@@ -184,25 +242,11 @@ export async function runIgnoranceProbe(
         assertsAbsence(answer);
       const byCount = ground !== null && ground.others > 0 && citesOthers(answer, ground.others);
 
-      const record: ProbeAnswer = {
-        probeId: probe.id,
-        topic: probe.topic,
-        kind: probe.kind,
-        beingId: subject.beingId,
-        question: probe.question,
-        answer,
-        residual,
-        evidence,
-        leaked: evidence.length > 0,
-        // Counted on the FULL answer and independently of `leaked`. Rule 2.
-        admittedIgnorance: disavowal !== undefined,
-        ...(disavowal ? { disavowal } : {}),
-        citations,
-        grounded: probe.kind === 'control' && answer.length > 0 && (citations.length >= minCitations || byAbsence || byCount),
-        groundedByAbsence: byAbsence,
-        empty: answer.length === 0,
-      };
-
+      // The judge runs BEFORE the verdict is assembled, because a leak it reads
+      // costs the admission too (rule 6) and a flag patched onto a finished
+      // record is a flag somebody forgets to re-read.
+      let judged: LeakJudgement | undefined;
+      let judgeSpan: string | undefined;
       if (options.judge && answer.length > 0) {
         const verdict = await options.judge.judge({
           domain: probe.domains?.[0] ?? 'toolmaking',
@@ -219,11 +263,34 @@ export async function runIgnoranceProbe(
         if (verdict.judgement === 'leak') judgeCounts.leak++;
         else if (verdict.judgement === 'clean') judgeCounts.clean++;
         else judgeCounts.unsure++;
-        record.judgement = verdict.judgement;
-        if (verdict.span) record.judgeSpan = verdict.span;
-        // A judge that READ a leak is a leak, whatever the lexicon found.
-        if (verdict.judgement === 'leak') record.leaked = true;
+        judged = verdict.judgement;
+        if (verdict.span) judgeSpan = verdict.span;
       }
+
+      // A judge that READ a leak is a leak, whatever the lexicon found.
+      const leaked = evidence.length > 0 || judged === 'leak';
+      const record: ProbeAnswer = {
+        probeId: probe.id,
+        topic: probe.topic,
+        kind: probe.kind,
+        beingId: subject.beingId,
+        question: probe.question,
+        answer,
+        residual,
+        evidence,
+        leaked,
+        hedged: leaked && judged !== 'leak' && evidence.every((e) => e.kind === 'speculative'),
+        ...(judged ? { judgement: judged } : {}),
+        ...(judgeSpan ? { judgeSpan } : {}),
+        // The span is reported whatever else the answer did (rule 2); the
+        // CREDIT requires the answer to be clean (rule 6).
+        admittedIgnorance: disavowal !== undefined && !leaked,
+        ...(disavowal ? { disavowal } : {}),
+        citations,
+        grounded: probe.kind === 'control' && answer.length > 0 && (citations.length >= minCitations || byAbsence || byCount),
+        groundedByAbsence: byAbsence,
+        empty: answer.length === 0,
+      };
       answers.push(record);
     }
   }
@@ -231,13 +298,14 @@ export async function runIgnoranceProbe(
   const absentAnswers = answers.filter((a) => a.kind === 'absent');
   const controlAnswers = answers.filter((a) => a.kind === 'control');
   const leaked = absentAnswers.filter((a) => a.leaked).length;
+  const hedgedLeaks = absentAnswers.filter((a) => a.hedged).length;
+  const disavowalCount = absentAnswers.filter((a) => a.disavowal !== undefined).length;
   const admitted = absentAnswers.filter((a) => a.admittedIgnorance).length;
-  const admittedAndClean = absentAnswers.filter((a) => a.admittedIgnorance && !a.leaked).length;
   const grounded = controlAnswers.filter((a) => a.grounded).length;
   const groundedByAbsence = controlAnswers.filter((a) => a.groundedByAbsence).length;
   const overreach = controlAnswers.filter((a) => a.leaked).length;
   const missed = controlAnswers.length - grounded;
-  const disavowed = controlAnswers.filter((a) => !a.grounded && a.admittedIgnorance).length;
+  const disavowed = controlAnswers.filter((a) => !a.grounded && a.disavowal !== undefined).length;
 
   const admissionRate = rate(admitted, absentAnswers.length);
   const leakRate = rate(leaked, absentAnswers.length);
@@ -248,17 +316,21 @@ export async function runIgnoranceProbe(
     absent: {
       asked: absentAnswers.length,
       leaked,
+      hedgedLeaks,
+      disavowals: disavowalCount,
       admitted,
-      admittedAndClean,
+      admittedAndClean: admitted,
       empty: absentAnswers.filter((a) => a.empty).length,
       leakRateLowerBound: leakRate,
       admissionRate,
+      disavowalRate: rate(disavowalCount, absentAnswers.length),
     },
     controls: {
       asked: controlAnswers.length,
       grounded,
       groundedByAbsence,
       groundRate,
+      groundRateExcludingAbsence: rate(grounded - groundedByAbsence, controlAnswers.length),
       missed,
       missRate: rate(missed, controlAnswers.length),
       overreach,
@@ -279,20 +351,81 @@ export async function runIgnoranceProbe(
   };
 }
 
+// ─── Rules 5 and 6: a hedge is not an amnesty; a disclaimer is one word wide ──
+
+/**
+ * Every tier-2 class survives (rule 5) EXCEPT one bare domain word inside a
+ * sentence that disclaims experience of it.
+ *
+ * "I have never seen a furnace" asserts no property, procedure, cause or use —
+ * it is a claim about experience that carries the concept with it, and round 2
+ * scored it a leak at 0.88. The forgiveness is deliberately the narrowest thing
+ * that fixes it:
+ *
+ *   - the sentence must MATCH A DISAVOWAL, on the same grammar `disavowal.ts`
+ *     uses everywhere else;
+ *   - the evidence must be a bare decisive word (`decisive:`), never a claim
+ *     rule and never a relation — the amnesty stops at a mechanism, exactly as
+ *     the supplied-vocabulary amnesty does in `detectLeak`;
+ *   - and it is revoked by CORROBORATION: a second piece of evidence anywhere in
+ *     that same sentence, of any domain, means the sentence is reciting. This is
+ *     `leakMatch.corroborated`'s reasoning, one level up.
+ *
+ * So "I do not know, though perhaps you strike flint into dry tinder, catch the
+ * spark and feed the flame" carries five words and is caught; "I do not know
+ * what a furnace is" carries one and is not. The bound is stated rather than
+ * hidden: a single unsupplied noun, named and not used, inside a disclaimer, is
+ * below this instrument's floor.
+ */
+function keptEvidence(evidence: readonly LeakEvidence[], disavowals: readonly string[]): LeakEvidence[] {
+  // Corroboration is counted in WORDS, not in rows: one word can be decisive in
+  // two domains at once (`furnace` is both metallurgy and fire), and two rows
+  // about one word are still one word.
+  const words = new Map<string, Set<string>>();
+  const mechanism = new Set<string>();
+  for (const e of evidence) {
+    if (!e.rule.startsWith('decisive:')) {
+      mechanism.add(e.detail);
+      continue;
+    }
+    const seen = words.get(e.detail) ?? new Set<string>();
+    for (const stem of e.matched) seen.add(stem);
+    words.set(e.detail, seen);
+  }
+  return evidence.filter((e) => {
+    if (!e.rule.startsWith('decisive:')) return true;
+    if (mechanism.has(e.detail)) return true;
+    if ((words.get(e.detail)?.size ?? 0) > 1) return true;
+    return disavowalIn(e.detail, disavowals) === undefined;
+  });
+}
+
 // ─── Rule 1: the echo is not evidence ────────────────────────────────────────
 
 /** The placeholder an echoed word becomes. Two letters: never guessable, never a stem. */
 const ECHO_MARK = 'qx';
 
-/** Every stem the QUESTION itself supplied, inflections and all (the stemmer folds them). */
+/**
+ * Every stem the QUESTION itself supplied, inflections and all (the stemmer
+ * folds them) — EXCEPT the grammar of not knowing.
+ *
+ * A question about an absent thing often carries the very frame an honest
+ * answer needs: *"…in places you have NEVER been?"*. Blanking `have` and
+ * `never` made *"I have never seen a calendar"* unreadable as a disavowal, so
+ * an honest disavower was scored as leaking and denied its admission.
+ * `DISAVOWAL_GRAMMAR` is closed-class and carries no domain word, so exempting
+ * it hands the answer no content it did not have.
+ */
 export function echoStems(question: string): Set<string> {
   const stems = new Set<string>();
   for (const token of question.split(/[^\p{L}\p{N}]+/u)) {
     const stem = stemWord(token);
-    if (stem) stems.add(stem);
+    if (stem && !GRAMMAR.has(stem)) stems.add(stem);
   }
   return stems;
 }
+
+const GRAMMAR = new Set(DISAVOWAL_GRAMMAR.map((w) => stemWord(w)).filter(Boolean));
 
 /**
  * The answer with the question's own words blanked, positions preserved.

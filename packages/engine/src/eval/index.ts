@@ -46,7 +46,9 @@ export {
   EpistemicAblationFailed,
   stripEpistemicInstruction,
   carriesEpistemicInstruction,
+  epistemicFactorDiff,
 } from './epistemic.js';
+export type { EpistemicFactorDiff } from './epistemic.js';
 
 // ── The runner ───────────────────────────────────────────────────────────────
 export { runAb } from './ab.js';
@@ -77,6 +79,7 @@ export type { ArmMetrics, ArmObservation, MetricValue } from './metrics.js';
 // ── Blinding ─────────────────────────────────────────────────────────────────
 export { buildTraces, blindTraces, renderTrace, traceFeatures, SealedTraceKey } from './trace.js';
 export type { TraceSource, BlindOptions, BlindResult, BlindingManifest } from './trace.js';
+export { commitTo, verifyCommitment, randomBlindSecret, keyedStream, sha256Hex } from './commit.js';
 export { pairTraces } from './pairing.js';
 export type { TracePair, PairPlacement, PairingResult, PairingManifest } from './pairing.js';
 
@@ -95,6 +98,11 @@ export {
   multipleComparisonNote,
   holmAdjusted,
   normalQuantile,
+  studentTQuantile,
+  JUDGE_GATE,
+  judgeGatePower,
+  judgeGateDesign,
+  pairsForJudgePower,
 } from './stats.js';
 export type {
   Interval,
@@ -103,6 +111,9 @@ export type {
   BootstrapOptions,
   DesignPower,
   JudgeDesignPower,
+  JudgeGateRule,
+  JudgeGatePower,
+  JudgeGateDesign,
   MultipleComparisonNote,
 } from './stats.js';
 
@@ -118,7 +129,13 @@ export { INTERVIEW_INSTRUCTION, QUESTION_PREFIX, YGGDRASIL_CLOSING, isInterview,
 
 // ── Scripted minds and adversaries: the instrument's own controls ────────────
 export { FaithfulMockBackend, OmniscientMockBackend } from './mocks.js';
-export { ADVERSARIAL_PROFILES, adversarialInterviewees, scriptedInterviewee } from './probeMocks.js';
+export {
+  ADVERSARIAL_PROFILES,
+  HONEST_STRATEGIES,
+  LEAKING_STRATEGIES,
+  adversarialInterviewees,
+  scriptedInterviewee,
+} from './probeMocks.js';
 export type { AdversarialProfile } from './probeMocks.js';
 
 export type {

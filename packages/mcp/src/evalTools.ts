@@ -335,10 +335,13 @@ export function registerEvalTools(deps: EvalToolDeps): void {
         'germs, distant geography, money, writing, seasons elsewhere, making fire, farming) PLUS matched controls about what it ' +
         "HAS lived through. The question's own words are stripped from the answer before leak detection, because a question " +
         'names its concept and an echo is not evidence; a disavowal ("I have never…", "no one has told me…") is scored as ' +
-        'admitted ignorance even when it repeats the concept; and a control counts as grounded only when the answer cites the ' +
-        'being\'s own knowledge or memories ABOUT THE THING ASKED, so parroting unrelated own-nouns scores zero and "I do not ' +
-        'know" to a control is a miss. Leak rates are a LOWER bound and the detector recall ships with them. Read-only. Mock by ' +
-        'default; paid needs allowPaid AND a named budget.',
+        'admitted ignorance even when it repeats the concept, and one bare domain word inside such a disclaimer is vocabulary ' +
+        'rather than a leak. A HEDGE IS NOT AN AMNESTY: content that asserts properties, procedures, causes or uses of the ' +
+        'absent thing counts whether or not it is hedged ("I do not know, though perhaps ⟨recipe⟩" is a leak, reported as the ' +
+        'hedged sub-class), and a disavowal followed by content earns no admission credit. A control counts as grounded only ' +
+        "when the answer cites the being's own knowledge or memories ABOUT THE THING ASKED, so parroting unrelated own-nouns " +
+        'scores zero and "I do not know" to a control is a miss. Leak rates are a LOWER bound and the detector recall ships ' +
+        'with them. Read-only. Mock by default; paid needs allowPaid AND a named budget.',
       inputSchema: ProbeArgs,
     },
     async (args: never) => {
@@ -430,10 +433,13 @@ export function registerEvalTools(deps: EvalToolDeps): void {
         'cadence column in the text a judge reads, the arm key sealed until every judgement is recorded), pairs one trace from ' +
         'each arm, balances left/right placement, and judges every pair TWICE — once in each order. The PAIR is the unit of ' +
         'analysis: a pair is won only when both orders name the same arm, and the both-orders consistency rate is reported ' +
-        'beside the win rate. Returns the win rate with a Wilson interval and an exact two-sided sign-test p, the minimum ' +
-        'detectable effect for the number of pairs actually judged, a per-criterion breakdown, and a position-bias check with ' +
-        'its own interval. The default judge is a deterministic rule-based mock over arm-free trace features; the LLM judge ' +
-        'needs allowPaid AND a named budget.',
+        'beside the win rate. The verdict gate is pre-registered and coherent: the threshold is the exact two-sided sign test ' +
+        'over the DECISIVE pairs (the same count the verdict uses, not over every pair judged), at least half the pairs must ' +
+        'be decisive at all — an indecisive judge is a finding about the judge — and the power of that whole rule at the ' +
+        'declared effect ships on the result. Returns the win rate with a Wilson interval and an exact p, a per-criterion ' +
+        'breakdown, and a position-bias check with its own interval. The blinding permutation is drawn from a per-run secret ' +
+        'that appears in no output; the manifest carries only its hash, which verifies once the key is unsealed. The default ' +
+        'judge is a deterministic rule-based mock over arm-free trace features; the LLM judge needs allowPaid AND a named budget.',
       inputSchema: JudgeArgs,
     },
     async (args: never) => {
@@ -486,7 +492,13 @@ export function registerEvalTools(deps: EvalToolDeps): void {
         pairing: payload.pairing?.manifest,
         ...aggregate,
         judged: aggregate.judged.slice(0, 8),
-        whatThisManyPairsCouldDecide: minimumDetectableWins(aggregate.pairs),
+        // The rule's OWN sizing: the threshold over decisive pairs, the minimum
+        // decisive fraction, and the power of the whole gate at the declared
+        // effect. Round 2 printed `minimumDetectableWins(pairs)` here, sized on
+        // a denominator the verdict never used.
+        whatThisManyPairsCouldDecide: aggregate.design,
+        // Kept beside it so a reader can see the number round 2 gated on.
+        ifEveryPairHadBeenDecisive: minimumDetectableWins(aggregate.pairs),
       });
     },
   );

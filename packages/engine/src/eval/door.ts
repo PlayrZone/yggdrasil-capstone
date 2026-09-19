@@ -31,9 +31,21 @@ import { FaithfulMockBackend, OmniscientMockBackend } from './mocks.js';
  * The one seam left open is named for what it is: `test-fetch` builds the REAL
  * Fireworks client around a caller-supplied `fetch`, so the paid code path —
  * charging, retries, transport errors, exhaustion — is exercised by tests
- * against a stub instead of being the one path nothing covers. It refuses to
- * open unless `NODE_ENV === 'test'`, and it still requires a budget, because a
- * fake transport is not a licence to skip the counter.
+ * against a stub instead of being the one path nothing covers.
+ *
+ * TWO CONTROLS HOLD IT, AND NEITHER IS AN ENV CHECK. *Round 2's comment here
+ * claimed it "refuses to open unless `NODE_ENV === 'test'`". There was no such
+ * check — the only `NODE_ENV` in the file was that sentence — so a reviewer
+ * auditing the spend guard was told of a control that did not exist. The claim
+ * is deleted rather than implemented, because implementing it would mean the
+ * engine reading an environment of its own, which `ARCHITECTURE.md` forbids and
+ * which `DoorContext.apiKey` exists precisely to avoid.* What actually holds it:
+ *
+ *   1. THE SPEC CARRIES A FUNCTION, and a function is not JSON. No zod schema
+ *      can express one, so no argument an agent sends can construct this spec;
+ *      it is reachable only from code already running in the process.
+ *   2. IT STILL REQUIRES A BUDGET. A fake transport is not a licence to skip the
+ *      counter — and exercising the counter is the point of the seam.
  */
 
 export type FetchLike = typeof fetch;
@@ -111,7 +123,8 @@ export function openBackend(spec: BackendSpec, context: DoorContext): IMindBacke
       return new BudgetedBackend(new FireworksMindBackend({ apiKey: context.apiKey, model }), budget, context.halt, label);
     }
     case 'test-fetch': {
-      // WHY THIS SEAM IS SAFE WITHOUT AN ENV CHECK: it carries a FUNCTION, and a
+      // WHY THIS SEAM IS SAFE WITHOUT AN ENV CHECK — the two controls named in
+      // the header, in the order they fire: it carries a FUNCTION, and a
       // function is not JSON. No MCP tool schema can express one, so no argument
       // an agent sends can ever construct this spec. It is reachable only from
       // code already running in the process — which is to say, from a test. It

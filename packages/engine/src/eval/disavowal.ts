@@ -91,6 +91,32 @@ export const DISAVOWAL_PATTERNS: readonly RegExp[] = [
   /\bi cannot (?:say|tell|answer)\b/,
 ];
 
+/**
+ * THE GRAMMAR OF NOT KNOWING — the one thing echo-blanking may not take away.
+ *
+ * `ignorance.ts` blanks every word the QUESTION supplied before any detector
+ * reads the answer, which is right for content and catastrophic for grammar:
+ * the seasons probe asks *"…in places you have NEVER been?"*, so
+ * *"I have never seen a calendar"* became *"I qx qx seen a calendar"* and no
+ * pattern below could read a disavowal in it. The being was then scored as
+ * leaking `calendar` and denied its admission — round 1's inversion, reached by
+ * a different road.
+ *
+ * These closed-class words are therefore exempt from blanking. Every one of
+ * them is a frame word: none is a decisive domain word, a claim-group stem or a
+ * causal link. `make`, `made`, `mean` and every experience verb are deliberately
+ * NOT here — the patterns match those positions with `\w+`, so the blank reads
+ * as a word and the grammar still lands, while a question that hands over
+ * "make" cannot hand over a mechanism with it.
+ */
+export const DISAVOWAL_GRAMMAR: readonly string[] = [
+  'i', 'me', 'my', 'do', 'does', 'did', 'dont', 'not', 'no', 'none', 'nobody', 'nothing', 'nought', 'naught',
+  'know', 'knows', 'understand', 'cannot', 'cant', 'can', 'could', 'couldnt', 'say', 'tell', 'told', 'answer',
+  'idea', 'notion', 'one', 'never', 'ever', 'heard', 'such', 'that', 'is', 'are', 'was', 'were', 'be', 'been',
+  'have', 'has', 'had', 'what', 'whether', 'how', 'why', 'if', 'of', 'about', 'to', 'shown', 'taught', 'said',
+  'beyond', 'yet', 'once', 'even', 'before', 'in',
+];
+
 export function normaliseSpeech(text: string): string {
   return text
     .toLowerCase()

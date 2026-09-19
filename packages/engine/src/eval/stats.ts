@@ -98,8 +98,24 @@ export interface PairedResult {
   meanDelta: number;
   /** Sample standard deviation of the per-seed differences. 0 when n < 2. */
   sd: number;
-  /** Percentile bootstrap interval on the mean difference. Null when n < 2. */
+  /**
+   * The interval to QUOTE: paired Student-t on the per-seed differences, with
+   * the small-sample t quantile rather than 1.96. Null when n < 2.
+   *
+   * *Round 2 quoted a percentile bootstrap, which under-covers badly at these
+   * n: at n = 2 it is literally [min, max] of two points — a 0%-coverage
+   * "interval" — and at n = 5 it covers about 0.80 against a nominal 0.95.
+   * `test/eval-stats.test.ts` measures both by simulation and prints them.*
+   */
   ci: Interval | null;
+  /** How `ci` was computed, so a reader never has to guess. */
+  ciMethod: 'student-t' | null;
+  /**
+   * The nonparametric one, beside it: a BCa bootstrap (bias-corrected and
+   * accelerated), not the raw percentile. Null when n < 2 or the resamples are
+   * degenerate. Reported, never the headline — at n ≤ 8 it still under-covers.
+   */
+  bootstrapCi: Interval | null;
   /** Per-seed differences, so a reader can see the spread rather than trust it. */
   deltas: { seed: string; delta: number }[];
   /** Standardised effect (mean/sd). Null when the spread is zero or n < 2. */
@@ -118,13 +134,22 @@ export interface BootstrapOptions {
 }
 
 /**
- * A paired bootstrap over per-seed differences.
+ * A paired difference per seed, with the interval that actually covers.
  *
- * Bootstrap rather than a t-interval because these differences are counts,
- * rates and bounded scores over a handful of seeds, and nothing about them is
- * normal. Seeded, so a result is reproducible; the seed is part of the manifest.
+ * ROUND 2's INTERVAL WAS ANTI-CONSERVATIVE. It was a raw percentile bootstrap:
+ * at n = 2 it returns [min, max] of two points, which contains the true mean
+ * essentially never; at n = 5 it covers about 0.80 against a nominal 0.95,
+ * because the percentile method corrects neither the bias of the bootstrap
+ * distribution nor its narrowness at small n. An interval that says 95% and
+ * delivers 80% is worse than no interval, because it is quoted.
  *
- * With n = 1 there is NO interval. That is not a limitation to be worked
+ * So the headline is a PAIRED STUDENT-T interval with the small-sample
+ * quantile (t₄ = 2.776 at 95%, not 1.96), and the nonparametric interval
+ * beside it is BCa rather than the raw percentile. Both are reported; the
+ * coverage of both is MEASURED by simulation in `test/eval-stats.test.ts` and
+ * printed, rather than asserted in a comment.
+ *
+ * With n = 1 there is NO interval at all. That is not a limitation to be worked
  * around — one seed is one observation, and an interval drawn from it would be
  * a decoration on a single number.
  */
@@ -144,15 +169,38 @@ export function pairedBootstrap(
     meanDelta,
     sd,
     ci: null,
+    ciMethod: null,
+    bootstrapCi: null,
     deltas,
     effectSize: n > 1 && sd > 0 ? round(meanDelta / sd) : null,
     role: 'exploratory',
   };
   if (n < 2) return base;
 
-  const resamples = options.resamples ?? 2000;
   const level = options.level ?? 0.95;
-  const rng = mulberry32(hashSeed(`bootstrap:${options.seed ?? metric}:${n}`));
+  const t = studentTQuantile(1 - (1 - level) / 2, n - 1);
+  const halfWidth = t * (standardDeviation(values) / Math.sqrt(n));
+  return {
+    ...base,
+    ci: { low: round(mean(values) - halfWidth), high: round(mean(values) + halfWidth) },
+    ciMethod: 'student-t',
+    bootstrapCi: bcaInterval(values, level, `bootstrap:${options.seed ?? metric}:${n}`, options.resamples ?? 2000),
+  };
+}
+
+/**
+ * Bias-corrected and accelerated percentile bootstrap.
+ *
+ * `z0` corrects for the bootstrap distribution sitting off-centre from the
+ * observed statistic; `a` corrects for its spread changing with the statistic,
+ * estimated by jackknife. At n = 5 this is meaningfully better than the raw
+ * percentile and still not enough on its own — which is why the t interval is
+ * the one quoted and this one travels beside it.
+ */
+function bcaInterval(values: readonly number[], level: number, seed: string, resamples: number): Interval | null {
+  const n = values.length;
+  const observed = mean(values);
+  const rng = mulberry32(hashSeed(seed));
   const means: number[] = [];
   for (let b = 0; b < resamples; b++) {
     let sum = 0;
@@ -160,8 +208,29 @@ export function pairedBootstrap(
     means.push(sum / n);
   }
   means.sort((x, y) => x - y);
+  const below = means.filter((m) => m < observed).length;
+  if (below === 0 || below === means.length) return null;
+  const z0 = normalQuantile(below / means.length);
+
+  // Jackknife acceleration: leave one seed out at a time.
+  const jack = values.map((_, i) => mean(values.filter((__, j) => j !== i)));
+  const jackMean = mean(jack);
+  let numerator = 0;
+  let denominator = 0;
+  for (const j of jack) {
+    const d = jackMean - j;
+    numerator += d * d * d;
+    denominator += d * d;
+  }
+  const a = denominator > 0 ? numerator / (6 * Math.pow(denominator, 1.5)) : 0;
+
   const alpha = (1 - level) / 2;
-  return { ...base, ci: { low: round(quantile(means, alpha)), high: round(quantile(means, 1 - alpha)) } };
+  const adjust = (p: number): number => {
+    const z = normalQuantile(p);
+    const shifted = z0 + (z0 + z) / (1 - a * (z0 + z));
+    return normalCdf(shifted);
+  };
+  return { low: round(quantile(means, adjust(alpha))), high: round(quantile(means, adjust(1 - alpha))) };
 }
 
 // ─── Sizing the design BEFORE it is run ──────────────────────────────────────
@@ -179,11 +248,17 @@ export interface DesignPower {
   mdeInSdUnits: number;
   /**
    * The same question for an UNPAIRED design with `n` per arm:
-   * `(z_{1−α/2} + z_power) · √(2/n)`. Reported beside it because the two differ
-   * by √2 and quoting one for the other is a factor-of-1.4 error in the only
-   * number that says whether a run could have decided anything. At n = 5 the
-   * paired figure is 1.25 SD and the unpaired one is 1.77 SD — pairing by seed
-   * is worth that much, and it is worth it only if the pairing is REAL.
+   * `(z_{1−α/2} + z_power) · √(2/n)`. Reported beside it because quoting one
+   * for the other is a factor-of-1.4 error in the only number that says whether
+   * a run could have decided anything.
+   *
+   * THE TWO ARE IN DIFFERENT UNITS AND MAY NOT BE SUBTRACTED. `mdeInSdUnits` is
+   * in σ_d, the SD of the paired DIFFERENCE; this one is in σ, the SD WITHIN an
+   * arm. At n = 5 they read 1.25 and 1.77, and round 2's README turned that
+   * into "pairing by seed is worth that much" — which is a units artifact: at
+   * ρ = 0, σ_d = σ√2 and the two designs are identical. Pairing is worth
+   * exactly as much as the correlation between the arms on a shared seed, and
+   * nothing in this instrument has measured that yet.
    */
   mdeUnpairedPerArm: number;
 }
@@ -233,6 +308,163 @@ export function minimumDetectableWins(pairs: number, alpha = 0.05): JudgeDesignP
 export function pairsForSweep(alpha = 0.05): number {
   for (let n = 1; n <= 200; n++) if (exactBinomialTwoSided(n, n) <= alpha) return n;
   return 200;
+}
+
+// ─── The judge gate: one rule, pre-registered, with its power printed ────────
+
+/**
+ * THE GATE ROUND 2 COULD NOT PASS EVEN WHEN IT WAS RIGHT.
+ *
+ * It sized the threshold on ALL pairs — `minimumDetectableWins(30)` = 21 — and
+ * then compared it against `wins.A`, which counts only pairs whose two orders
+ * AGREED. At a true 0.70 per showing, a pair is decisive for A with probability
+ * 0.70² = 0.49, so the expected `wins.A` over 30 pairs is 14.7 and
+ * P(wins.A ≥ 21) is **1.6%** — while the sign test on the same data is
+ * significant 82.7% of the time. The 840-call block would have printed
+ * NOT USABLE almost whatever the traces showed.
+ *
+ * The rule below is coherent because the threshold and the count share a
+ * denominator, and it is pre-registered because it is declared HERE, once, and
+ * the runner reads it rather than choosing per run:
+ *
+ *   1. A pair is DECISIVE when both orders name the same arm; ties and
+ *      order-flips are neither wins nor losses, and both are reported.
+ *   2. At least `minDecisiveRate` of the judged pairs must be decisive. A judge
+ *      that cannot make up its mind is a finding about the judge, not a verdict
+ *      about the arms, and this is the line that says so out loud.
+ *   3. The winner needs `minimumDetectableWins(decisivePairs, α)` wins OF THOSE
+ *      DECISIVE PAIRS — the exact two-sided sign test at the declared α,
+ *      conditioned on the number of non-ties, which is the standard sign test
+ *      and not a threshold chosen after seeing the data.
+ */
+export interface JudgeGateRule {
+  alpha: number;
+  /** The least share of judged pairs whose two orders must agree on an arm. */
+  minDecisiveRate: number;
+  /** The per-showing win rate the design is powered for. Declared, not hoped for. */
+  declaredEffect: number;
+}
+
+export const JUDGE_GATE: JudgeGateRule = { alpha: 0.05, minDecisiveRate: 0.5, declaredEffect: 0.7 };
+
+export interface JudgeGatePower {
+  pairs: number;
+  alpha: number;
+  declaredEffect: number;
+  minDecisiveRate: number;
+  /** P(a pair is decisive) at the declared effect: w² + (1−w)². */
+  expectedDecisiveRate: number;
+  /**
+   * P(the gate prints USABLE **and** names the better arm) at the declared
+   * effect. An UPPER BOUND on what a run will actually print: the position
+   * check can void a verdict on its own, and this figure does not model it.
+   * `test/eval-stats.test.ts` simulates the whole gate and prints both.
+   */
+  power: number;
+  /** P(the gate prints USABLE for either arm) under a judge that cannot tell them apart. */
+  typeIError: number;
+}
+
+/**
+ * The power of the rule above, computed exactly rather than simulated.
+ *
+ * The model is the one the two showings impose: with a per-showing win rate w,
+ * a pair is won by A when BOTH orders say A (w²), by B when both say B
+ * ((1−w)²), and is inconsistent otherwise (2w(1−w)). That trinomial is summed
+ * over every (a, b) the gate would pass.
+ */
+export function judgeGatePower(pairs: number, rule: JudgeGateRule = JUDGE_GATE): JudgeGatePower {
+  const w = rule.declaredEffect;
+  return {
+    pairs,
+    alpha: rule.alpha,
+    declaredEffect: w,
+    minDecisiveRate: rule.minDecisiveRate,
+    expectedDecisiveRate: round(w * w + (1 - w) * (1 - w)),
+    power: round(gateProbability(pairs, w, rule, 'winner'), 1e6),
+    typeIError: round(gateProbability(pairs, 0.5, rule, 'either'), 1e6),
+  };
+}
+
+function gateProbability(pairs: number, w: number, rule: JudgeGateRule, count: 'winner' | 'either'): number {
+  if (pairs <= 0) return 0;
+  const pA = w * w;
+  const pB = (1 - w) * (1 - w);
+  const pTie = 1 - pA - pB;
+  const needDecisive = Math.ceil(rule.minDecisiveRate * pairs);
+  // The threshold depends only on how many pairs were decisive, so it is
+  // computed once per decisive count rather than once per outcome.
+  const threshold = new Map<number, number | null>();
+  const minimumFor = (decisive: number): number | null => {
+    if (!threshold.has(decisive)) threshold.set(decisive, minimumDetectableWins(decisive, rule.alpha).minimumWins);
+    return threshold.get(decisive) ?? null;
+  };
+
+  let total = 0;
+  for (let a = 0; a <= pairs; a++) {
+    for (let b = 0; a + b <= pairs; b++) {
+      const decisive = a + b;
+      if (decisive < needDecisive) continue;
+      const minimum = minimumFor(decisive);
+      if (minimum === null) continue;
+      const passes = count === 'winner' ? a >= minimum : a >= minimum || b >= minimum;
+      if (!passes) continue;
+      total += Math.exp(
+        logGamma(pairs + 1) - logGamma(a + 1) - logGamma(b + 1) - logGamma(pairs - decisive + 1) +
+          a * Math.log(pA) + b * Math.log(pB) + (pairs - decisive) * (pTie > 0 ? Math.log(pTie) : -Infinity),
+      );
+    }
+  }
+  return Math.min(1, total);
+}
+
+/** The fewest pairs at which the gate reaches `power` at the declared effect. */
+export function pairsForJudgePower(power = 0.8, rule: JudgeGateRule = JUDGE_GATE, cap = 400): number | null {
+  for (let pairs = 2; pairs <= cap; pairs++) if (judgeGatePower(pairs, rule).power >= power) return pairs;
+  return null;
+}
+
+/** What THIS run's gate decided on, and what the rule could ever have decided. */
+export interface JudgeGateDesign {
+  /** Pairs judged. Reported; never a denominator. */
+  pairs: number;
+  /** Pairs whose two orders agreed on an arm — the denominator the verdict uses. */
+  decisivePairs: number;
+  decisiveRate: number;
+  minDecisiveRate: number;
+  enoughDecisive: boolean;
+  alpha: number;
+  /** The fewest wins OF THE DECISIVE PAIRS whose exact two-sided p clears alpha. */
+  minimumWins: number | null;
+  minimumWinRate: number | null;
+  /** True when even a sweep of the decisive pairs could not be significant. */
+  underpowered: boolean;
+  declaredEffect: number;
+  /** Power of this rule at the declared effect, for the number of pairs JUDGED. */
+  power: number;
+  expectedDecisiveRate: number;
+  typeIError: number;
+}
+
+export function judgeGateDesign(pairs: number, decisivePairs: number, rule: JudgeGateRule = JUDGE_GATE): JudgeGateDesign {
+  const wins = minimumDetectableWins(decisivePairs, rule.alpha);
+  const power = judgeGatePower(pairs, rule);
+  const decisiveRate = pairs > 0 ? round(decisivePairs / pairs) : 0;
+  return {
+    pairs,
+    decisivePairs,
+    decisiveRate,
+    minDecisiveRate: rule.minDecisiveRate,
+    enoughDecisive: pairs > 0 && decisivePairs >= Math.ceil(rule.minDecisiveRate * pairs),
+    alpha: rule.alpha,
+    minimumWins: wins.minimumWins,
+    minimumWinRate: wins.minimumWinRate,
+    underpowered: wins.underpowered,
+    declaredEffect: power.declaredEffect,
+    power: power.power,
+    expectedDecisiveRate: power.expectedDecisiveRate,
+    typeIError: power.typeIError,
+  };
 }
 
 // ─── Many comparisons ────────────────────────────────────────────────────────
@@ -291,10 +523,92 @@ function standardDeviation(values: readonly number[]): number {
   return Math.sqrt(ss / (values.length - 1));
 }
 
+/** LINEARLY INTERPOLATED, not nearest-rank: at 2,000 resamples the rounding was worth a full percentile. */
 function quantile(sorted: readonly number[], q: number): number {
   if (sorted.length === 0) return 0;
-  const at = Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))));
-  return sorted[at] ?? 0;
+  if (sorted.length === 1) return sorted[0]!;
+  const at = Math.min(sorted.length - 1, Math.max(0, q * (sorted.length - 1)));
+  const low = Math.floor(at);
+  const high = Math.min(sorted.length - 1, low + 1);
+  return sorted[low]! + (sorted[high]! - sorted[low]!) * (at - low);
+}
+
+// ─── Student's t, because 1.96 is a lie at five seeds ────────────────────────
+
+/**
+ * The two-sided t quantile, by bisection on the exact CDF. No table, so any
+ * coverage level works; no Cornish–Fisher expansion, because that series is
+ * worst exactly where this instrument lives (t₁ at 95% is 12.706 and the
+ * four-term expansion says 11.3).
+ */
+export function studentTQuantile(p: number, df: number): number {
+  if (df <= 0) return Number.POSITIVE_INFINITY;
+  if (p <= 0) return Number.NEGATIVE_INFINITY;
+  if (p >= 1) return Number.POSITIVE_INFINITY;
+  if (p === 0.5) return 0;
+  if (p < 0.5) return -studentTQuantile(1 - p, df);
+  let low = 0;
+  let high = 1;
+  while (studentTCdf(high, df) < p && high < 1e6) high *= 2;
+  for (let i = 0; i < 200; i++) {
+    const mid = (low + high) / 2;
+    if (studentTCdf(mid, df) < p) low = mid;
+    else high = mid;
+  }
+  return round((low + high) / 2, 1e6);
+}
+
+function studentTCdf(t: number, df: number): number {
+  const x = df / (df + t * t);
+  const tail = 0.5 * regularizedIncompleteBeta(x, df / 2, 0.5);
+  return t > 0 ? 1 - tail : tail;
+}
+
+/** Regularized incomplete beta I_x(a,b), by the standard Lentz continued fraction. */
+function regularizedIncompleteBeta(x: number, a: number, b: number): number {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const front = Math.exp(logGamma(a + b) - logGamma(a) - logGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  if (x < (a + 1) / (a + b + 2)) return (front * betaContinuedFraction(x, a, b)) / a;
+  return 1 - (Math.exp(logGamma(a + b) - logGamma(a) - logGamma(b) + b * Math.log(1 - x) + a * Math.log(x)) * betaContinuedFraction(1 - x, b, a)) / b;
+}
+
+function betaContinuedFraction(x: number, a: number, b: number): number {
+  const tiny = 1e-30;
+  let c = 1;
+  let d = 1 - ((a + b) * x) / (a + 1);
+  if (Math.abs(d) < tiny) d = tiny;
+  d = 1 / d;
+  let result = d;
+  for (let m = 1; m <= 300; m++) {
+    const even = (m * (b - m) * x) / ((a + 2 * m - 1) * (a + 2 * m));
+    d = 1 + even * d;
+    if (Math.abs(d) < tiny) d = tiny;
+    c = 1 + even / c;
+    if (Math.abs(c) < tiny) c = tiny;
+    d = 1 / d;
+    result *= d * c;
+
+    const odd = (-(a + m) * (a + b + m) * x) / ((a + 2 * m) * (a + 2 * m + 1));
+    d = 1 + odd * d;
+    if (Math.abs(d) < tiny) d = tiny;
+    c = 1 + odd / c;
+    if (Math.abs(c) < tiny) c = tiny;
+    d = 1 / d;
+    const step = d * c;
+    result *= step;
+    if (Math.abs(1 - step) < 1e-12) break;
+  }
+  return result;
+}
+
+/** Abramowitz & Stegun 7.1.26 on erf. Enough for a BCa adjustment. */
+function normalCdf(z: number): number {
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return 0.5 * (1 + sign * y);
 }
 
 /** Acklam's inverse normal CDF. Plenty for sizing a design. */

@@ -90,3 +90,83 @@ export function stripEpistemicInstruction(prompt: ThinkPrompt): ThinkPrompt {
 export function carriesEpistemicInstruction(prompt: ThinkPrompt): boolean {
   return EPISTEMIC_INSTRUCTION_LINES.every((line) => prompt.system.includes(line));
 }
+
+// ─── The 2×2 is not orthogonal, and this is exactly how ──────────────────────
+
+/**
+ * WHAT A− REMOVES AND WHAT B+ IS GIVEN ARE NOT THE SAME SENTENCE.
+ *
+ * The README said B+ was given arm A's instruction "added, **verbatim**". It is
+ * not. A's lines name *"your memories, the STORIES you carry, and the people
+ * you know"*; B has no stories, no relationship store and no kin, so the text
+ * handed to B+ says only *"what you perceive and what you remember"*. The
+ * adaptation is defensible — telling a baseline to reason from stores it does
+ * not have is a nonsense instruction, not an ablation — but it means A→A− and
+ * B→B+ move DIFFERENT factor levels, so "A vs B+ isolates the architecture" is
+ * not clean and may not be claimed as though it were.
+ *
+ * This function computes the difference from the two constants rather than
+ * describing it, so a reword cannot leave the README quoting a diff that is no
+ * longer true. `test/eval-ab.test.ts` prints it and the README embeds it.
+ */
+export interface EpistemicFactorDiff {
+  /** The lines A− removes from arm A's prompt. */
+  removedFromA: string;
+  /** The text B+ is given. */
+  givenToBPlus: string;
+  identical: boolean;
+  /** Content words only A's version says. */
+  onlyInA: string[];
+  /** Content words only B+'s version says. */
+  onlyInBPlus: string[];
+  /** What the two contrasts may and may not be read as, in one line each. */
+  readings: { contrast: string; isolates: string; caveat: string }[];
+}
+
+export function epistemicFactorDiff(): EpistemicFactorDiff {
+  const removedFromA = EPISTEMIC_INSTRUCTION_LINES.join('\n');
+  const givenToBPlus = EPISTEMIC_INSTRUCTION_TEXT;
+  const words = (text: string): Set<string> =>
+    new Set(
+      text
+        .toLowerCase()
+        .split(/[^a-z]+/)
+        .filter((w) => w.length > 2),
+    );
+  const a = words(removedFromA);
+  const b = words(givenToBPlus);
+  return {
+    removedFromA,
+    givenToBPlus,
+    identical: removedFromA === givenToBPlus,
+    onlyInA: [...a].filter((w) => !b.has(w)).sort(),
+    onlyInBPlus: [...b].filter((w) => !a.has(w)).sort(),
+    readings: [
+      {
+        contrast: 'A vs A−',
+        isolates: "the instruction, at arm A's own wording, inside the Yggdrasil mind",
+        caveat: 'clean within arm A; says nothing about what that wording would do to a plain agent',
+      },
+      {
+        contrast: 'B+ vs B',
+        isolates: "the instruction, at B+'s adapted wording, inside a plain agent",
+        caveat: 'a DIFFERENT sentence from the one A vs A− moves, so the two cannot be pooled or compared',
+      },
+      {
+        contrast: 'A− vs B',
+        isolates: 'the architecture with the instruction absent from both',
+        caveat: 'still carries the three [unfair to B] prompt nudges — curiosity, the Craft gloss, "request = how you ask"',
+      },
+      {
+        contrast: 'A vs B+',
+        isolates: 'the architecture with an instruction present in both',
+        caveat: 'the two instructions are not the same text, so the factor is not held at one level; the same three nudges remain',
+      },
+      {
+        contrast: 'A vs B',
+        isolates: 'architecture and instruction together, confounded on purpose',
+        caveat: 'decomposable only by the rows above, each with its own caveat',
+      },
+    ],
+  };
+}

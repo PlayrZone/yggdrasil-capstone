@@ -1,8 +1,8 @@
 import { TRACE_CRITERIA } from './judge.js';
 import type { ITraceJudge, Side, TraceCriterion, TraceJudgement } from './judge.js';
 import type { TracePair } from './pairing.js';
-import { exactBinomialTwoSided, minimumDetectableWins, wilsonInterval } from './stats.js';
-import type { Interval, JudgeDesignPower } from './stats.js';
+import { JUDGE_GATE, exactBinomialTwoSided, judgeGateDesign, wilsonInterval } from './stats.js';
+import type { Interval, JudgeGateDesign, JudgeGateRule } from './stats.js';
 import type { SealedTraceKey } from './trace.js';
 import type { ArmId } from './types.js';
 
@@ -28,6 +28,17 @@ import type { ArmId } from './types.js';
  * that either excludes a half or does not, a judge with nothing but ties is
  * reported as UNDETERMINED rather than unbiased, and a biased judge makes the
  * whole aggregate `usableForVerdict: false`.
+ *
+ * THIRD, THE GATE COMPARED INCOMPARABLE COUNTS. Round 2 sized its threshold on
+ * ALL pairs (`minimumDetectableWins(30)` = 21) and then compared it against
+ * `wins.A`, which counts only pairs whose two orders agreed. At the stated 0.70
+ * effect the expected `wins.A` is 14.7, so P(usable) was 1.6% while the sign
+ * test on the same data was significant 82.7% of the time: the block would have
+ * printed NOT USABLE almost whatever it saw. The threshold now shares a
+ * denominator with the count — `judgeGateDesign(pairs, decisivePairs)`, the
+ * exact sign test conditioned on the non-ties — a minimum decisive FRACTION is
+ * required on top, and the power of the whole rule at the declared effect
+ * travels on every result (`design.power`).
  */
 
 /** One pair: two showings, one outcome. */
@@ -93,9 +104,12 @@ export interface JudgeAggregate {
   meanConfidence: number;
   byCriterion: Record<TraceCriterion, CriterionTally>;
   position: PositionCheck;
-  /** What this many pairs could ever have decided. Computed, not hoped for. */
-  design: JudgeDesignPower;
-  /** False when the judge is position-biased or the design cannot decide. */
+  /**
+   * The pre-registered gate: the threshold over DECISIVE pairs, the minimum
+   * decisive fraction, and the power of the rule at the declared effect.
+   */
+  design: JudgeGateDesign;
+  /** False when the judge is position-biased, indecisive, or the design cannot decide. */
   usableForVerdict: boolean;
   /** The caveat in words, always present. */
   note: string;
@@ -108,6 +122,11 @@ export interface AggregateOptions {
   alpha?: number;
   /** Which two arms the pairs contrast. Default A vs B. */
   arms?: [ArmId, ArmId];
+  /**
+   * The pre-registered gate. Default `JUDGE_GATE` — declared in `stats.ts`, not
+   * chosen per run, because a rule picked after the numbers are in is not a rule.
+   */
+  gate?: JudgeGateRule;
 }
 
 export async function judgeTraces(
@@ -135,7 +154,8 @@ export async function judgeTraces(
   const arms = options.arms ?? (['A', 'B'] as [ArmId, ArmId]);
   const armOf = new Map(key.unseal().map((k) => [k.traceId, k.arm]));
   const z = options.z ?? 1.96;
-  const alpha = options.alpha ?? 0.05;
+  const gate: JudgeGateRule = options.gate ?? (options.alpha !== undefined ? { ...JUDGE_GATE, alpha: options.alpha } : JUDGE_GATE);
+  const alpha = gate.alpha;
 
   const wins = { A: 0, B: 0, ties: 0, inconsistent: 0 };
   const byCriterion = blankTallies();
@@ -198,22 +218,30 @@ export async function judgeTraces(
   const leftRate = decisivePositions > 0 ? round(position.leftWins / decisivePositions) : 0;
   const positionWilson = wilsonInterval(position.leftWins, decisivePositions, z);
   const biased = decisivePositions > 0 && (positionWilson.low > 0.5 || positionWilson.high < 0.5);
-  const design = minimumDetectableWins(counted, alpha);
+  const design = judgeGateDesign(counted, decisivePairs, gate);
   const exactP = exactBinomialTwoSided(wins.A, decisivePairs);
   const consistencyRate = counted > 0 ? round(consistentPairs / counted) : 0;
 
   const reasons: string[] = [];
   if (counted === 0) reasons.push('no pairs were judged');
-  if (design.underpowered) {
+  // The decisive fraction comes FIRST: an indecisive judge is a finding about
+  // the judge, and quoting a win rate over four pairs out of thirty would be
+  // reporting the tail of a distribution as its middle.
+  if (counted > 0 && !design.enoughDecisive) {
     reasons.push(
-      `${counted} pairs cannot reach p < ${alpha}: even a clean sweep is p = ${exactBinomialTwoSided(counted, counted)}`,
+      `only ${decisivePairs} of ${counted} pairs were decisive (${design.decisiveRate} < ${design.minDecisiveRate} required): ` +
+        `${wins.inconsistent} pairs flipped with the order and ${wins.ties} were ties — a judge that cannot make up its ` +
+        'mind is a finding about the judge, not a verdict about the arms',
+    );
+  } else if (design.underpowered) {
+    reasons.push(
+      `${decisivePairs} decisive pairs cannot reach p < ${alpha}: even a sweep of them is p = ${exactBinomialTwoSided(decisivePairs, decisivePairs)}`,
     );
   } else if (design.minimumWins !== null && wins.A < design.minimumWins && wins.B < design.minimumWins) {
-    reasons.push(`neither arm reached the ${design.minimumWins} of ${counted} pairs this design needs`);
+    reasons.push(`neither arm reached the ${design.minimumWins} of ${decisivePairs} DECISIVE pairs this rule needs`);
   }
   if (biased) reasons.push(`the judge prefers one side: left rate ${leftRate}, interval [${positionWilson.low}, ${positionWilson.high}]`);
   if (decisivePositions === 0) reasons.push('every showing was a tie, so position bias is unmeasured rather than absent');
-  if (counted > 0 && consistencyRate < 0.5) reasons.push(`the two orders agreed on only ${consistencyRate} of pairs`);
 
   return {
     judge: judge.id,
@@ -244,7 +272,9 @@ export async function judgeTraces(
     usableForVerdict: reasons.length === 0,
     note:
       reasons.length === 0
-        ? `${decisivePairs} decisive pairs of ${counted}; exact two-sided p = ${exactP}; orders agreed on ${consistencyRate}.`
+        ? `${wins.A} of ${decisivePairs} decisive pairs (${counted} judged); exact two-sided p = ${exactP}; the rule needed ` +
+          `${design.minimumWins}; orders agreed on ${consistencyRate}. This design has power ${design.power} at a ` +
+          `per-showing win rate of ${design.declaredEffect} and prints USABLE at ${design.typeIError} under a judge that cannot tell them apart.`
         : `NOT USABLE FOR A VERDICT — ${reasons.join('; ')}.`,
     judged,
   };

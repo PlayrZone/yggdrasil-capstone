@@ -87,8 +87,19 @@ export interface AbSpec {
   minTraceMoments?: number;
   /** Prefix for run ids, so two A/B runs in one process do not collide. */
   runIdPrefix?: string;
-  /** The permutation seed for the blinding. Default: the seeds, joined. */
+  /** The PUBLIC label of the blinding. Default: the seeds, joined. It keys nothing. */
   blindSeed?: string;
+  /**
+   * The secret the blinding permutation is drawn from. Omitted in a real run,
+   * where it is drawn from the host's CSPRNG, held inside the sealed key and
+   * published only as a hash. TESTS pass it, because they need the handles to
+   * be reproducible and are entitled to know the answer.
+   *
+   * *Round 2 keyed the permutation on `blindSeed` and printed it in the
+   * manifest, so anyone holding the result recovered every arm by re-running
+   * `blindTraces`.*
+   */
+  blindSecret?: string;
   /** Declared before the run and echoed verbatim in the result. */
   preRegistered?: readonly PreRegisteredQuestion[];
 }
@@ -238,7 +249,11 @@ export async function runAb(spec: AbSpec, config: AbConfig, mode: AbMode = 'popu
   }
 
   const blindSeed = spec.blindSeed ?? seeds.join('+');
-  const blinded = blindTraces(rawTraces, world, { seed: blindSeed, minMoments: spec.minTraceMoments ?? 2 });
+  const blinded = blindTraces(rawTraces, world, {
+    seed: blindSeed,
+    ...(spec.blindSecret !== undefined ? { secret: spec.blindSecret } : {}),
+    minMoments: spec.minTraceMoments ?? 2,
+  });
   const manifest = buildManifest(spec, config, mode, world, blinded.manifest, spentBefore);
   const integrity = integrityOf(halt, fallbackByArm);
 

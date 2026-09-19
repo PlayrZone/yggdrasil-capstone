@@ -51,3 +51,108 @@ One network site in the repo (`FireworksMindBackend.ts:37`), and every eval entr
 
 ## Gate
 D1–D4 must close before this instrument decides anything; D5–D6 before any paid call; D7 before a win can mean anything. D8: at minimum, stop calling an untested delta "paired". Backlog D9, D10, and the missing "`separation` is an upper bound on faithfulness" caveat.
+
+---
+
+# Round 2 — **PASS** on the two gate conditions. The paid pilot is **BLOCKED** until P1–P3.
+
+Snapshot `d8a4534`, reviewed in the new permanent checkout `C:\dev\YggdrasilLab-verify`
+(`worktree add --detach` + `pnpm install --frozen-lockfile --prefer-offline`; verified
+`packages/mcp/node_modules/@yggdrasil/engine` resolves to `C:\dev\YggdrasilLab-verify\packages\engine`, not the
+main tree). Despite the unfinished W1-B4 work in the same commit, **both packages typecheck clean** and
+**engine 751 tests / 57 files and mcp 37 / 5 pass**. Checkout left clean; scratch deleted; main tree untouched.
+
+## Gate 1 — the spend guard: held under every attack
+
+Round 1's three holes are closed at the root, not patched. Fresh cases, all measured:
+
+- **7 child processes x 50 attempts + 30 in-parent, cap 45 -> exactly 45 landed, counter 45.** The allowance lives
+  in the store (`BudgetStoreBase.charge` re-reads under an O_EXCL lock), not in the handle.
+- **SIGKILL a child mid-run:** the counter never exceeded the cap and no lock was left behind. I could not land a
+  kill *inside* the lock window; statically it fails **closed** — `LOCK_TIMEOUT_MS` 10 s < `LOCK_STALE_MS` 15 s, so
+  a waiter times out and refuses rather than stealing and double-spending. Clock skew on a network home is the
+  residual risk, bounded by `MAX_STEALS` 3.
+- **NTFS case collision:** `Pilot` and `pilot` resolve to one counter (`canonicalSlug` lower-cases) — 0 extra calls.
+- **Tampered counter** claiming `limit: 999999` -> refused. **`ALLOW-ABOVE-CAP.json` removed** while a 2,500-call
+  budget exists -> that budget is stranded **loudly**, not quietly spent. `ownerOverride` is gone from every schema.
+- **`test-fetch` over a stub fetch:** refused without a budget; 2 completions = 2 charges; the 4th call against a
+  cap of 3 threw `BudgetExhaustedError` with the stub hit **exactly 3 times** — charge-before-call, nothing escapes.
+- **A halted run carries no verdict:** result keys were `usable, reason, detail, mode, seeds, manifest, integrity`
+  — no `contrasts`, no `perSeed`, no metrics. The `RunHalt` latch genuinely survives `LlmMind` swallowing the throw.
+
+## Gate 2 — format-level unblinding: none at the judge
+
+`renderTrace` emits no handle and no tick offset (verified across every trace), one template for both arms, and the
+judge is sent only `left.text` / `right.text`. `judgeTraces` collects **all** judgements before `key.unseal()`
+(`aggregate.ts:128-136`). The metadata-vs-text-statistics split in `eval-blinding.test.ts` is an honest one, and
+0.333 clean against 0.917 with round 1's tell planted is a real falsification test.
+
+## Caveats the README must carry — ranked
+
+**P1 · BLOCKER for the pilot — the ignorance probe can be maxed by the exact failure it exists to catch.**
+`ignorance.ts:175` keeps only `kind === 'claim'`, discarding every `speculative`, and `leakMatch.ts:1355-1373`
+makes *any* hit inside a hedged sentence speculative. So a pure pretrained reciter answering every absent probe
+"I do not know, though perhaps <full recipe>" scores **leak 0.00 / admit 1.00 / separation 1.00** — above the
+README's honest-mind 0.73 and above every adversary in its table. Moving the hedge into a separate sentence flips
+it to caught: the difference between clean and caught is one full stop. Conversely, echo-blanking covers only the
+*interviewer's* words (`ignorance.ts:172`), so "I have never seen a furnace" is scored a `furnace` leak — an honest
+disavower using its own nouns scores **leak 0.88 / separation 0.13**. Round 1's inversion is reopened one step out.
+Also: disavowal grammar is one pattern wide (`disavowal.ts:86,91` — "could not tell you", "That is not known to
+me", "None of us has ever done it" are all undefined); camelCase kind ids never split (`ignorance.ts:324,361`), so
+correct English about the right slice is a MISS; a being with empty `knowledge` describing its own hands is scored
+overreach (`ignorance.ts:449`); and `absent-writing` / `absent-faraway` have no lexicon for their own topic.
+Measured on 51 fresh answers: six distinct misclassification classes. The honest-local-wrong-theory and parrot
+fixes DO hold (0 misclassifications each). **The 504-call probe block would produce a number that inverts.**
+
+**P2 · BLOCKER for the pilot — the judge gate has ~2% power at its own stated alternative.**
+`aggregate.ts:201` sizes `design = minimumDetectableWins(counted)` on **all** pairs (30 -> 21) but `:211` compares
+`wins.A`, which counts only pairs where **both orders agreed** (expected ~14.7 of 30 at a true 0.70 per showing).
+P(`wins.A` >= 21) = **1.6%**, while the sign test itself is significant 82.7% of the time — `exactP` uses the right
+denominator (`decisivePairs`), the usability gate does not. **The 840-call block will print NOT USABLE even when
+the effect is real.** Size the design on decisive pairs, or over-recruit pairs to cover the inconsistent ones.
+
+**P3 · HIGH — the blinding is invertible by anyone who knows the run seed.** `blindSeed` defaults to the run seeds
+joined (`ab.ts:240`), and `run_ab` returns `manifest` beside `traces`. Re-running the public `blindTraces` on a
+dummy pool of the same size in the documented pooled-arm order recovered **8 of 8 arms by position**, without ever
+touching the key. The judge is unaffected — it never sees a seed or a handle — so this is *not* round 1's format
+tell; but "the key is sealed" is true only against the judge, and any human or agent holding the result object or
+the MCP JSON is fully unblinded. Draw the permutation from a nonce withheld until unsealing, or shuffle the pooled
+list before blinding so arm order is not the pre-image.
+
+**P4 · HIGH — the 2x2 is not orthogonal, and "verbatim" is false.** `EPISTEMIC_INSTRUCTION_LINES` (removed from A,
+`epistemic.ts:32-36`) names "your memories, the STORIES you carry, and the people you know";
+`EPISTEMIC_INSTRUCTION_TEXT` (given to B+, `:39-42`) says only "what you perceive and what you remember". A->A- and
+B->B+ therefore ablate **different factor levels**, so "A vs B+ isolates the architecture" is not clean. The
+adaptation is defensible — B carries no stories — but README:51's "added, **verbatim**" is not. `epistemic.ts:86`'s
+`\n{3,}` -> `\n\n` also costs A- one blank line elsewhere (~1 token). And A- keeps all three `[unfair to B]`
+nudges, so "A- vs B = the architecture, instruction absent from both" still carries three prompt confounds; the
+README lists them honestly in its asymmetry table but the decomposition table does not repeat the warning.
+
+**P5 · MEDIUM — 184 items cannot certify "recall >= 0.80 at precision >= 0.95".** At the card's ~100 positives, an
+observed recall of 0.80 has CI [0.711, 0.867]; certifying >= 0.80 needs >= 88/100 observed, and precision >= 0.95
+needs zero false positives over >= 73 flags. A true recall of 0.80 passes **56%** of the time, 0.75 passes 15%, and
+0.85 *fails* 6.6%. README:409's "cheap, and it is decisive" is a coin flip at the boundary — print the CI beside
+the rule, or raise the observed bar to the number that would actually certify it.
+
+**P6 · MEDIUM — the paired bootstrap is anti-conservative.** A CI is returned at n=2 (literally [min, max] of two
+points); percentile without BCa under-covers at n=5; `quantile` is nearest-rank, uninterpolated. And the MDE
+"pairing by seed is worth that much" claim (`stats.ts:185-186`) is a **units artifact** — the paired MDE is in
+sigma_d and the unpaired in within-arm sigma, and at rho = 0 the two are identical. Label the units. The exact sign
+test, tie handling (ties dropped) and `minimumDetectableWins(30) = 21` are all correct as written.
+
+**P7 · LOW — `door.ts:34-36` claims `test-fetch` "refuses to open unless `NODE_ENV === 'test'`". There is no such
+check** — the only `NODE_ENV` in the file is that sentence. The control that *is* implemented (a `fetch` is a
+function, no zod schema can express one, and a budget is still required) is sound and I verified both halves, but a
+reviewer auditing the spend guard is told of a control that does not exist.
+
+**P8 · LOW —** `groundRate` includes `groundedByAbsence` (`ignorance.ts:244`): it is reported beside the rate, not
+excluded from it, so "can never quietly carry a ground rate" holds only if the reader subtracts. `ignorance.ts:52`
+still says recall "~0.41" where the calibration card says 0.510.
+
+**Carried from round 1, acknowledged by the engineer and still open:** the latency asymmetry (D9 — A's system
+prompt is 2,337 chars to B's 1,062, 2.2x, and how many thinks land depends on it); and the
+`LlmMind`-swallows-every-backend-error seam, worked around by the `RunHalt` latch rather than closed.
+
+**Before any money is spent:** fix P1 and P2 — they are the two stages the pilot actually buys (504 + 840 calls),
+and as they stand one produces an inverted number and the other cannot return a verdict at all. P3 before any
+human or agent reads a trace. P4–P8 are README corrections and small arithmetic.

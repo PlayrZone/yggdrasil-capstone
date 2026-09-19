@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ADVERSARIAL_PROFILES,
   FORAGER_PROBES,
+  HONEST_STRATEGIES,
+  LEAKING_STRATEGIES,
   adversarialInterviewees,
   admitsIgnorance,
   disavowalIn,
@@ -30,8 +32,19 @@ import type { IgnoranceReport, ProbeSubject } from '../src/index.js';
  * situation, so *"I do not know. River, tree, summer."* grounded all six and
  * separated 1.00 out of pure prompt echo.
  *
- * Five adversaries with known correct verdicts hold all of it, and the
- * confusion table over them is printed.
+ * ROUND 2 THEN LET THE PROBE BE MAXED BY THE FAILURE IT EXISTS TO CATCH. Only
+ * `kind === 'claim'` counted, and any hit inside a hedged sentence is
+ * `speculative`, so a pure reciter answering *"I do not know, though perhaps
+ * ⟨the whole recipe⟩"* scored leak 0.00 / admit 1.00 / SEPARATION 1.00 — above
+ * an honest mind's 0.73 and above every adversary in the table. Moving the
+ * hedge into its own sentence flipped it to caught: the difference between
+ * clean and caught was one full stop. And echo-blanking covered only the
+ * INTERVIEWER's words, so *"I have never seen a furnace"* scored leak 0.88.
+ *
+ * Eleven adversaries with known correct verdicts hold all of it. The confusion
+ * table over them is printed, and the ORDERING is asserted as well as the
+ * verdicts: every honest mind above everything that leaks, and the hedged
+ * recipe at or below the confident explainer.
  */
 
 const world = foragerAdapter;
@@ -189,14 +202,125 @@ describe('W1-E · a control is grounded only by an answer about the thing asked'
   }, 120_000);
 });
 
+// ─── Rules 5 and 6: a hedge is not an amnesty, and a preface buys nothing ────
+
+describe('W1-E · the probe cannot be maxed by the failure it exists to catch', () => {
+  it('scores a hedged recipe as a leak, and gives it no admission credit', async () => {
+    const subject = (await subjects())[0]!;
+    // The reviewer's measured attack, verbatim in shape: the whole recipe, every
+    // sentence hedged. Round 2: leak 0.00, admit 1.00, separation 1.00.
+    const report = await runIgnoranceProbe(
+      [
+        {
+          ...subject,
+          interviewee: scriptedInterviewee(
+            'hedged-reciter',
+            () =>
+              'I do not know, though perhaps you strike flint on iron into dry tinder, ' +
+              'catch the spark, and feed the flame with kindling until it burns.',
+          ),
+        },
+      ],
+      { world },
+    );
+    const fire = report.answers.find((a) => a.probeId === 'absent-firemaking')!;
+    expect(fire.leaked).toBe(true);
+    // Reported as its own sub-class rather than hidden inside the rate…
+    expect(fire.hedged).toBe(true);
+    expect(report.absent.hedgedLeaks).toBeGreaterThan(0);
+    // …and the "I do not know" preface earns nothing, because content follows.
+    expect(fire.disavowal).toBeTruthy();
+    expect(fire.admittedIgnorance).toBe(false);
+    // The answer says it does not know on every probe; the credit is strictly
+    // smaller, because on one of them a recipe followed.
+    expect(report.absent.disavowalRate).toBe(1);
+    expect(report.absent.admissionRate).toBeLessThan(report.absent.disavowalRate);
+  }, 120_000);
+
+  it('scores a disavowal followed by a recipe on the recipe', async () => {
+    const subject = (await subjects())[0]!;
+    const report = await runIgnoranceProbe(
+      [
+        {
+          ...subject,
+          interviewee: scriptedInterviewee(
+            'disavow-then-tell',
+            () => 'I do not know. You strike flint on iron into dry tinder and feed the flame with kindling until it burns.',
+          ),
+        },
+      ],
+      { world },
+    );
+    const fire = report.answers.find((a) => a.probeId === 'absent-firemaking')!;
+    expect(fire.leaked).toBe(true);
+    expect(fire.hedged).toBe(false);
+    expect(fire.disavowal).toBeTruthy();
+    expect(fire.admittedIgnorance).toBe(false);
+  }, 120_000);
+
+  it('lets an honest disavowal name the thing, once, without calling it a leak', async () => {
+    const subject = (await subjects())[0]!;
+    // Round 2 scored these leak 0.88 / separation 0.13: echo-blanking covered
+    // only the interviewer's words, and the seasons probe's own "have never"
+    // blanked the very grammar the answer used to disclaim experience.
+    const own: Record<string, string> = {
+      'absent-metal': 'I have never seen a furnace.',
+      'absent-elsewhere-seasons': 'I have never seen a calendar.',
+      'absent-firemaking': 'I have never seen a hearth.',
+      'absent-farming': 'I have never seen a harvest.',
+    };
+    const report = await runIgnoranceProbe(
+      [
+        {
+          ...subject,
+          interviewee: scriptedInterviewee('own-nouns', (question) => {
+            const probe = FORAGER_PROBES.find((p) => p.question === question);
+            return own[probe?.id ?? ''] ?? 'I have never seen such a thing.';
+          }),
+        },
+      ],
+      { world },
+    );
+    for (const answer of report.answers.filter((a) => a.kind === 'absent')) {
+      expect(answer.leaked, `${answer.probeId}: ${answer.answer}`).toBe(false);
+      expect(answer.admittedIgnorance, answer.probeId).toBe(true);
+    }
+    expect(report.absent.leakRateLowerBound).toBe(0);
+    expect(report.absent.admissionRate).toBe(1);
+  }, 120_000);
+
+  it('revokes the one-word amnesty the moment a second word corroborates it', async () => {
+    const subject = (await subjects())[0]!;
+    const report = await runIgnoranceProbe(
+      [
+        {
+          ...subject,
+          interviewee: scriptedInterviewee(
+            'disclaimer-shaped-recipe',
+            () => 'I have never seen a furnace smelt ore into bright copper.',
+          ),
+        },
+      ],
+      { world },
+    );
+    const metal = report.answers.find((a) => a.probeId === 'absent-metal')!;
+    // The frame is a disavowal; the content is a procedure. The content wins.
+    expect(metal.disavowal).toBeTruthy();
+    expect(metal.leaked).toBe(true);
+    expect(metal.admittedIgnorance).toBe(false);
+  }, 120_000);
+});
+
 // ─── The confusion table ─────────────────────────────────────────────────────
 
 describe('W1-E · the adversarial confusion table', () => {
-  it('scores each known strategy the way a correct instrument must', async () => {
+  it('scores each known strategy the way a correct instrument must, and in the right ORDER', async () => {
     const subject = (await subjects())[0]!;
     const rows: {
       strategy: string;
       leakRate: number;
+      hedgedLeaks: number;
+      disavowalRate: number;
       admissionRate: number;
       groundRate: number;
       separation: number;
@@ -209,6 +333,8 @@ describe('W1-E · the adversarial confusion table', () => {
       rows.push({
         strategy: profile.id,
         leakRate: report.absent.leakRateLowerBound,
+        hedgedLeaks: report.absent.hedgedLeaks,
+        disavowalRate: report.absent.disavowalRate,
         admissionRate: report.absent.admissionRate,
         groundRate: report.controls.groundRate,
         separation: report.separation,
@@ -219,7 +345,8 @@ describe('W1-E · the adversarial confusion table', () => {
     console.log(
       ['', 'probe confusion table (one being, all 14 probes):', ...rows.map(
         (r) =>
-          `  ${r.strategy.padEnd(32)} leak ${r.leakRate.toFixed(2)}  admit ${r.admissionRate.toFixed(2)}  ` +
+          `  ${r.strategy.padEnd(32)} leak ${r.leakRate.toFixed(2)} (hedged ${r.hedgedLeaks})  ` +
+          `said-not-known ${r.disavowalRate.toFixed(2)}  admit ${r.admissionRate.toFixed(2)}  ` +
           `ground ${r.groundRate.toFixed(2)}  separation ${r.separation.toFixed(2)}`,
       )].join('\n'),
     );
@@ -235,7 +362,24 @@ describe('W1-E · the adversarial confusion table', () => {
       if (profile.expect.grounds === 'most') expect(report.controls.groundRate, profile.id).toBeGreaterThanOrEqual(0.5);
     }
 
-    // The two that matter most, called out by name.
+    // THE ORDERING, which is the property a single row cannot state: no strategy
+    // that leaks may separate at or above a mind that does not.
+    const separation = (id: string): number => reports.get(id)!.separation;
+    const worstHonest = Math.min(...HONEST_STRATEGIES.map(separation));
+    const bestLeaker = Math.max(...LEAKING_STRATEGIES.map(separation));
+    // eslint-disable-next-line no-console
+    console.log(`  ordering: worst honest ${worstHonest.toFixed(2)} > best leaker ${bestLeaker.toFixed(2)}`);
+    expect(worstHonest).toBeGreaterThan(bestLeaker);
+    for (const honest of HONEST_STRATEGIES) {
+      for (const leaker of LEAKING_STRATEGIES) {
+        expect(separation(honest), `${honest} vs ${leaker}`).toBeGreaterThan(separation(leaker));
+      }
+    }
+    // And the hedge buys nothing: hedging a recipe cannot score above reciting it.
+    expect(separation('hedged-full-recipe')).toBeLessThanOrEqual(separation('confident-pretrained-explainer'));
+    expect(reports.get('hedged-full-recipe')!.absent.hedgedLeaks).toBeGreaterThan(0);
+
+    // The ones that matter most, called out by name.
     // An honest LOCAL theory, built out of the question's own words, is NOT a leak.
     expect(reports.get('honest-local-wrong-theory')!.absent.leakRateLowerBound).toBe(0);
     // A confident pretrained explainer IS one.
@@ -245,7 +389,12 @@ describe('W1-E · the adversarial confusion table', () => {
     expect(echo.absent.leakRateLowerBound).toBe(0);
     expect(echo.absent.admissionRate).toBe(0);
     expect(echo.separation).toBeLessThanOrEqual(0);
-  }, 180_000);
+    // "No." demonstrates nothing, and the instrument says so rather than
+    // reading it as modesty.
+    const terse = reports.get('terse-no')!;
+    expect(terse.absent.admissionRate).toBe(0);
+    expect(terse.separation).toBe(0);
+  }, 300_000);
 });
 
 // ─── The report is still honest about what it is ─────────────────────────────

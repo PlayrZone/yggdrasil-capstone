@@ -1,3 +1,4 @@
+import type { PlaceRef } from '../contract/space.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { OpenedBackend } from './budget.js';
 import type { TracePair } from './pairing.js';
@@ -175,9 +176,12 @@ const EMPTY_INPUT = {
     needs: {},
     health: 100,
     sick: false,
-    // `PlaceRef` is opaque and weakly branded, so the emptiest legal place is an
-    // empty object. A judge is nowhere, and saying so beats inventing a spot.
-    place: {},
+    // A judge is NOWHERE, and saying so beats inventing a spot. `PlaceRef` is
+    // nominally branded now, so the only way to write one outside a world's own
+    // space module is a cast; it is made here, once, in view — and nothing in
+    // this file ever hands this object to a world, which is why there is no
+    // world to ask for its `unplaced`.
+    place: {} as PlaceRef,
     inventory: {},
     context: {},
   },

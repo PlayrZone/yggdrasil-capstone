@@ -1,9 +1,9 @@
-import { hashSeed, mulberry32 } from '../body/prng.js';
 import type { WorldAdapter } from '../contract/adapter.js';
 import type { Intent, MindOutput, SimEvent } from '../contract/types.js';
 import type { CognitionOutcome, CognitionRecordV2 } from '../record/types.js';
 import { detectLexicalLeaks, stemWord, suppliedNames } from '../training/leakMatch.js';
 import { deserializeThinkInput } from '../record/serialize.js';
+import { commitTo, keyedStream, randomBlindSecret } from './commit.js';
 import { admitsIgnorance } from './disavowal.js';
 import type { ArmId, BlindTrace, MomentOutcome, RawBeingTrace, TraceFeatures, TraceKey, TraceMoment } from './types.js';
 
@@ -26,10 +26,20 @@ import type { ArmId, BlindTrace, MomentOutcome, RawBeingTrace, TraceFeatures, Tr
  * thing:
  *
  *   1. A HANDLE CARRIES NOTHING. It is six opaque base-36 characters drawn from
- *      a seeded stream, assigned over a seeded PERMUTATION of the pooled
- *      traces. There is no ordering to read, and the order the traces are
- *      RETURNED in is that permutation too, so file order says nothing either.
- *      The seed goes in the run manifest.
+ *      a KEYED stream, assigned over a permutation of the pooled traces drawn
+ *      from the same stream. There is no ordering to read, and the order the
+ *      traces are RETURNED in is that permutation too, so file order says
+ *      nothing either.
+ *
+ *      ROUND 2 PUT THE KEY TO THAT PERMUTATION IN THE MANIFEST. The stream was
+ *      `mulberry32(hashSeed('blind:' + seed))`, the seed defaulted to the run
+ *      seeds joined, and `run_ab` returned the manifest beside the traces:
+ *      re-running the public `blindTraces` on a dummy pool of the same size, in
+ *      the documented pooled-arm order, recovered **8 of 8 arms by position**
+ *      without touching the key. The stream is now keyed by a per-run SECRET
+ *      that is in no result, no manifest, no spend log and no tool output; the
+ *      artefact carries only `sha256(secret)`, so the run is still auditable
+ *      once the key is unsealed and the secret disclosed (`commit.ts`).
  *   2. THE TEXT A JUDGE READS CONTAINS NO HANDLE AT ALL. Not the id, not a run
  *      id, not a being id, not a pair id. `BlindTrace.traceId` exists for the
  *      aggregator's bookkeeping and is never rendered.
@@ -160,10 +170,19 @@ const REF_MARK = ' ref:';
  */
 export class SealedTraceKey {
   private readonly entries: readonly TraceKey[];
+  private readonly secret: string;
   private unsealCount = 0;
 
-  constructor(entries: readonly TraceKey[], readonly handleSeed: string) {
+  /** The public label of the run. It keys NOTHING. */
+  readonly publicSeed: string;
+  /** `sha256(secret)`. Safe to publish; useless until the secret is disclosed. */
+  readonly commitment: string;
+
+  constructor(entries: readonly TraceKey[], publicSeed: string, secret: string) {
     this.entries = entries.map((e) => ({ ...e }));
+    this.publicSeed = publicSeed;
+    this.secret = secret;
+    this.commitment = commitTo(secret);
   }
 
   get size(): number {
@@ -199,11 +218,38 @@ export class SealedTraceKey {
     return this.entries.map((e) => ({ ...e }));
   }
 
+  /**
+   * The secret the permutation was drawn from, for an auditor — ONLY after the
+   * key has been unsealed. Handing it out earlier would publish the thing the
+   * blinding rests on, which is exactly round 2's defect with an extra step.
+   *
+   * With it: `verifyCommitment(secret, commitment)` proves the published
+   * commitment belonged to this run, and re-running `blindTraces` with it
+   * reproduces the same handles in the same order.
+   */
+  disclose(): { secret: string; publicSeed: string; commitment: string } {
+    if (this.unsealCount === 0) {
+      throw new Error('the blinding secret is disclosed only after unseal(): a sealed key that answers questions is not sealed');
+    }
+    return { secret: this.secret, publicSeed: this.publicSeed, commitment: this.commitment };
+  }
+
+  /**
+   * SERIALISING A SEALED KEY MUST NOT UNSEAL IT. `private` is a TypeScript
+   * fact, not a JavaScript one: without this, `JSON.stringify(result)` — which
+   * is what a reader or an agent does with a result object — printed every
+   * entry and the secret beside them.
+   */
+  toJSON(): { sealed: true; size: number; publicSeed: string; commitment: string } {
+    return { sealed: true, size: this.entries.length, publicSeed: this.publicSeed, commitment: this.commitment };
+  }
+
   /** Swap which arm every handle belongs to — the label-swap control. */
   relabelled(swap: (arm: ArmId) => ArmId): SealedTraceKey {
     return new SealedTraceKey(
       this.entries.map((e) => ({ ...e, arm: swap(e.arm) })),
-      this.handleSeed,
+      this.publicSeed,
+      this.secret,
     );
   }
 }
@@ -212,12 +258,17 @@ export class SealedTraceKey {
 
 export interface BlindOptions {
   /**
-   * REQUIRED. The permutation that decides which trace gets which handle, and
-   * the order they come back in. Recorded in the run manifest so a result can
-   * be reproduced — and so that "the handles were shuffled" is a checkable
-   * claim rather than a promise.
+   * The PUBLIC label of this blinding, recorded in the manifest. It keys
+   * nothing — round 2's did, and that was the defect.
    */
   seed: string;
+  /**
+   * The secret the permutation and the handles are drawn from. Omitted in a
+   * real run, where it is drawn from the host's CSPRNG and never leaves the
+   * sealed key; supplied by TESTS, which need determinism and are entitled to
+   * know the answer.
+   */
+  secret?: string;
   /** Traces with fewer moments than this are dropped. Default 1. */
   minMoments?: number;
   /** Prefix for the opaque handles. Default `trace`. */
@@ -231,9 +282,16 @@ export interface BlindOptions {
 }
 
 export interface BlindingManifest {
-  handleSeed: string;
+  /** The run's public label. It keys nothing; the permutation is keyed by the secret. */
+  publicSeed: string;
+  /**
+   * `sha256("yggdrasil/blind-commit/v1:" + secret)`. Everything a published
+   * artefact is allowed to carry about the permutation: it reveals nothing
+   * before unsealing and verifies afterwards.
+   */
+  commitment: string;
   /** How handles were assigned, for a reader who was not here. */
-  scheme: 'seeded-permutation/opaque-handle';
+  scheme: 'sealed-secret-permutation/opaque-handle';
   traces: number;
   dropped: number;
   minMoments: number;
@@ -252,7 +310,10 @@ export interface BlindResult {
  *
  * The permutation is over the POOLED list, drawn here rather than left to a
  * caller: round 1 documented "a caller that wants them shuffled shuffles the
- * INPUT", and the one caller in the repo did not.
+ * INPUT", and the one caller in the repo did not. It is drawn from a stream
+ * keyed by a SECRET, not by anything the result publishes — round 2 published
+ * its key in the manifest and the whole run was invertible by re-running this
+ * function.
  */
 export function blindTraces(raw: readonly RawBeingTrace[], world: WorldAdapter, options: BlindOptions): BlindResult {
   const minMoments = options.minMoments ?? 1;
@@ -260,7 +321,8 @@ export function blindTraces(raw: readonly RawBeingTrace[], world: WorldAdapter, 
   const kept = raw.filter((t) => t.moments.length >= minMoments);
   const dropped = raw.length - kept.length;
 
-  const rng = mulberry32(hashSeed(`blind:${options.seed}`));
+  const secret = options.secret ?? randomBlindSecret();
+  const rng = keyedStream(secret);
   const order = permutation(kept.length, rng);
 
   const traces: BlindTrace[] = [];
@@ -286,10 +348,11 @@ export function blindTraces(raw: readonly RawBeingTrace[], world: WorldAdapter, 
   }
   return {
     traces,
-    key: new SealedTraceKey(key, options.seed),
+    key: new SealedTraceKey(key, options.seed, secret),
     manifest: {
-      handleSeed: options.seed,
-      scheme: 'seeded-permutation/opaque-handle',
+      publicSeed: options.seed,
+      commitment: commitTo(secret),
+      scheme: 'sealed-secret-permutation/opaque-handle',
       traces: traces.length,
       dropped,
       minMoments,
