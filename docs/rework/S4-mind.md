@@ -1,0 +1,45 @@
+# Stage 4 — The Mind (design brief, 2026-09-19)
+
+Design authority for the mind faculties. Read with `ARCHITECTURE.md` §2/§4, `W1-B-worldadapter.md`, audit 01 §5 (human-likeness gaps), audit 04 §3–§5 (what the frontier does, and the evaluation battery).
+
+## What the evidence says is missing
+
+Measured on the true-scale continent with today's minds (M1b verifier, 2 unseen seeds):
+- **They starve beside plenty.** Day 30: every food node within 500 m of the birth valley is empty while ~14,000 food items sit 2–4 km away. Nothing in the mind explores, remembers where things are, or carries an intention further than the next plan.
+- **They never discover what the world affords.** They never hunt (game is food), never seek ore or salt. Behaviour is a hand-written survival script (`ReflexPolicy`), so nothing outside that script can ever be learned or done.
+- **They cannot hear each other.** A conscious being's words never reach another mind. Every "asked X" in the June experiments went unanswered.
+- **No goal outlives one think; nothing is forgotten; nothing is felt; nobody knows who they are or what anyone else knows.** (audit 01 §5)
+
+## Non-negotiables (doctrine)
+
+1. The world is the only source of knowledge. Deterministic, interpretable miners are the only writers of semantic knowledge, place memory, skills, person models and the life story. False beliefs are legal.
+2. The slow mind (LLM) reasons over what the being holds and may produce goals, plans, utterances, names and **hypotheses to test** — never facts. A hypothesis becomes knowledge only when the world confirms it through a miner.
+3. Nothing is scripted: no rule says "explore", "hunt", "teach your child". The mind gets general machinery; the world supplies reasons.
+4. World-agnostic by construction: faculties are written against drives, kind TAGS, event roles, core verbs and `space` — never forager nouns. Every faculty must run on the toy world and, later, the town.
+5. Deterministic and replayable on the fast path; the instrument never feeds back.
+6. Cheap: the fast mind runs every tick for thousands of beings with zero inference; the slow mind is salience-triggered.
+
+## Faculties, in build order
+
+| # | Faculty | Design (mind-side, deterministic unless stated) | Proof it works (objective first, then blind A/B) |
+|---|---|---|---|
+| **F1** | **Fast mind v2 — drive arbitration over LEARNED affordances** (replaces every hand-written `ReflexPolicy`; this is W1-D) | Options are generated from the being's own knowledge: for each pressing drive, candidate `(action, kind/tag, place)` triples whose learned outcome relieves it (`OutcomeMiner`), scored `expected relief × confidence − travel cost − learned risk`. An **uncertainty bonus** makes untried `(action × tag)` pairs and unvisited directions attractive when no drive is pressing (curiosity is a property of the arbiter, not a scripted behaviour). The adapter only says what is *attemptable* (tags), never what results. Seeded, replayable. | Diet breadth grows over a life (hunting is DISCOVERED by someone and then spreads by observation); share of starvation deaths that occur with food ≤ 2 km away falls sharply vs today; works unchanged on the toy world |
+| **F2** | **Place memory (a cognitive map)** | Miner-built, per being: `PlaceRef → {what was found/experienced there, when, reliability}`, consolidated from episodes, decaying, merged by `space` proximity; an exploration frontier ("I have never been past the ridge"); places heard about in testimony are held as *told, unverified*. Feeds F1's travel cost and options. | Beings return to remembered resources after depletion/regrowth; settlements bud along rivers; "told" places get visited and confirmed or abandoned |
+| **F3** | **Goals and projects** | `Goal {source drive/affect, target condition, subgoals, progress measure, commitment, started, abandon-reason}` persisted across thinks and sleeps; the fast mind executes the active goal stack; the slow mind may create, re-rank or abandon with a stated reason; projects can outlive a day (a shelter, a journey, raising a child). | A being holds one project ≥ 50 thinks with measurable progress; abandonment has reasons; one-sim-year project coherence test (audit 04 #5) |
+| **F4** | **Forgetting, consolidation, sleep** | Episodic decay by salience × recency × rehearsal; before an episode goes, miners fold it into semantic forms (knowledge, place memory, person models, life story); bi-temporal knowledge (`validFrom/validTo` — "what I used to think"); sleep runs the deep miner sweep + goal re-ranking; an optional slow-mind reflection during sleep may emit **hypotheses as goals** only. | Recall probability falls with age and rises with rehearsal (curve); bounded footprint at 100k ticks; an abstraction appears that no single memory contains; superseded beliefs remain queryable |
+| **F5** | **Skills (procedural memory)** | Sequence-mine the being's own executed plan fragments that reliably relieved a drive → a named, parameterised macro over core verbs + tags; executed by the fast mind; improved by practice (success rate, speed); taught by demonstration (generalising `CraftObservationMiner`); portable across worlds when expressed in core verbs + tags. | A skill's adopters per generation + fidelity drift (transmission chain); a skill learned in the forager world is attemptable in the toy/town world where tags match |
+| **F6** | **Hearing (language reaches minds)** | A spoken `text` becomes a *heard-speech* memory for listeners within earshot (origin `speech`, speaker, addressed-to-me flag); it reaches the listener's slow mind as context and may create goals and **hypotheses**, never knowledge. Answers to a `request` are linked to it. Leak control: population-level contamination is MEASURED (transmission-chain + fidelity battery), not censored. | Questions get answered; a request→answer→action chain exists end to end; conversation changes plans; contamination rate reported per run |
+| **F7** | **Affect** | Deterministic appraisal of events against drives and goals → a small continuous state (valence, arousal, fear, grief, attachment, pride) with decay and mood; modulates memory salience, exploration bonus, approach/avoid in F1, and is rendered (via lexicon) into the slow mind's context as how the being feels. | Behaviour after loss/attack/success differs measurably and recovers with a plausible time course; blind traces judged more alive than the no-affect ablation |
+| **F8** | **Self-model and life story** | Miner-built autobiography from the being's highest-salience episodes + what others say of it (testimony about self) + kin; a compact, lexicon-rendered persona anchor (immutable temperament + current self-summary + standing commitments) on every slow call; chosen name. | Lifetime persona stability probe (birth / mid-life / old age); interview consistency vs the episodic record; baseline drifts, ours should not |
+| **F9** | **Theory of mind** | Per-partner model mined from interaction: what they have shown they know (taught, told, done), what they seem to want (observed drive behaviour), how they treat me; used by F1/F3 to choose whom to ask, whom to teach what they lack, whom to avoid or follow. | Teaching targets those who lack the rule (transfer efficiency vs random in a seed-paired A/B); functional-ToM forecasting probe (audit 04 #8) |
+| **F10** | **Development** | Cognition and body parameters change with age (learning rate, exploration bonus, strength, memory capacity); childhood dependence; senescence; age as a cause of death. | Age-structured behaviour differences; population pyramids; elders as knowledge sources |
+
+Narrative stays structural in the mind; all content, which events are narratable and any drift model are world/culture data. The authored escalation ladder is deleted in F1's item, not ported.
+
+## Order and dependencies
+
+`W1-B3` (actions + kinds + tags) and `W1-B4` (`space`) are prerequisites. Then **F1 + F2 together** — they are fully deterministic, cost no inference, fix the single most damning finding, and are measurable on the continent the day they land. Then F3 → F4 → F5 → F6 → F7 → F8 → F9 → F10. Each faculty is one campaign item: coder → senior review → hostile verifier; behaviour changes are deliberate from here on, so every item ships with (a) an ablation switch, (b) new goldens recorded once, (c) an objective world metric with a seed-paired A/B, and (d) a mock-backed blind trace comparison; paid runs follow decision D1.
+
+## What "alive" will mean when Stage 4 is done
+
+Put a being in a world it has never seen. With no script and no pretrained facts, it gets hungry, tries things, learns what feeds it and where, remembers and returns, wanders further when home runs out, watches others and picks up what they can do, asks someone who might know and hears the answer, commits to building something and finishes it next week, grieves a death and avoids the place for a while, can tell you who it is and what happened to it — and is still recognisably the same person when it is old. Then the same mind, unmodified, does all of that in a town.
