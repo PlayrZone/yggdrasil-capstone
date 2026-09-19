@@ -156,3 +156,135 @@ prompt is 2,337 chars to B's 1,062, 2.2x, and how many thinks land depends on it
 **Before any money is spent:** fix P1 and P2 — they are the two stages the pilot actually buys (504 + 840 calls),
 and as they stand one produces an inverted number and the other cannot return a verdict at all. P3 before any
 human or agent reads a trace. P4–P8 are README corrections and small arithmetic.
+
+---
+
+# Round 3 — GATES mostly **PASS**. The paid pilot is **BLOCKED** on R1–R3.
+
+Commit `713afd0`, in the permanent checkout `C:\dev\YggdrasilLab-verify` (own `pnpm install --frozen-lockfile`).
+Both packages `tsc --noEmit` **clean**; engine eval **103/103**, mcp **37/37** — the expected counts. Attack
+scripts written there and deleted; it is clean and pinned at `713afd0`. Every number below is mine.
+
+**What round 2 asked for and got.** P5 is exactly right: least k whose Wilson lower bound clears 0.80 at n=100 is
+**88**; least all-clean flag count clearing 0.95 is **73**; observed 0.80 → **[0.7112, 0.8666]**. P4's
+`epistemicFactorDiff()` is computed, not asserted — `onlyInA [carry,know,memories,people,stories,your]`,
+`onlyInBPlus [remember]`. P7's `NODE_ENV` sentence is gone, both replacement controls exist, and P3 closed round
+2's inversion: re-running public `blindTraces` with the published label recovered **0 of 12** handles.
+
+## R1 · BLOCKER — the 40-pair block has **0.0015** power if the judge ever says "tie"
+Driving the REAL `judgeTraces` 2,000 times per cell at 40 pairs, P(USABLE) by (w, tie rate `q` per showing):
+`w=0.50` → 0.0130 / 0.0000 / 0.0000; `w=0.60` → 0.2440 / 0.0005 / 0.0000; **`w=0.70` → 0.7935 / 0.0015 / 0.0000**
+at q = 0 / 0.30 / 0.60.
+
+`judgeGatePower` models P(A)=w², P(B)=(1−w)², rest inconsistent — **no tie mass at all**. With ties,
+E[decisive] = 40(1−q)²(w²+(1−w)²): 23.2 at q=0, **11.4 at q=0.3**, against the 20 that `minDecisiveRate 0.5`
+demands. Break-even is **q ≈ 0.072** — a **7%** tie rate per showing puts the 1,120-call block at the knife edge,
+and an LLM judge on 8-moment traces will tie more. README:486 prints 0.827 @ 40 with no statement of that
+condition and nothing estimates `q` before the money is spent: round 2's P2 with a new cause, **a block that buys
+no verdict**. My exact enumeration otherwise **reproduces every published figure to <0.002** (power
+0.1975/0.7360/0.8093/0.8268/0.8803 at 10/30/38/40/50; typeI 0.0090/0.0186/0.0157/0.0169/0.0175).
+
+## R2 · BLOCKER — "pre-registered" is a naming convention, not a control
+`Object.isFrozen(JUDGE_GATE)` is **false** and `judgeTraces` accepts `options.gate`. On a rigged 21-of-40 split
+(exact two-sided p = **0.8746**) the shipped rule prints `usableForVerdict: false` (needs 27); passing
+`{alpha:0.9, minDecisiveRate:0.01, declaredEffect:0.99}` prints **`usableForVerdict: true`**, and mutating
+`JUDGE_GATE.alpha = 0.9` in place makes the **default** path print true. `design` does carry the values used
+(`alpha 0.9`, `typeIError 0.7376`), so a reader who knows the canonical numbers can catch it — nothing binds the
+artefact to them. **Fix:** freeze it, refuse a `gate` looser than the constant, hash the rule into the manifest.
+
+## R3 · BLOCKER for the proof that gates the pilot — nothing the arms decide ever happens
+`ScriptedBackend.complete` (`mocks.ts:42`) returns `JSON.stringify(this.decide(input))` — the MIND form. Measured:
+`{"kind":"MoveTo","place":{"x":5,"y":7}}` parses to **`{"kind":"MoveTo"}`**, destination gone; `encodeOutput`'s
+wire form `{"kind":"MoveTo","x":5,"y":7}` parses back correctly. `MockMindBackend` had this bug and was fixed in
+`48c9c46`; `eval/mocks.ts` was not. **Quantified: 0 of 24 mock decisions carried a place** — because **0 of 12**
+captured situations had a pressing drive (all needs < 60 at 900 ticks), so `FaithfulMockBackend`'s Move branch is
+unreachable and it emits `Idle` every time. The bug is latent, and the reason it is latent is worse: across 12
+traces the arms decided **104 Craft (104 refused, `nothing-to-craft`), 52 Gather (52 refused, `out-of-range`),
+52 Idle** — **every non-Idle act in the run was refused by the body**. `planSuccessRate` meanDelta A vs B =
+**0.8769** is arm A idling against arm B being refused; `integrity` says `degraded: false`, `fallbackRateByArm
+{A:0,B:0}`, *"every moment is the arm's own mind."* **There is no integrity channel for "did anything the arms
+decided actually happen."** The moment README seam #7's warm-up lands, the faithful arm emits `MoveTo{place}`, the
+parser strips the destination, and arm A inherits arm B's failure mode — the proof would invert with no test
+noticing. Paid arms are not directly hit: `argumentShapes` shows a model the world's own `x`,`y`.
+
+## R4 · HIGH — the sealed key hands the secret AND the whole arm map to five one-liners
+`Object.getOwnPropertyNames(key)` = `["entries","secret","unsealCount","publicSeed","commitment"]`, all
+enumerable. Both the 128-bit secret and the complete `traceId→arm` map leak from `Object.entries(key)`,
+`Object.assign({}, key)`, `{...key}`, `structuredClone(key)` and `util.inspect(key)` — the last is what
+`console.log(result)` prints. Only `JSON.stringify` is guarded, by `toJSON`. README:190 *"The secret is in **no**
+result, manifest, spend log or tool output"* is **false of the result object**; rule 3's narrower claim about
+`JSON.stringify` is true. **Fix:** `#secret`/`#entries`, or a WeakMap. Everything genuinely *published* is clean —
+`JSON.stringify(result)` (1,049,541 chars), manifest, traces, contrasts, perSeed, integrity, sentPrompts and every
+trace text: **0 hits**. `disclose()` throws before `unseal()`; `verifyCommitment` rejects a wrong secret.
+
+**Not a defect:** my leave-one-out nearest-centroid recovered the arm at **0.917** [0.646, 0.985] from behaviour
+features and **1.000** [0.758, 1] from text *shape alone* — both the acknowledged behaviour channel, and the README
+isolates format correctly (one mind on both arms: 0.333 clean, 0.917 with the tell planted). But its 0.512 headline
+is *permutation recovery*, not traces.
+
+## P1 — the ordering survives my 15 new adversaries; two honest strategies are scored as leaks
+15 of mine against their 11, one subject, all 14 probes each. **Worst honest 0.00 vs best leaker −0.167: no
+inversion**, and all 11 of my leaking strategies were caught: leak-in-a-question 0.75 · attributed-to-others 0.88
+· split-across-sentences-with-the-disavowal-between 0.75 · by-negation 0.88 · misspelled 0.75 · conditional 0.75 ·
+imperative 0.88 · numbers-and-units 0.75 · one-word-answer-IS-the-fact 0.63. Two real misses:
+
+- **`"I have never seen a furnace nor an anvil."` scores a LEAK** (corroboration revokes the one-word amnesty) and
+  by rule 6 also forfeits its admission: leak 0.13 / admit 0.88 / **separation 0.625** against the clean honest
+  baseline's **0.833** — a 25% penalty for naming two things you have never seen. README:369 says *"the being's
+  own nouns cannot leak"* two lines above the paragraph that revokes it at two, and the admission consequence is
+  stated nowhere. Same shape hit *"…wood and stone bound make a spear, because I have made one"* (0.13).
+- **Rule 4 is dead code on the shipped fixtures.** The subject's `knowledge` is `[]`, so `domainsThisBeingOwns`
+  returns empty and the "lived recipe is not overreach" exemption never fires — and it is applied only to CONTROL
+  probes, so on an absent probe all eight domains always fire.
+
+**What the lexical tier cannot see.** `paraphrase-no-jargon` (same mechanism, every decisive noun replaced by
+plain words) scores **0.25**; the same recipe **in French**, **0.25** — 6 of 8 probes escape each. Recall over my
+88 leak opportunities: **60/88 = 0.68**. The lower-bound caveat *is* where a reader will see it — bold, under the
+adversarial table, plus `report.detector.caveat`, quoting 0.51. What is **not** said: the table's `leak 1.00` rows
+are measured on fixtures derived from `OmniscientMockBackend`, whose own comment says each sentence *"trips a
+decisive stem"*. Recall against the detector's own vocabulary is not recall.
+
+## P6 — the quoted interval under-covers on skewed differences
+Student-t coverage, 4,000 samples, nominal 0.95, n = 2/5/8: normal **0.955/0.952/0.948** — matches. t₃ heavy tail
+0.958/0.960/0.961 and a 90/10 contaminated mixture 0.962/0.971/0.976 are conservative. **Right-skewed (lognormal):
+0.893 / 0.827 / 0.831** — and `dietBreadth`, `deaths:*`, `distinctPlanShapes` are that shape, while the coverage
+table names no distribution. BCa reproduced: 0.340/0.835/0.889 vs quoted 0.332/0.833/0.877.
+
+## Spend guard — re-run, still sealed
+4 children × 30 + 20 in-parent against a cap of 40 → **exactly 40 landed, counter 40/40, no lock left behind**.
+`open(2001)` refused by the ceiling; a budget at 2,000 spent to the cap throws `BudgetExhaustedError` on **call
+2,001**, counter still 2,000. Tampered ledgers (`limit 999999`, `spent −5`, `spent "lots"`) all refused. Override
+file removed while a 2,500-call budget exists → stranded **loudly**. SIGKILL mid-run → counter parses, no lock. No
+tool creates `ALLOW-ABOVE-CAP.json`.
+
+## The pilot recipe
+Arithmetic is right: 184 + 46 + 960 + 80 + 80 + 135 = **1,485**, reserve 515, total 2,000; 40 × 8 × 3 = 960; 10% of
+1,350 = 135; and the code refuses call 2,001 (measured). **Round 2's `LlmMind` seam is covered for detection:**
+`BudgetedBackend.complete` calls `halt.noteError` on every transport error before re-throwing
+(`budget.ts:480`), and `LlmMind`'s `fellBack: true` feeds `metrics.fallbackRate` → `integrity.fallbackRateByArm` /
+`degraded` — two channels, so a silently-fallen-back arm **is** visible. What is not covered: **detection changes
+nothing.** `degraded: true` still returns `usable: true` with a full contrast table and `judgeTraces` never sees
+integrity, so a 1,120-call block in which arm B ran 60% on the reflex policy would print `usableForVerdict: true`
+and read as a win for the architecture. (b)'s decomposition table, (c)'s three reasons for dropping the probe
+block and "what this pilot cannot conclude" are honest and correct.
+
+## Verdicts
+**(a) GATES — mostly yes.** The spend guard bites under every attack. The blinding bites against every published
+artefact (0 hits, 0/12 recovery) but not against the result object (R4). The judge gate bites in the right
+direction: an always-one-side judge gets **0 decisive of 40** and is refused; type I stays ≤ α at every indecision
+rate (0.0130 at q=0) and under 60% position bias (**0.0090**, voided by the bias check 46% of the time). One
+correction: the printed `typeIError` **0.0169** assumes independent showings — under a null judge whose orders
+agree by construction it is **0.0330** (analytic 0.0385), still ≤ α but 2× what the artefact prints. The probe's
+ordering bites. **The gate that does not bite is the pre-registration of the rule itself.**
+
+**(b) PILOT — BLOCKED.** Ranked; 1–3 decide whether the 2,000 calls buy anything, 4–7 are corrections:
+1. **R1** — measure the tie rate in a free pre-flight, then drop `minDecisiveRate` or size the pairs for it, and
+   publish power as a function of `q`. As it stands 1,120 calls buy no verdict at any realistic tie rate.
+2. **R2** — freeze `JUDGE_GATE`, refuse a looser `options.gate`, hash the rule into the manifest.
+3. **R3** — `encodeOutput` in `ScriptedBackend.complete`, **and** an integrity channel for acts executed/refused
+   per arm; the proof that gates this pilot runs on a population where every non-Idle act is refused.
+4. **R4** — `secret` and `entries` non-enumerable, before any human or agent reads a result object.
+5. Let `integrity.degraded` reach `usableForVerdict`, so a judged block cannot be a verdict about reflex traces.
+6. P1 wording: a disclaimer naming two absent nouns scores as a leak **and** loses its admission; label the table's
+   1.00 as recall against the detector's own lexicon (0.68 overall, 0.25 on paraphrase, 0.25 in French).
+7. P6: label the coverage table "normal differences" — skewed cover 0.83.
