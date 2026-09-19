@@ -1,3 +1,4 @@
+import type { WorldAdapter } from '../contract/adapter.js';
 import type { MemoryRecord } from '../contract/types.js';
 import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
@@ -22,9 +23,17 @@ const RECIPROCATION_WINDOW = 1200;
  * dangerous") is the interpretive layer consciousness reads; the fast
  * scalar relationship records remain the reflex substrate. No "friend"
  * or "enemy" concept exists here — only observed behavior patterns.
+ *
+ * It reads the world's `events[].social` ROLE, never an event's name: what
+ * makes something a gift is that the world says it is one, and in a world
+ * whose gifts are called something else the same patterns are mined from the
+ * same tallies.
  */
 export class SocialMiner implements ILearner {
-  constructor(private readonly provenanceLevel: ProvenanceLevel = 'compact') {}
+  constructor(
+    private readonly world: WorldAdapter,
+    private readonly provenanceLevel: ProvenanceLevel = 'compact',
+  ) {}
 
   private partners = new Map<number, PartnerTallies>();
 
@@ -46,17 +55,18 @@ export class SocialMiner implements ILearner {
   }
 
   observe(memory: MemoryRecord): void {
+    const role = this.world.eventById.get(memory.type)?.social;
     for (const partnerId of memory.subjects) {
       const t = this.talliesFor(partnerId);
-      switch (memory.type) {
-        case 'GaveItem': {
+      switch (role) {
+        case 'gave': {
           t.interactions++;
           t.myGives++;
           t.openGives.push(memory.tick);
           t.provenance.add(memory);
           break;
         }
-        case 'ReceivedItem': {
+        case 'received': {
           t.interactions++;
           t.theirGives++;
           t.provenance.add(memory);
@@ -67,14 +77,16 @@ export class SocialMiner implements ILearner {
           }
           break;
         }
-        case 'WasAttacked': {
+        case 'harmed': {
           t.interactions++;
           t.attacks++;
           t.provenance.add(memory);
           break;
         }
-        case 'UtteranceSpoken':
-        case 'AttackedAgent': {
+        // Dealing a blow and saying a word are both dealings; neither is
+        // evidence ABOUT the other person, so only the count moves.
+        case 'harmedOther':
+        case 'engaged': {
           t.interactions++;
           break;
         }

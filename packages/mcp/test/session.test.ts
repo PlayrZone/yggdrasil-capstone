@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ResearchDB } from '@yggdrasil/db';
-import { MockMindBackend } from '@yggdrasil/engine';
+import { MockMindBackend, foragerAdapter } from '@yggdrasil/engine';
 import type { CognitionOutcome, CognitionRecordV2, ICognitionSink, RunManifest, RunSummary } from '@yggdrasil/engine';
 import { SessionManager, corpusRunId } from '../src/SessionManager.js';
 
@@ -78,7 +78,7 @@ describe('SessionManager (engine ⇄ db wiring)', () => {
     let made = 0;
     const conscious = new SessionManager(
       db,
-      () => new MockMindBackend(),
+      () => new MockMindBackend({ world: foragerAdapter }),
       () => {
         made++;
         return sink;
@@ -129,7 +129,7 @@ describe('SessionManager (engine ⇄ db wiring)', () => {
    * the rows disagreed.
    */
   it('reports only the beings it actually made conscious', async () => {
-    const conscious = new SessionManager(db, () => new MockMindBackend(), () => new CapturingSink());
+    const conscious = new SessionManager(db, () => new MockMindBackend({ world: foragerAdapter }), () => new CapturingSink());
     const runId = conscious.create('mcp-conscious', 20, 0);
     const first = conscious.makeConscious(runId, { count: 3 });
     expect(first).toHaveLength(3);
@@ -144,7 +144,7 @@ describe('SessionManager (engine ⇄ db wiring)', () => {
   /** Backlog item 6, second half: a second finish is a no-op, not a rejection. */
   it('finishes once, whether it is called twice or concurrently', async () => {
     const sink = new CapturingSink();
-    const conscious = new SessionManager(db, () => new MockMindBackend(), () => sink);
+    const conscious = new SessionManager(db, () => new MockMindBackend({ world: foragerAdapter }), () => sink);
     const runId = conscious.create('mcp-finish-twice', 12, 0);
     conscious.makeConscious(runId, { count: 2 });
     await conscious.advance(runId, 200);

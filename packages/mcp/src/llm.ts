@@ -1,4 +1,4 @@
-import { FireworksMindBackend, MockMindBackend } from '@yggdrasil/engine';
+import { FireworksMindBackend, MockMindBackend, foragerAdapter } from '@yggdrasil/engine';
 import type { IMindBackend } from '@yggdrasil/engine';
 
 /**
@@ -45,7 +45,9 @@ export interface EvalBackendChoice {
 
 export function evalBackend(calls: number, allowPaid: boolean | undefined): EvalBackendChoice {
   const paid = makeLlmBackend();
-  if (!paid) return { backend: new MockMindBackend(), paid: false };
+  // The mock answers with a reflex policy, and W1-B2 makes it say whose: this
+  // lab runs the forager continent.
+  if (!paid) return { backend: new MockMindBackend({ world: foragerAdapter }), paid: false };
   if (!allowPaid) {
     return {
       backend: null,

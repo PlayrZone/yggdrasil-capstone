@@ -125,7 +125,7 @@ describe('SuccessionMiner', () => {
 describe('SocialMiner', () => {
   it('discovers reciprocation per partner', () => {
     resetIds();
-    const miner = new SocialMiner();
+    const miner = new SocialMiner(foragerAdapter);
     for (let i = 0; i < 4; i++) {
       miner.observe(mem(i * 100, 'GaveItem', { subjects: [7] }));
       if (i < 3) miner.observe(mem(i * 100 + 50, 'ReceivedItem', { subjects: [7] }));
@@ -141,7 +141,7 @@ describe('SocialMiner', () => {
 
   it('marks repeat attackers dangerous', () => {
     resetIds();
-    const miner = new SocialMiner();
+    const miner = new SocialMiner(foragerAdapter);
     miner.observe(mem(0, 'WasAttacked', { subjects: [9] }));
     miner.observe(mem(500, 'WasAttacked', { subjects: [9] }));
     const rule = miner

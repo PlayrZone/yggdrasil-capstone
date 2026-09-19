@@ -1,16 +1,15 @@
 import { describeEpisode } from '../../src/memory/memoryFromEvent.js';
+import { ProvenanceSample } from '../../src/learning/ILearner.js';
+import type { EvidenceReport, ProvenanceLevel } from '../../src/learning/ILearner.js';
+import type { MemoryRecord, RelationshipRecord, SimEvent, Utterance } from '../../src/contract/types.js';
 import type {
   ContextFeatureKey,
   ContextFeatures,
-  MemoryRecord,
   NeedKey,
   Needs,
   ObjectKind,
-  RelationshipRecord,
-  SimEvent,
   SimEventType,
-  Utterance,
-} from '../../src/contract/types.js';
+} from '../../src/worlds/forager/types.js';
 
 /**
  * THE FORAGER WORLD AS THE MIND OWNED IT, the moment before W1-B1 moved it out:
@@ -113,7 +112,9 @@ export function wasMemoryFromEvent(
   const craftInputs = event.payload['inputs'] as Partial<Record<ObjectKind, number>> | undefined;
   const utterance = event.payload['utterance'] as Utterance | undefined;
 
-  let type: SimEventType = event.type;
+  // A SimEvent's type is an opaque `EventId` since W1-B2; this fixture IS the
+  // old code, which was typed against the union, so it narrows on the way in.
+  let type: SimEventType = event.type as SimEventType;
   let subjects: number[];
   let origin: MemoryRecord['origin'] = 'experience';
   let deltas = needDeltas;
@@ -191,4 +192,176 @@ export function wasMemoryFromEvent(
     causedBy,
     utterance,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W1-B2: the two miners that switched on THIS WORLD'S EVENT NAMES to decide
+// what a memory was. Copied verbatim from `learning/SocialMiner.ts` and
+// `learning/CraftObservationMiner.ts` as they stood at 9a71201, minus the
+// tallies' types (shared, unchanged). Only the switch moved: the new miners
+// read `events[].social` and `events[].demonstrates` instead, and
+// `world-tables-transcribed.test.ts` drives both over every event id and
+// compares report for report.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface WasPartnerTallies {
+  interactions: number;
+  myGives: number;
+  theirGives: number;
+  reciprocations: number;
+  attacks: number;
+  openGives: number[];
+  provenance: ProvenanceSample;
+}
+
+const WAS_RECIPROCATION_WINDOW = 1200;
+
+/** learning/SocialMiner.ts, before the roles. */
+export class WasSocialMiner {
+  constructor(private readonly provenanceLevel: ProvenanceLevel = 'compact') {}
+
+  private partners = new Map<number, WasPartnerTallies>();
+
+  private talliesFor(partnerId: number): WasPartnerTallies {
+    let t = this.partners.get(partnerId);
+    if (!t) {
+      t = {
+        interactions: 0,
+        myGives: 0,
+        theirGives: 0,
+        reciprocations: 0,
+        attacks: 0,
+        openGives: [],
+        provenance: new ProvenanceSample(this.provenanceLevel),
+      };
+      this.partners.set(partnerId, t);
+    }
+    return t;
+  }
+
+  observe(memory: MemoryRecord): void {
+    for (const partnerId of memory.subjects) {
+      const t = this.talliesFor(partnerId);
+      switch (memory.type) {
+        case 'GaveItem': {
+          t.interactions++;
+          t.myGives++;
+          t.openGives.push(memory.tick);
+          t.provenance.add(memory);
+          break;
+        }
+        case 'ReceivedItem': {
+          t.interactions++;
+          t.theirGives++;
+          t.provenance.add(memory);
+          const open = t.openGives.findIndex((tick) => memory.tick - tick <= WAS_RECIPROCATION_WINDOW);
+          if (open !== -1) {
+            t.openGives.splice(open, 1);
+            t.reciprocations++;
+          }
+          break;
+        }
+        case 'WasAttacked': {
+          t.interactions++;
+          t.attacks++;
+          t.provenance.add(memory);
+          break;
+        }
+        case 'UtteranceSpoken':
+        case 'AttackedAgent': {
+          t.interactions++;
+          break;
+        }
+        default:
+          break;
+      }
+      t.openGives = t.openGives.filter((tick) => memory.tick - tick <= WAS_RECIPROCATION_WINDOW);
+    }
+  }
+
+  consolidate(): EvidenceReport[] {
+    const reports: EvidenceReport[] = [];
+    for (const [partnerId, t] of this.partners) {
+      if (t.myGives >= 2) {
+        reports.push({
+          rule: { kind: 'social-contingency', partnerId, pattern: 'reciprocates' },
+          confidence: (t.reciprocations + 1) / (t.myGives + 2),
+          evidenceCount: t.reciprocations,
+          contradictionCount: t.myGives - t.reciprocations,
+          sourceMemoryIds: t.provenance.ids(),
+          provenance: t.provenance.snapshots(),
+        });
+      }
+      if (t.theirGives >= 2) {
+        reports.push({
+          rule: { kind: 'social-contingency', partnerId, pattern: 'generous' },
+          confidence: t.theirGives / (t.theirGives + 1),
+          evidenceCount: t.theirGives,
+          contradictionCount: 0,
+          sourceMemoryIds: t.provenance.ids(),
+          provenance: t.provenance.snapshots(),
+        });
+      }
+      if (t.attacks >= 1) {
+        reports.push({
+          rule: { kind: 'social-contingency', partnerId, pattern: 'dangerous' },
+          confidence: t.attacks / (t.attacks + 1),
+          evidenceCount: t.attacks,
+          contradictionCount: 0,
+          sourceMemoryIds: t.provenance.ids(),
+          provenance: t.provenance.snapshots(),
+        });
+      }
+    }
+    return reports;
+  }
+}
+
+interface WasRecipeTally {
+  seen: number;
+  inputs: Partial<Record<ObjectKind, number>>;
+  provenance: ProvenanceSample;
+}
+
+const WAS_OBSERVE_WEIGHT = 0.5;
+const WAS_MIN_SAMPLES = 3;
+
+/** learning/CraftObservationMiner.ts, before the demonstration tag. */
+export class WasCraftObservationMiner {
+  constructor(private readonly provenance: ProvenanceLevel = 'compact') {}
+
+  private recipes = new Map<ObjectKind, WasRecipeTally>();
+
+  observe(memory: MemoryRecord): void {
+    if (memory.type !== 'Crafted') return;
+    const output = memory.objectKind as ObjectKind | undefined;
+    if (!output) return;
+    const weight = memory.origin === 'experience' ? 1 : memory.origin === 'observation' ? WAS_OBSERVE_WEIGHT : 0;
+    if (weight === 0) return;
+    let t = this.recipes.get(output);
+    if (!t) {
+      t = { seen: 0, inputs: {}, provenance: new ProvenanceSample(this.provenance) };
+      this.recipes.set(output, t);
+    }
+    t.seen += weight;
+    if (memory.craftInputs) t.inputs = { ...memory.craftInputs };
+    t.provenance.add(memory);
+  }
+
+  consolidate(): EvidenceReport[] {
+    const reports: EvidenceReport[] = [];
+    for (const [output, t] of this.recipes) {
+      if (t.seen < WAS_MIN_SAMPLES) continue;
+      const evidence = Math.round(t.seen);
+      reports.push({
+        rule: { kind: 'craft-recipe', output, inputs: t.inputs },
+        confidence: (evidence + 1) / (evidence + 2),
+        evidenceCount: evidence,
+        contradictionCount: 0,
+        sourceMemoryIds: t.provenance.ids(),
+        provenance: t.provenance.snapshots(),
+      });
+    }
+    return reports;
+  }
 }

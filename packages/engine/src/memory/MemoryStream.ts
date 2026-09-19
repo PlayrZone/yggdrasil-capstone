@@ -1,4 +1,5 @@
-import type { MemoryRecord, ObjectKind, SimEventType } from '../contract/types.js';
+import type { EventId, KindId } from '../contract/ids.js';
+import type { MemoryRecord } from '../contract/types.js';
 import { cosineSimilarity } from './IEmbedder.js';
 
 export interface RetrievalQuery {
@@ -16,7 +17,7 @@ const RECENCY_HALF_LIFE = 2000;
  * the object it was about, the same shape the miners key their cells by. The
  * two parts are split on the first ':'; neither vocabulary contains one.
  */
-export function episodicKey(type: SimEventType, objectKind?: ObjectKind): string {
+export function episodicKey(type: EventId, objectKind?: KindId): string {
   return `${type}:${objectKind ?? '*'}`;
 }
 

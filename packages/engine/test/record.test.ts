@@ -14,6 +14,7 @@ import {
   buildThinkPrompt,
   cognitionToExample,
   deserializeThinkInput,
+  foragerAdapter,
   retryPrompt,
   serializeThinkInput,
 } from '../src/index.js';
@@ -497,7 +498,7 @@ describe('outcome windows measure only themselves', () => {
     const exp = new Experiment({
       seed: 'window-truth',
       agentCount: 14,
-      mindBackend: new MockMindBackend(),
+      mindBackend: new MockMindBackend({ world: foragerAdapter }),
       recording: { sink, runId: 'run-window', outcomeWindowTicks: 40, nowMs: () => 0 },
     });
     const tracked = exp.agentIds.slice(0, 5);
@@ -664,7 +665,7 @@ describe('nothing goes missing quietly', () => {
     const exp = new Experiment({
       seed: 'broken-sink',
       agentCount: 12,
-      mindBackend: new MockMindBackend(),
+      mindBackend: new MockMindBackend({ world: foragerAdapter }),
       recording: { sink: brokenSink, runId: 'run-broken', nowMs: () => 0, onFailure: (e) => failures.push(e) },
     });
     for (const id of exp.agentIds.slice(0, 6)) exp.makeConscious(id);
@@ -705,7 +706,7 @@ describe('retried acts', () => {
     const exp = new Experiment({
       seed: 'retry',
       agentCount: 8,
-      mindBackend: new MockMindBackend({ failTimes: 1 }), // junk first, then valid
+      mindBackend: new MockMindBackend({ world: foragerAdapter, failTimes: 1 }), // junk first, then valid
       recording: { sink, runId: 'run-retry', nowMs: () => 0 },
     });
     exp.makeConscious(exp.agentIds[0]!);
@@ -744,7 +745,7 @@ describe('retried acts', () => {
     const exp = new Experiment({
       seed: 'retry-bytes',
       agentCount: 8,
-      mindBackend: new MockMindBackend({ failTimes: 1 }),
+      mindBackend: new MockMindBackend({ world: foragerAdapter, failTimes: 1 }),
       recording: { sink, runId: 'run-retry-bytes', nowMs: () => 0 },
     });
     exp.makeConscious(exp.agentIds[0]!);
@@ -771,7 +772,7 @@ describe('zero perturbation', () => {
       const exp = new Experiment({
         seed: 'perturbation',
         agentCount: 24,
-        mindBackend: new MockMindBackend(),
+        mindBackend: new MockMindBackend({ world: foragerAdapter }),
         ...(sink ? { recording: { sink, runId: 'run-perturb', nowMs: () => 0 } } : {}),
       });
       for (const id of exp.agentIds.slice(0, 8)) exp.makeConscious(id);
@@ -816,7 +817,7 @@ describe('a throwing closeRun is not silent', () => {
     const exp = new Experiment({
       seed: 'close-throws',
       agentCount: 8,
-      mindBackend: new MockMindBackend(),
+      mindBackend: new MockMindBackend({ world: foragerAdapter }),
       recording: { sink: halfBrokenSink, runId: 'run-close-throws', nowMs: () => 0, onFailure: (e) => failures.push(e) },
     });
     exp.makeConscious(exp.agentIds[0]!);

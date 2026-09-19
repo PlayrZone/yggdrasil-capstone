@@ -3,12 +3,11 @@ import type { Narrative } from '../narrative/NarrativeStore.js';
 import type {
   Goal,
   KnowledgeRecord,
-  Needs,
-  ObjectKind,
   RelationshipRecord,
   SimEvent,
   Traits,
 } from '../contract/types.js';
+import type { Needs, ObjectKind } from '../worlds/forager/types.js';
 
 /** One birth as the kinship ledger records it (the event log is capped). */
 export interface BirthRecord {

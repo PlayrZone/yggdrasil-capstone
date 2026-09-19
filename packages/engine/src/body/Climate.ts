@@ -1,5 +1,5 @@
 import type { Season } from './contract.js';
-import { TICKS_PER_DAY } from './WorldRegularities.js';
+import { TICKS_PER_DAY, TICKS_PER_SEASON } from './clock.js';
 
 /**
  * Deterministic seasons + coarse weather. Pure functions of the tick, so they
@@ -8,11 +8,10 @@ import { TICKS_PER_DAY } from './WorldRegularities.js';
  * presses) — the pressure that can select for shelter and stored food.
  *
  * Year = 4 seasons × SEASON_DAYS days. Tune SEASON_DAYS to trade off how fast
- * a run cycles through winters against how long groups have to adapt.
+ * a run cycles through winters against how long groups have to adapt. The
+ * numbers themselves live in `./clock.js`, a leaf — see the cycle it breaks.
  */
-export const SEASON_DAYS = 4;
-export const TICKS_PER_SEASON = SEASON_DAYS * TICKS_PER_DAY;
-export const TICKS_PER_YEAR = TICKS_PER_SEASON * 4;
+export { SEASON_DAYS, TICKS_PER_SEASON, TICKS_PER_YEAR } from './clock.js';
 
 const ORDER: Season[] = ['spring', 'summer', 'autumn', 'winter'];
 

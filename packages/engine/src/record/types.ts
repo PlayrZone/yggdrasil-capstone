@@ -1,5 +1,4 @@
 import type {
-  BuildKind,
   Goal,
   Intent,
   IntentKind,
@@ -7,16 +6,15 @@ import type {
   KnowledgeStatus,
   MemoryRecord,
   MindOutput,
-  Needs,
-  ObjectKind,
   RelationshipRecord,
   SimEvent,
-  SimEventType,
   SpeechAct,
   ThinkInput,
   ThinkTrigger,
   Utterance,
 } from '../contract/types.js';
+import type { EventId, KindId } from '../contract/ids.js';
+import type { Needs, ObjectKind } from '../worlds/forager/types.js';
 import type { ProvenanceLevel } from '../learning/ILearner.js';
 
 /**
@@ -179,7 +177,7 @@ export interface ScaffoldState {
   /** Author-written narratives this being currently carries. */
   seededMyths: string[];
   /** Author-emitted events this being witnessed (most recent last, capped). */
-  authoredEvents: { tick: number; type: SimEventType; actorId: number }[];
+  authoredEvents: { tick: number; type: EventId; actorId: number }[];
   /** Craft recipes handed to this being rather than learned. */
   seededRecipes: ObjectKind[];
   /** Ideas whispered in from outside the world. */
@@ -257,8 +255,8 @@ export interface IntentOutcome {
   /** Index into `resolvedOutput.plan`. */
   index: number;
   kind: IntentKind;
-  objectKind?: ObjectKind;
-  buildKind?: BuildKind;
+  objectKind?: KindId;
+  buildKind?: KindId;
   targetId?: number;
   durationTicks?: number;
   /** The body got as far as this step. */
@@ -269,7 +267,7 @@ export interface IntentOutcome {
   /** The body's own words for why (`not-in-inventory`, `out-of-range`, …). */
   rejectionReason?: string;
   /** What the act yielded: the events this step actually produced. */
-  yielded: { tick: number; type: SimEventType; payload: Record<string, unknown> }[];
+  yielded: { tick: number; type: EventId; payload: Record<string, unknown> }[];
 }
 
 export interface UtteranceOutcome {
@@ -366,7 +364,7 @@ export interface RunScaffoldSummary {
   relocations: number;
   seededMyths: { id: string; text: string; agents: number; tick: number }[];
   seededRecipes: { output: ObjectKind; agents: number; tick: number }[];
-  authoredEvents: { tick: number; type: SimEventType; actorId: number; witnesses: number }[];
+  authoredEvents: { tick: number; type: EventId; actorId: number; witnesses: number }[];
   ideasGiven: { tick: number; text: string; reached: number }[];
   madeConscious: number;
 }

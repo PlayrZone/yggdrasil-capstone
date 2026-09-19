@@ -5,6 +5,13 @@
  * it, so the two sides cannot drift; only the speech payload differs there
  * (physics transports an utterance without ever interpreting it).
  *
+ * W1-B2: the shapes here are WORLD-NEUTRAL. Every name a world supplies —
+ * events, drives, context features, kinds of thing — arrives as one of the
+ * opaque ids in `./ids.ts`, and this file names none of the forager
+ * continent's own vocabulary. That vocabulary now lives in
+ * `worlds/forager/types.ts` and is imported by the body, the world systems and
+ * the instrument, never by the mind.
+ *
  * Doctrine reminders enforced by these shapes (yggdrasil_civilization_design V2):
  * - No role/job/class/faction/rank field exists anywhere. Ever.
  * - Genesis carries zero social identity and zero knowledge.
@@ -15,19 +22,18 @@
  *   the learning system alone FORMS belief.
  */
 
-// ─── Needs & traits ──────────────────────────────────────────────────────────
+import type {
+  ContextFeatureId,
+  ContextRecord,
+  DriveDeltas,
+  DriveId,
+  DriveLevels,
+  EventId,
+  ItemCounts,
+  KindId,
+} from './ids.js';
 
-/**
- * Needs are PRESSURE values in [0, 100]: 0 = fully satisfied, rising over
- * time; "hunger = 95" means nearly starving. Thresholds: pressing ≥ 60,
- * critical ≥ 85.
- */
-export type NeedKey = 'hunger' | 'rest' | 'safety' | 'socialConnection';
-
-export type Needs = Record<NeedKey, number>;
-
-export const NEED_PRESSING = 60;
-export const NEED_CRITICAL = 85;
+// ─── Traits ──────────────────────────────────────────────────────────────────
 
 /** Six fixed traits, 0–100, rolled at genesis, immutable for life. */
 export interface Traits {
@@ -39,96 +45,16 @@ export interface Traits {
   riskTolerance: number;
 }
 
-// ─── World vocabulary ────────────────────────────────────────────────────────
-
-/**
- * Kinds of physical stuff — materials with PROPERTIES, never recipes
- * (see world/materials.ts). Purely physical, no social meaning. Tiers per
- * yggdrasil_world_design.md: basic → intermediate → advanced → rare. The
- * intermediate/metal kinds exist as data now; their discovery mechanics
- * (fire/smelting) arrive in world Slice 2.
- */
-export type ObjectKind =
-  // basic
-  | 'water'
-  | 'wood'
-  | 'stone'
-  | 'clay'
-  | 'fiber'
-  | 'berry' // edible forage
-  | 'tuber' // edible root
-  | 'seed'
-  | 'mushroomRed' // poisonous
-  | 'nightshade' // poisonous plant
-  | 'meat' // from animals (Slice 2)
-  | 'hide' // from animals (Slice 2)
-  // intermediate (outcomes of applying properties under heat/force/time — Slice 2)
-  | 'charcoal'
-  | 'leather'
-  | 'rope'
-  | 'spear' // tool/weapon — discovered by combining materials (a point + a shaft)
-  | 'club'
-  | 'handaxe'
-  | 'brick'
-  | 'copper'
-  | 'tin'
-  | 'iron'
-  | 'bronze'
-  // advanced (ores + fuels + salt)
-  | 'copperOre'
-  | 'tinOre'
-  | 'ironOre'
-  | 'coal'
-  | 'salt'
-  // rare
-  | 'silver'
-  | 'gold'
-  | 'gemstone'
-  // built structures / world objects
-  | 'shelter'
-  | 'wall'
-  | 'container'
-  | 'corpse';
-
-export type ResourceNodeKind =
-  | 'berryBush'
-  | 'tree'
-  | 'stoneDeposit'
-  | 'waterSource'
-  | 'river'
-  | 'foodPlant'
-  | 'mushroomPatch'
-  | 'tuberPlant'
-  | 'nightshadePlant'
-  | 'clayDeposit'
-  | 'fiberPlant'
-  | 'copperVein'
-  | 'tinVein'
-  | 'ironVein'
-  | 'coalSeam'
-  | 'saltFlat'
-  | 'silverVein'
-  | 'goldVein'
-  | 'gemVein'
-  | 'game'; // a wild animal — moves; hunting (gathering) it yields meat
-
-/**
- * Context features captured AT THE MOMENT a memory forms — the learning
- * system's feature space. Extending this vocabulary widens what is
- * discoverable; it must only ever grow (old runs stay minable).
- */
-export interface ContextFeatures {
-  nearWater: boolean;
-  night: boolean;
-  inShelter: boolean;
-  /** Coarse terrain elevation band: 0 lowland · 1 midland · 2 highland. */
-  elevationBand: number;
-}
-
-export type ContextFeatureKey = 'nearWater' | 'night' | 'inShelter' | 'highland';
-
 // ─── Intents (closed vocabulary, body-validated) ─────────────────────────────
 
+/**
+ * B3 REPLACES THIS with `{ core: CoreVerb, action: ActionId, args }` bound
+ * through the adapter's `actions`. It stays in the contract rather than moving
+ * to the forager world because it is the CORE verb set every world binds to,
+ * not a table of this world's nouns — and because widening it now would cost
+ * the body its exhaustive dispatch for no gain the next step does not deliver
+ * properly. The arguments that DO name things are already opaque.
+ */
 export type IntentKind =
   | 'MoveTo'
   | 'Gather'
@@ -147,8 +73,6 @@ export type IntentKind =
   | 'Flee'
   | 'Idle';
 
-export type BuildKind = 'shelter' | 'wall' | 'container';
-
 export interface Intent {
   kind: IntentKind;
   /** Target position for MoveTo / Flee-from / Build / Deposit-on-ground. */
@@ -157,9 +81,9 @@ export interface Intent {
   /** Target entity (resource node, agent, container) where relevant. */
   targetId?: number;
   /** Item kind for Eat / Deposit / Withdraw / Give. */
-  objectKind?: ObjectKind;
+  objectKind?: KindId;
   /** Structure kind for Build. */
-  buildKind?: BuildKind;
+  buildKind?: KindId;
   /** Tick count for Sleep / Idle duration. */
   durationTicks?: number;
   /** Utterance payload for Speak. */
@@ -208,40 +132,9 @@ export interface Utterance {
 
 // ─── Events ──────────────────────────────────────────────────────────────────
 
-export type SimEventType =
-  | 'GatherSucceeded'
-  | 'GatherFailed'
-  | 'AteFood'
-  | 'DrankWater'
-  | 'BecameSick'
-  | 'RecoveredFromSickness'
-  | 'SleptSafely'
-  | 'SleptExposed'
-  | 'SufferedExposure'
-  | 'ReceivedItem'
-  | 'GaveItem'
-  | 'WasAttacked'
-  | 'AttackedAgent'
-  | 'AttackedByPredator'
-  | 'FoughtPredator'
-  | 'KilledPredator'
-  | 'Crafted'
-  | 'ChildBorn'
-  | 'AgentDied'
-  | 'WitnessedDeath'
-  | 'SeedDeposited'
-  | 'PlantSprouted'
-  | 'BuiltStructure'
-  | 'DepositedItem'
-  | 'WithdrewItem'
-  | 'UtteranceSpoken'
-  | 'IntentRejected'
-  | 'SawAgent'
-  | 'FoundResource';
-
 export interface SimEvent {
   tick: number;
-  type: SimEventType;
+  type: EventId;
   actorId: number;
   targetIds: number[];
   x: number;
@@ -258,15 +151,15 @@ export type MemoryOrigin = 'experience' | 'observation' | 'testimony';
 export interface MemoryRecord {
   id: number;
   tick: number;
-  type: SimEventType;
+  type: EventId;
   /** Agent ids involved, excluding the rememberer. */
   subjects: number[];
-  objectKind?: ObjectKind;
-  /** For Crafted events: the materials that were combined (seen in a demonstration). */
-  craftInputs?: Partial<Record<ObjectKind, number>>;
-  context: ContextFeatures;
+  objectKind?: KindId;
+  /** For a demonstration of making: what was seen going in. */
+  craftInputs?: ItemCounts;
+  context: ContextRecord;
   /** Need pressure deltas this event caused (negative = relief). */
-  needDeltas: Partial<Needs>;
+  needDeltas: DriveDeltas;
   outcome: 'success' | 'failure' | 'neutral';
   /** Where it happened (world units) — succession mining matches locality. */
   x?: number;
@@ -302,17 +195,17 @@ export interface MemoryRecord {
 export type KnowledgeRule =
   | {
       kind: 'context-association';
-      event: SimEventType;
-      objectKind?: ObjectKind;
-      feature: ContextFeatureKey;
+      event: EventId;
+      objectKind?: KindId;
+      feature: ContextFeatureId;
       direction: 'positive' | 'negative';
     }
   | {
       kind: 'succession';
-      causeType: SimEventType;
-      causeObject?: ObjectKind;
-      effectType: SimEventType;
-      effectObject?: ObjectKind;
+      causeType: EventId;
+      causeObject?: KindId;
+      effectType: EventId;
+      effectObject?: KindId;
     }
   | {
       kind: 'social-contingency';
@@ -321,9 +214,9 @@ export type KnowledgeRule =
     }
   | {
       kind: 'outcome-association';
-      actionType: SimEventType;
-      feature: ContextFeatureKey | null;
-      need: NeedKey;
+      actionType: EventId;
+      feature: ContextFeatureId | null;
+      need: DriveId;
       direction: 'relieves' | 'worsens';
     }
   | {
@@ -333,8 +226,8 @@ export type KnowledgeRule =
       // output is the recipe's identity; inputs are what the demonstration
       // showed going in. This is the transmissible unit of technology.
       kind: 'craft-recipe';
-      output: ObjectKind;
-      inputs: Partial<Record<ObjectKind, number>>;
+      output: KindId;
+      inputs: ItemCounts;
     };
 
 export type KnowledgeStatus = 'hypothesis' | 'held' | 'contested' | 'abandoned';
@@ -363,8 +256,8 @@ export interface EvidenceSnapshot {
   /** The memory it was taken from. May no longer exist — that is the point. */
   memoryId: number;
   tick: number;
-  type: SimEventType;
-  objectKind: ObjectKind | undefined;
+  type: EventId;
+  objectKind: KindId | undefined;
   outcome: 'success' | 'failure' | 'neutral';
   origin: MemoryOrigin;
   /** For origin=testimony: who said so. */
@@ -417,13 +310,13 @@ export interface AgentSnapshot {
   name: string;
   ageTicks: number;
   traits: Traits;
-  needs: Needs;
+  needs: DriveLevels;
   health: number;
   sick: boolean;
   x: number;
   y: number;
-  inventory: Partial<Record<ObjectKind, number>>;
-  context: ContextFeatures;
+  inventory: ItemCounts;
+  context: ContextRecord;
 }
 
 export interface ObservedAgent {
@@ -434,7 +327,7 @@ export interface ObservedAgent {
 
 export interface ObservedResource {
   id: number;
-  kind: ResourceNodeKind;
+  kind: KindId;
   x: number;
   y: number;
   stock: number;
@@ -442,19 +335,17 @@ export interface ObservedResource {
 
 export interface ObservedStructure {
   id: number;
-  kind: BuildKind;
+  kind: KindId;
   x: number;
   y: number;
 }
 
 /** What the agent can currently perceive. */
-export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
-
 export interface WorldView {
   tick: number;
   night: boolean;
-  /** Current season — winter collapses forage and raises cold pressure. */
-  season: Season;
+  /** The phase of the world's year, as `TimeOps.seasonAt` names it. */
+  season: string;
   agents: ObservedAgent[];
   resources: ObservedResource[];
   structures: ObservedStructure[];
@@ -463,8 +354,8 @@ export interface WorldView {
 export interface Goal {
   id: number;
   description: string;
-  /** The need this goal serves, when it serves one. */
-  need?: NeedKey;
+  /** The drive this goal serves, when it serves one. */
+  need?: DriveId;
   createdTick: number;
 }
 

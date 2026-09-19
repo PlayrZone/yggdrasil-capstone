@@ -1,4 +1,5 @@
-import { NEED_CRITICAL, NEED_PRESSING } from '../contract/types.js';
+import type { Needs } from '../worlds/forager/types.js';
+import { NEED_CRITICAL, NEED_PRESSING } from '../worlds/forager/types.js';
 import { attemptPrompt } from '../record/serialize.js';
 import type { CognitionAttempt, CognitionRecordV2 } from '../record/types.js';
 import { NearDuplicateIndex, contentHash } from './dedupe.js';
@@ -350,7 +351,8 @@ export function planShape(rec: CognitionRecordV2): string {
 
 /** The pressure band the being was under when the prompt was built. */
 export function needRegime(rec: CognitionRecordV2): NeedRegime {
-  const n = rec.thinkInput.snapshot.needs;
+  // This world's four drives; B5 reads them from the adapter, as the prompt will.
+  const n = rec.thinkInput.snapshot.needs as Needs;
   const peak = Math.max(n.hunger, n.rest, n.safety, n.socialConnection);
   if (peak >= NEED_CRITICAL) return 'critical';
   if (peak >= NEED_PRESSING) return 'pressing';

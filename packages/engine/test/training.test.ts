@@ -12,6 +12,7 @@ import {
   cognitionToExample,
   curateCorpus,
   evalJsonValidity,
+  foragerAdapter,
   leakTrapBattery,
   parseMindOutput,
   parseMindOutputDetailed,
@@ -367,7 +368,7 @@ describe('validity: the reason rides onto the attempt', () => {
   it('retries and falls back on an output that decided nothing, recording why', async () => {
     const log: CognitionRecord[] = [];
     const empty: IMindBackend = { modelId: 'mock/empty', complete: () => Promise.resolve('{}') };
-    const mind = new LlmMind(empty, { fallback: new ReflexMind(), onCognition: (r) => log.push(r) });
+    const mind = new LlmMind(empty, { fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
     const out = await mind.complete(leakTrapBattery()[0]!.input);
 
     expect(out.plan.length).toBeGreaterThan(0); // reflex carried the being
@@ -383,7 +384,7 @@ describe('validity: the reason rides onto the attempt', () => {
     const log: CognitionRecord[] = [];
     const flood = JSON.stringify({ plan: Array.from({ length: 500 }, () => ({ kind: 'Idle' })) });
     const verbose: IMindBackend = { modelId: 'mock/verbose', complete: () => Promise.resolve(flood) };
-    const mind = new LlmMind(verbose, { fallback: new ReflexMind(), onCognition: (r) => log.push(r) });
+    const mind = new LlmMind(verbose, { fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
     await mind.complete(leakTrapBattery()[0]!.input);
     expect(log[0]!.attempts[1]!.prompt.user).toContain('plan-too-long');
   });
@@ -393,7 +394,7 @@ describe('eval gate 1: JSON validity', () => {
   const inputs = (): ThinkInput[] => leakTrapBattery().slice(0, 4).map((t) => t.input);
 
   it('scores the mock backend valid and reports the salvage count', async () => {
-    const r = await evalJsonValidity(new MockMindBackend(), inputs());
+    const r = await evalJsonValidity(new MockMindBackend({ world: foragerAdapter }), inputs());
     expect(r.rate).toBe(1);
     expect(r.byReason).toEqual({});
     expect(r.salvagedFenced).toBe(0);
@@ -425,7 +426,7 @@ describe('eval gate 1: JSON validity', () => {
     expect(lazyScore.acting).toBe(0);
     expect(lazyScore.speaking).toBe(0);
 
-    const real = await evalJsonValidity(new MockMindBackend(), inputs());
+    const real = await evalJsonValidity(new MockMindBackend({ world: foragerAdapter }), inputs());
     expect(real.rate).toBe(1); // identical headline…
     expect(real.acting).toBeGreaterThan(0); // …different mind
     expect(real.idleOnly).toBeLessThan(lazyScore.idleOnly);

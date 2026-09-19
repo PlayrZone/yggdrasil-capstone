@@ -1,4 +1,6 @@
-import type { Intent, IntentKind, MindOutput, ObjectKind, ThinkInput } from '../contract/types.js';
+import type { Intent, IntentKind, MindOutput, ThinkInput } from '../contract/types.js';
+import type { KindId } from '../contract/ids.js';
+import type { ObjectKind } from '../worlds/forager/types.js';
 import type { LeakDomain, LeakEvidence } from './leakMatch.js';
 
 /**
@@ -32,7 +34,7 @@ import type { LeakDomain, LeakEvidence } from './leakMatch.js';
 export interface IntentPattern {
   kind: IntentKind;
   /** Any of these object kinds; omitted means the arg is not looked at. */
-  objectKind?: readonly ObjectKind[];
+  objectKind?: readonly KindId[];
   /** At least this many of this pattern, in sequence. Default 1. */
   count?: number;
 }

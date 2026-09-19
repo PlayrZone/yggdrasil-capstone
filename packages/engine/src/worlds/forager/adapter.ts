@@ -1,6 +1,6 @@
 import { defineWorld } from '../../contract/adapter.js';
 import type { WorldAdapter } from '../../contract/adapter.js';
-import { NEED_CRITICAL, NEED_PRESSING } from '../../contract/types.js';
+import { NEED_CRITICAL, NEED_PRESSING } from './types.js';
 import { seasonAt } from '../../body/index.js';
 
 /**
@@ -99,6 +99,14 @@ export const foragerAdapter: WorldAdapter = defineWorld({
    * `narratable` — which events runner/society/Narration.ts can author a story
    *   from (declared here; B5 moves the wording).
    * `causal: false` — learning/SuccessionMiner.ts DEFAULT_EXCLUDE.
+   * `social` — learning/SocialMiner.ts's switch over event names (W1-B2):
+   *   `GaveItem`→gave, `ReceivedItem`→received, `WasAttacked`→harmed,
+   *   `AttackedAgent`→harmedOther, `UtteranceSpoken`→engaged, and nothing
+   *   else was a case. `harmedOther` and `engaged` behave alike in the miner
+   *   today (a bare interaction) and are still declared apart, because what
+   *   they ARE differs and B3's arbitration will care.
+   * `demonstrates` — learning/CraftObservationMiner.ts's `type !== 'Crafted'`
+   *   guard, with the two memory parts it then read.
    *
    * Listed in the order `SimEventType` declares them, which is also the order
    * BASE listed them; nothing reads the array in order, but a reviewer does.
@@ -115,25 +123,32 @@ export const foragerAdapter: WorldAdapter = defineWorld({
     { id: 'SleptSafely', salience: 0.15, relationshipDeltas: {} },
     { id: 'SleptExposed', salience: 0.35 },
     { id: 'SufferedExposure', salience: 0.5 },
-    { id: 'ReceivedItem', salience: 0.6, relationshipDeltas: { trust: 6, friendship: 5 } },
+    { id: 'ReceivedItem', salience: 0.6, relationshipDeltas: { trust: 6, friendship: 5 }, social: 'received' },
     {
       id: 'GaveItem',
       salience: 0.45,
       relationshipDeltas: { friendship: 2 },
       roles: { target: { recordsAs: 'ReceivedItem' } },
+      social: 'gave',
     },
-    { id: 'WasAttacked', salience: 0.9, relationshipDeltas: { trust: -15, fear: 12, friendship: -10 } },
+    {
+      id: 'WasAttacked',
+      salience: 0.9,
+      relationshipDeltas: { trust: -15, fear: 12, friendship: -10 },
+      social: 'harmed',
+    },
     {
       id: 'AttackedAgent',
       salience: 0.7,
       relationshipDeltas: { fear: -2 },
       roles: { target: { recordsAs: 'WasAttacked' } },
+      social: 'harmedOther',
       narratable: true,
     },
     { id: 'AttackedByPredator', salience: 0.92 },
     { id: 'FoughtPredator', salience: 0.8 },
     { id: 'KilledPredator', salience: 0.88, prestige: { respect: 5 }, narratable: true },
-    { id: 'Crafted', salience: 0.78 },
+    { id: 'Crafted', salience: 0.78, demonstrates: { output: 'objectKind', inputs: 'craftInputs' } },
     { id: 'ChildBorn', salience: 0.9 },
     {
       id: 'AgentDied',
@@ -167,6 +182,7 @@ export const foragerAdapter: WorldAdapter = defineWorld({
       relationshipDeltas: { friendship: 1 },
       // Spoken to, or overheard: either way you were told it.
       roles: { target: { heard: true }, bystander: { heard: true } },
+      social: 'engaged',
       causal: false,
     },
     {

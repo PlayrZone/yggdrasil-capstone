@@ -1,5 +1,6 @@
 import type { KnowledgeRecord, ThinkInput } from '../contract/types.js';
-import { NEED_CRITICAL, NEED_PRESSING } from '../contract/types.js';
+import type { Needs } from '../worlds/forager/types.js';
+import { NEED_CRITICAL, NEED_PRESSING } from '../worlds/forager/types.js';
 import { narrativeRefOf } from '../narrative/NarrativeStore.js';
 
 /**
@@ -38,6 +39,10 @@ export function retryPrompt(base: ThinkPrompt, retryError: string | undefined): 
 export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
   const { snapshot, knowledge, recalledMemories, worldView, goals, trigger } = input;
   const t = snapshot.traits;
+  // A snapshot carries one pressure per drive the WORLD declares; this prompt
+  // still names the forager continent's four. B5 renders needs (and every
+  // other world noun here) from the adapter, and this narrowing goes with it.
+  const needs = snapshot.needs as Needs;
 
   const unnamed = !snapshot.name || snapshot.name.length === 0;
   const system = [
@@ -80,7 +85,7 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     `Why you are thinking now: ${trigger}.`,
     ``,
     `NEEDS (0 satisfied, 100 desperate — ${NEED_PRESSING}+ pressing, ${NEED_CRITICAL}+ critical):`,
-    `  hunger ${fmt(snapshot.needs.hunger)}, rest ${fmt(snapshot.needs.rest)}, safety ${fmt(snapshot.needs.safety)}, social ${fmt(snapshot.needs.socialConnection)}`,
+    `  hunger ${fmt(needs.hunger)}, rest ${fmt(needs.rest)}, safety ${fmt(needs.safety)}, social ${fmt(needs.socialConnection)}`,
     `HEALTH ${fmt(snapshot.health)}${snapshot.sick ? ' (SICK)' : ''}. It is ${worldView.season}, ${worldView.night ? 'night' : 'day'}.`,
     `INVENTORY: ${inventoryText(snapshot.inventory)}`,
     ``,

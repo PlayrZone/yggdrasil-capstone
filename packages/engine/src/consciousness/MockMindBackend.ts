@@ -1,18 +1,36 @@
+import type { WorldAdapter } from '../contract/adapter.js';
 import type { ThinkInput } from '../contract/types.js';
 import type { IMind } from './IMind.js';
 import type { IMindBackend } from './IMindBackend.js';
 import type { ThinkPrompt } from './prompt.js';
 import { ReflexMind } from './ReflexMind.js';
 
-export interface MockMindBackendOptions {
+interface MockMindBackendBase {
   /**
    * Fail this many times (returning junk) before succeeding — exercises the
    * LlmMind retry + fallback paths deterministically. Default 0.
    */
-  failTimes?: number;
-  /** Reflex policy whose output the mock serializes as "the model's answer". */
-  policy?: IMind;
+  readonly failTimes?: number;
 }
+
+/**
+ * WHERE THE MOCK'S ANSWERS COME FROM, said out loud. It used to fall back to
+ * `new ReflexMind()`, which silently made every mock cohort — in any world —
+ * think with the forager continent's survival policy (W1-B1 verifier,
+ * backlog 2). Now a caller either hands the policy or names the world whose
+ * reflex policy to use, and there is no third option.
+ */
+export type MockMindBackendOptions =
+  | (MockMindBackendBase & {
+      /** Policy whose output the mock serializes as "the model's answer". */
+      readonly policy: IMind;
+      readonly world?: never;
+    })
+  | (MockMindBackendBase & {
+      /** The world whose reflex policy answers. */
+      readonly world: WorldAdapter;
+      readonly policy?: never;
+    });
 
 /**
  * Offline/deterministic backend for tests and for running the full Y3
@@ -26,8 +44,8 @@ export class MockMindBackend implements IMindBackend {
   private readonly policy: IMind;
   private failTimes: number;
 
-  constructor(options: MockMindBackendOptions = {}) {
-    this.policy = options.policy ?? new ReflexMind();
+  constructor(options: MockMindBackendOptions) {
+    this.policy = options.policy ?? new ReflexMind(options.world);
     this.failTimes = options.failTimes ?? 0;
   }
 

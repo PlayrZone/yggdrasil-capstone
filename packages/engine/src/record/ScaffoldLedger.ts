@@ -1,4 +1,6 @@
-import type { ObjectKind, SimEvent, SimEventType } from '../contract/types.js';
+import type { SimEvent } from '../contract/types.js';
+import type { EventId } from '../contract/ids.js';
+import type { ObjectKind } from '../worlds/forager/types.js';
 import type { RunScaffoldSummary, ScaffoldEvent, ScaffoldKind, ScaffoldState } from './types.js';
 
 /** Per-being authored events kept for the record; older ones fall off. */
@@ -13,7 +15,7 @@ interface BeingScaffold {
   last: Partial<Record<ScaffoldKind, number>>;
   seededRecipes: { output: ObjectKind; tick: number }[];
   ideas: number[];
-  authoredEvents: { tick: number; type: SimEventType; actorId: number }[];
+  authoredEvents: { tick: number; type: EventId; actorId: number }[];
   /** Bounded recent timeline — read only over a think's short span. */
   timeline: ScaffoldEvent[];
 }

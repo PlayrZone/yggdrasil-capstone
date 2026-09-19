@@ -85,7 +85,7 @@ function hear(listener: AgentMind, utterance: Utterance): void {
 }
 
 async function speakThroughLlm(agent: AgentMind, utterances: Utterance[]): Promise<Utterance[]> {
-  const llm = new LlmMind(new MockMindBackend({ policy: new ScriptedMind(utterances) }));
+  const llm = new LlmMind(new MockMindBackend({ policy: new ScriptedMind(utterances) }), { world: foragerAdapter });
   const output = await llm.complete(thinkInput(agent));
   return agent.applyOutput(output).utterances;
 }
@@ -232,7 +232,7 @@ describe('LLM speech resolution', () => {
 describe('speech from minds that attach their own rules', () => {
   it('still teaches on the reflex path — its rules come from the same store', () => {
     resetIds();
-    const speaker = speakerMind(new ReflexMind());
+    const speaker = speakerMind(new ReflexMind(foragerAdapter));
     const listener = new AgentMind(LISTENER, foragerAdapter);
     const input = thinkInput(speaker);
     const out = speaker.think(input.snapshot, input.worldView, 'periodic');

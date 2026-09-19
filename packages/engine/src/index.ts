@@ -107,19 +107,11 @@ export { OutcomeTracker } from './record/OutcomeTracker.js';
 // ── Mind (memory · learning · knowledge · consciousness) ─────────────────────
 
 export type {
-  NeedKey,
-  Needs,
   Traits,
-  ObjectKind,
-  ResourceNodeKind,
-  ContextFeatures,
-  ContextFeatureKey,
   IntentKind,
   Intent,
-  BuildKind,
   SpeechAct,
   Utterance,
-  SimEventType,
   SimEvent,
   MemoryOrigin,
   MemoryRecord,
@@ -137,11 +129,19 @@ export type {
   RelationshipRecord,
   ThinkInput,
   MindOutput,
-  Season,
 } from './contract/types.js';
-export { NEED_PRESSING, NEED_CRITICAL } from './contract/types.js';
 
 // ── The WorldAdapter seam (W1-B) — one brain, any world ──────────────────────
+export type {
+  EventId,
+  DriveId,
+  ContextFeatureId,
+  KindId,
+  DriveLevels,
+  DriveDeltas,
+  ContextRecord,
+  ItemCounts,
+} from './contract/ids.js';
 export type {
   WorldAdapter,
   WorldSpec,
@@ -151,15 +151,30 @@ export type {
   EventRoles,
   EventRoleSchema,
   PrestigeSchema,
+  SocialRole,
+  DemonstrationSchema,
   RelationshipDeltas,
   TimeOps,
   TraitCurve,
   CognitionDefaults,
-  EventId,
-  ContextFeatureId,
-  DriveId,
 } from './contract/adapter.js';
-export { defineWorld, featureActive, traitCurveValue } from './contract/adapter.js';
+export { defineWorld, featureActive, traitCurveValue, emptyContext, heardEvent } from './contract/adapter.js';
+export { WorldGate } from './contract/gate.js';
+export type { WorldGateCounts } from './contract/gate.js';
+
+// ── The forager continent's own vocabulary (W1-B2 — no longer the mind's) ────
+export type {
+  NeedKey,
+  Needs,
+  ObjectKind,
+  ResourceNodeKind,
+  BuildKind,
+  ContextFeatures,
+  ContextFeatureKey,
+  SimEventType,
+  Season,
+} from './worlds/forager/types.js';
+export { NEED_PRESSING, NEED_CRITICAL } from './worlds/forager/types.js';
 export { foragerAdapter } from './worlds/forager/adapter.js';
 
 export type { MaterialProps, MaterialTier } from './world/materials.js';

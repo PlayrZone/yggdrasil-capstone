@@ -1,5 +1,6 @@
 import type { WorldAdapter } from '../contract/adapter.js';
-import type { EvidenceSnapshot, MemoryRecord, SimEventType } from '../contract/types.js';
+import type { EventId } from '../contract/ids.js';
+import type { EvidenceSnapshot, MemoryRecord } from '../contract/types.js';
 import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample, snapshotOf } from './ILearner.js';
 
@@ -20,7 +21,7 @@ export interface SuccessionMinerOptions {
   /** When both memories carry coords, they must be this close. */
   radius?: number;
   /** Overrides the world's own list of events that carry no causal signal. */
-  exclude?: SimEventType[];
+  exclude?: EventId[];
   /** How much evidence each mined rule keeps about itself. */
   provenance?: ProvenanceLevel;
 }
@@ -36,14 +37,14 @@ export interface SuccessionMinerOptions {
 export class SuccessionMiner implements ILearner {
   private readonly window: number;
   private readonly radius: number;
-  private readonly exclude: Set<SimEventType>;
+  private readonly exclude: Set<EventId>;
   private readonly provenanceLevel: ProvenanceLevel;
 
   private pending: PendingCause[] = [];
   private causeTotals = new Map<string, number>();
   private pairCounts = new Map<string, number>();
   private provenance = new Map<string, ProvenanceSample>();
-  private keyParts = new Map<string, { type: SimEventType; objectKind?: MemoryRecord['objectKind'] }>();
+  private keyParts = new Map<string, { type: EventId; objectKind?: MemoryRecord['objectKind'] }>();
 
   constructor(world: WorldAdapter, options: SuccessionMinerOptions = {}) {
     this.window = options.windowTicks ?? 600;

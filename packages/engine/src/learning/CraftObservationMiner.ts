@@ -1,11 +1,13 @@
-import type { MemoryRecord, ObjectKind } from '../contract/types.js';
+import type { WorldAdapter } from '../contract/adapter.js';
+import type { ItemCounts, KindId } from '../contract/ids.js';
+import type { MemoryRecord } from '../contract/types.js';
 import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
 
 interface RecipeTally {
   /** Weighted count of crafts seen: performing fully, watching at a discount. */
   seen: number;
-  inputs: Partial<Record<ObjectKind, number>>;
+  inputs: ItemCounts;
   provenance: ProvenanceSample;
 }
 
@@ -25,15 +27,23 @@ const MIN_SAMPLES = 3;
  * teaches faster. Testimony is intentionally NOT a source: you cannot be told
  * a craft into your hands, you learn it by watching it done (apprenticeship,
  * not hearsay). This is what lets a skill — and a technology — be inherited.
+ *
+ * WHICH events are a making is the world's `events[].demonstrates`, which also
+ * names the parts of the memory that carry what was made and what went in. The
+ * miner never asks what an event is called.
  */
 export class CraftObservationMiner implements ILearner {
-  constructor(private readonly provenance: ProvenanceLevel = 'compact') {}
+  constructor(
+    private readonly world: WorldAdapter,
+    private readonly provenance: ProvenanceLevel = 'compact',
+  ) {}
 
-  private recipes = new Map<ObjectKind, RecipeTally>();
+  private recipes = new Map<KindId, RecipeTally>();
 
   observe(memory: MemoryRecord): void {
-    if (memory.type !== 'Crafted') return;
-    const output = memory.objectKind;
+    const demonstrates = this.world.eventById.get(memory.type)?.demonstrates;
+    if (!demonstrates) return;
+    const output = memory[demonstrates.output];
     if (!output) return;
     const weight = memory.origin === 'experience' ? 1 : memory.origin === 'observation' ? OBSERVE_WEIGHT : 0;
     if (weight === 0) return; // testimony is not a craft-learning channel
@@ -43,11 +53,12 @@ export class CraftObservationMiner implements ILearner {
       this.recipes.set(output, t);
     }
     t.seen += weight;
-    // What the demonstration showed going in — COPIED, because one Crafted event
-    // hands the same `inputs` object to every witness (and it is the engine's own
+    // What the demonstration showed going in — COPIED, because one making
+    // hands the same `inputs` object to every witness (and it is the world's own
     // recipe table), so keeping the reference would let every watcher's belief
     // share one object with the world's physics.
-    if (memory.craftInputs) t.inputs = { ...memory.craftInputs };
+    const inputs = memory[demonstrates.inputs];
+    if (inputs) t.inputs = { ...inputs };
     t.provenance.add(memory);
   }
 

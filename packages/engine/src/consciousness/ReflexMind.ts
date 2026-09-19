@@ -4,20 +4,24 @@ import type {
   Intent,
   KnowledgeRecord,
   MindOutput,
-  NeedKey,
-  ObjectKind,
   ObservedResource,
   ThinkInput,
 } from '../contract/types.js';
-import { foragerAdapter } from '../worlds/forager/adapter.js';
+import type { DriveId, KindId } from '../contract/ids.js';
 import type { IMind } from './IMind.js';
+
+// W1-B2: this policy still SPELLS this world's nouns (B3 moves the file), but
+// it may not IMPORT the world — `AgentMind` constructs it, and the mind's type
+// graph must not reach one (`test/mind-type-graph.test.ts`). So the kinds and
+// drives below are opaque ids; B3 has their spelling checked again, against the
+// adapter's own `kinds` and `actions`.
 
 // Things an agent might TRY to eat (nutritious + poisonous). The reflex only
 // eats one if its held knowledge hasn't flagged it as sickening — discovery
 // drives the avoidance.
-const EDIBLE: ObjectKind[] = ['berry', 'tuber', 'mushroomRed', 'nightshade'];
+const EDIBLE: KindId[] = ['berry', 'tuber', 'mushroomRed', 'nightshade'];
 const FOOD_NODES = new Set(['berryBush', 'foodPlant', 'mushroomPatch', 'tuberPlant', 'nightshadePlant']);
-const POISON_NODE_YIELD: Partial<Record<string, ObjectKind>> = {
+const POISON_NODE_YIELD: Partial<Record<string, KindId>> = {
   mushroomPatch: 'mushroomRed',
   nightshadePlant: 'nightshade',
 };
@@ -35,11 +39,14 @@ export class ReflexMind implements IMind {
   /**
    * Principle 3 of the W1-B brief: this policy is already WORLD side — it is
    * the forager continent's hand-written survival instinct, nouns and all, and
-   * B3 moves the whole file to `worlds/forager/reflexPolicy.ts`. So the default
-   * is the world it belongs to, and a host that asks for "the reflex mind"
-   * without naming a world still gets exactly what it always got.
+   * B3 moves the whole file to `worlds/forager/reflexPolicy.ts`.
+   *
+   * The world is REQUIRED (W1-B1 verifier, backlog 2). It used to default to
+   * the forager continent, so `new ReflexMind()` in `LlmMind` and
+   * `MockMindBackend` silently made another world's fallback policy read this
+   * world's drive thresholds.
    */
-  constructor(private readonly world: WorldAdapter = foragerAdapter) {}
+  constructor(private readonly world: WorldAdapter) {}
 
   think(input: ThinkInput): MindOutput {
     const { snapshot, worldView, knowledge } = input;
@@ -176,7 +183,7 @@ export class ReflexMind implements IMind {
   }
 }
 
-function goal(input: ThinkInput, description: string, need: NeedKey | undefined): Goal {
+function goal(input: ThinkInput, description: string, need: DriveId | undefined): Goal {
   return { id: input.worldView.tick, description, need, createdTick: input.worldView.tick };
 }
 
@@ -184,11 +191,16 @@ function goal(input: ThinkInput, description: string, need: NeedKey | undefined)
 // early each drive is served (hunger early, so foraging has runway before
 // starvation; rest/social late, so they don't dominate through hunger). Scanned
 // in the world's declared order — a tie goes to the later drive.
-function mostPressingNeed(input: ThinkInput, drives: readonly DriveSchema[]): NeedKey | undefined {
-  let best: NeedKey | undefined;
+function mostPressingNeed(input: ThinkInput, drives: readonly DriveSchema[]): DriveId | undefined {
+  let best: DriveId | undefined;
   let bestMargin = 0;
   for (const drive of drives) {
-    const margin = input.snapshot.needs[drive.id] - drive.actsAt;
+    // A drive the body reports nothing for is skipped, exactly as the `NaN`
+    // comparison it replaces skipped it. This policy is the forager world's,
+    // so its own four drives are always present.
+    const pressure = input.snapshot.needs[drive.id];
+    if (pressure === undefined) continue;
+    const margin = pressure - drive.actsAt;
     if (margin >= 0 && margin >= bestMargin) {
       best = drive.id;
       bestMargin = margin;
@@ -241,7 +253,7 @@ function rememberedFoodSpot(input: ThinkInput): { x: number; y: number } | undef
 
 // Where a raw material is won, so a being that knows a recipe can go get what
 // it lacks. (Stone is also winnable by digging, but a deposit is the reflex path.)
-const MATERIAL_NODE: Partial<Record<ObjectKind, ObservedResource['kind']>> = {
+const MATERIAL_NODE: Partial<Record<KindId, ObservedResource['kind']>> = {
   wood: 'tree',
   stone: 'stoneDeposit',
   fiber: 'fiberPlant',
@@ -249,7 +261,7 @@ const MATERIAL_NODE: Partial<Record<ObjectKind, ObservedResource['kind']>> = {
 // Materials with no resource node to harvest are won from the ground by digging
 // (stone on dry land, clay by water) — the Dig capability the reflex otherwise
 // never reaches for. A being that knows a craft will dig for what it needs.
-const DIGGABLE = new Set<ObjectKind>(['stone', 'clay']);
+const DIGGABLE = new Set<KindId>(['stone', 'clay']);
 /** The recipe this being knows how to make (held craft-knowledge), if any. */
 function heldRecipe(
   knowledge: KnowledgeRecord[],
@@ -272,8 +284,8 @@ function craftPlan(
 ): Intent[] | undefined {
   if (!recipe) return undefined;
   const inv = input.snapshot.inventory;
-  let missing: ObjectKind | undefined;
-  for (const [k, n] of Object.entries(recipe.inputs) as [ObjectKind, number][]) {
+  let missing: KindId | undefined;
+  for (const [k, n] of Object.entries(recipe.inputs) as [KindId, number][]) {
     if ((inv[k] ?? 0) < n) {
       missing = k;
       break;
@@ -296,7 +308,7 @@ function craftPlan(
 }
 
 /** Held knowledge "eating X is followed by sickness" vetoes eating X. */
-function knownHarmful(kind: ObjectKind, knowledge: KnowledgeRecord[]): boolean {
+function knownHarmful(kind: KindId, knowledge: KnowledgeRecord[]): boolean {
   return knowledge.some(
     (k) =>
       k.status === 'held' &&
@@ -315,7 +327,7 @@ function knownHarmful(kind: ObjectKind, knowledge: KnowledgeRecord[]): boolean {
 function safeEdibleInInventory(
   inventory: ThinkInput['snapshot']['inventory'],
   knowledge: KnowledgeRecord[],
-): ObjectKind | undefined {
+): KindId | undefined {
   for (const kind of EDIBLE) {
     if ((inventory[kind] ?? 0) > 0 && !knownHarmful(kind, knowledge)) return kind;
   }
@@ -342,7 +354,7 @@ function nearestNode(input: ThinkInput, kind: ObservedResource['kind']): Observe
   );
 }
 
-function nearestStructure(input: ThinkInput, kind: 'shelter' | 'wall' | 'container') {
+function nearestStructure(input: ThinkInput, kind: KindId) {
   return nearest(
     input,
     input.worldView.structures.filter((s) => s.kind === kind),

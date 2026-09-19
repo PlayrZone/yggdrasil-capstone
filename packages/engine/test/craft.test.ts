@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CraftObservationMiner } from '../src/learning/CraftObservationMiner.js';
-import { renderStatement, ruleKey } from '../src/index.js';
+import { foragerAdapter, renderStatement, ruleKey } from '../src/index.js';
 import type { KnowledgeRule } from '../src/contract/types.js';
 import { mem, resetIds } from './helpers.js';
 
@@ -21,7 +21,7 @@ describe('craft-recipe knowledge rule', () => {
 describe('CraftObservationMiner — learning a skill by watching', () => {
   it('does not form the recipe from too few demonstrations', () => {
     resetIds();
-    const miner = new CraftObservationMiner();
+    const miner = new CraftObservationMiner(foragerAdapter);
     // Watching twice is not yet apprenticeship.
     for (let i = 0; i < 2; i++) {
       miner.observe(mem(i * 10, 'Crafted', { objectKind: 'spear', craftInputs: { wood: 1, stone: 1 }, origin: 'observation' }));
@@ -31,7 +31,7 @@ describe('CraftObservationMiner — learning a skill by watching', () => {
 
   it('forms the recipe after watching a master make it enough times', () => {
     resetIds();
-    const miner = new CraftObservationMiner();
+    const miner = new CraftObservationMiner(foragerAdapter);
     // Eight observed demonstrations (discounted ×0.5 → evidence 4) clears the bar.
     for (let i = 0; i < 8; i++) {
       miner.observe(mem(i * 10, 'Crafted', { objectKind: 'spear', craftInputs: { wood: 1, stone: 1 }, origin: 'observation' }));
@@ -45,8 +45,8 @@ describe('CraftObservationMiner — learning a skill by watching', () => {
 
   it('learns faster from doing it yourself than from watching', () => {
     resetIds();
-    const watcher = new CraftObservationMiner();
-    const doer = new CraftObservationMiner();
+    const watcher = new CraftObservationMiner(foragerAdapter);
+    const doer = new CraftObservationMiner(foragerAdapter);
     for (let i = 0; i < 4; i++) {
       watcher.observe(mem(i * 10, 'Crafted', { objectKind: 'spear', craftInputs: { wood: 1, stone: 1 }, origin: 'observation' }));
       doer.observe(mem(i * 10, 'Crafted', { objectKind: 'spear', craftInputs: { wood: 1, stone: 1 }, origin: 'experience' }));
@@ -61,8 +61,8 @@ describe('CraftObservationMiner — learning a skill by watching', () => {
     // One Crafted event hands the SAME payload object to every witness; the
     // engine's own recipe table is what rides in it.
     const shown = { wood: 1, stone: 1 };
-    const a = new CraftObservationMiner();
-    const b = new CraftObservationMiner();
+    const a = new CraftObservationMiner(foragerAdapter);
+    const b = new CraftObservationMiner(foragerAdapter);
     for (let i = 0; i < 8; i++) {
       a.observe(mem(i * 10, 'Crafted', { objectKind: 'spear', craftInputs: shown, origin: 'observation' }));
       b.observe(mem(i * 10, 'Crafted', { objectKind: 'spear', craftInputs: shown, origin: 'observation' }));
@@ -78,7 +78,7 @@ describe('CraftObservationMiner — learning a skill by watching', () => {
 
   it('ignores testimony — a craft is learned by watching, not by being told', () => {
     resetIds();
-    const miner = new CraftObservationMiner();
+    const miner = new CraftObservationMiner(foragerAdapter);
     for (let i = 0; i < 10; i++) {
       miner.observe(mem(i * 10, 'Crafted', { objectKind: 'spear', craftInputs: { wood: 1, stone: 1 }, origin: 'testimony' }));
     }

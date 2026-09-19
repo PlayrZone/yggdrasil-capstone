@@ -1,19 +1,16 @@
 import type {
-  ContextFeatures,
   KnowledgeRecord,
   KnowledgeRule,
   MemoryRecord,
-  Needs,
-  ObjectKind,
   ObservedAgent,
   ObservedResource,
   ObservedStructure,
   RelationshipRecord,
-  Season,
   ThinkInput,
   ThinkTrigger,
   Traits,
 } from '../contract/types.js';
+import type { ContextFeatures, Needs, ObjectKind, Season } from '../worlds/forager/types.js';
 import { ruleKey } from '../learning/ruleKey.js';
 import { renderStatement } from '../learning/templates.js';
 import type { ActLeakRule } from './leakActs.js';

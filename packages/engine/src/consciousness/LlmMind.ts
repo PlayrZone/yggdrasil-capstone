@@ -1,3 +1,4 @@
+import type { WorldAdapter } from '../contract/adapter.js';
 import type { MindOutput, ThinkInput } from '../contract/types.js';
 import type { IMind } from './IMind.js';
 import type { IMindBackend } from './IMindBackend.js';
@@ -39,9 +40,7 @@ export interface CognitionAttempt {
   error?: string;
 }
 
-export interface LlmMindOptions {
-  /** Permanent fallback when the model errors or returns invalid JSON. */
-  fallback?: IMind;
+interface LlmMindOptionsBase {
   /** Receives every call's full prompt + output — the training corpus. */
   onCognition?: (record: CognitionRecord) => void;
   /**
@@ -55,6 +54,24 @@ export interface LlmMindOptions {
   /** Injected clock (tests pass a fake; the sim passes its tick-derived ms). */
   now?: () => number;
 }
+
+/**
+ * WHAT CARRIES THE BEING WHEN THE MODEL FAILS, said out loud. The fallback used
+ * to default to `new ReflexMind()` — the forager continent's policy, whatever
+ * world the run was in (W1-B1 verifier, backlog 2). A caller now either hands a
+ * fallback or names the world whose reflex policy is to be it.
+ */
+export type LlmMindOptions =
+  | (LlmMindOptionsBase & {
+      /** Permanent fallback when the model errors or returns invalid JSON. */
+      readonly fallback: IMind;
+      readonly world?: never;
+    })
+  | (LlmMindOptionsBase & {
+      /** The world whose reflex policy carries the being when the model fails. */
+      readonly world: WorldAdapter;
+      readonly fallback?: never;
+    });
 
 /**
  * Consciousness backed by an LLM. Builds the prompt, calls the backend,
@@ -74,9 +91,9 @@ export class LlmMind {
 
   constructor(
     private readonly backend: IMindBackend,
-    options: LlmMindOptions = {},
+    options: LlmMindOptions,
   ) {
-    this.fallback = options.fallback ?? new ReflexMind();
+    this.fallback = options.fallback ?? new ReflexMind(options.world);
     this.onCognition = options.onCognition;
     this.onPromptBuilt = options.onPromptBuilt;
     this.now = options.now ?? wallClock;

@@ -1,6 +1,7 @@
 import { featureActive } from '../contract/adapter.js';
 import type { ContextSchema, WorldAdapter } from '../contract/adapter.js';
-import type { ContextFeatureKey, MemoryRecord } from '../contract/types.js';
+import type { ContextFeatureId } from '../contract/ids.js';
+import type { MemoryRecord } from '../contract/types.js';
 import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
 
@@ -8,8 +9,8 @@ interface EventCell {
   /** n(event) — occurrences of this event key. */
   total: number;
   /** n(event ∧ feature) per feature. */
-  withFeature: Map<ContextFeatureKey, number>;
-  provenance: Map<ContextFeatureKey, ProvenanceSample>;
+  withFeature: Map<ContextFeatureId, number>;
+  provenance: Map<ContextFeatureId, ProvenanceSample>;
 }
 
 const MIN_JOINT = 3;
@@ -38,7 +39,7 @@ export class ContextMiner implements ILearner {
   }
 
   private totalMemories = 0;
-  private featureTotals = new Map<ContextFeatureKey, number>();
+  private featureTotals = new Map<ContextFeatureId, number>();
   private events = new Map<string, EventCell>();
   private keyParts = new Map<string, { type: MemoryRecord['type']; objectKind?: MemoryRecord['objectKind'] }>();
 

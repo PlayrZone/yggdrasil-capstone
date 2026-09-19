@@ -1,7 +1,8 @@
 import type { Animal } from '../../body/WildlifeSystem.js';
 import type { ResourceNode } from '../../body/ResourceNodeSystem.js';
 import type { Structure } from '../../body/PerceptionSystem.js';
-import type { KinTie, KnownStory, ObjectKind, SimEvent } from '../../contract/types.js';
+import type { KinTie, KnownStory, SimEvent } from '../../contract/types.js';
+import type { ObjectKind } from '../../worlds/forager/types.js';
 import { classifyFromCounts } from '../../analysis/archetype.js';
 import type { Archetype, ArchetypeResult } from '../../analysis/archetype.js';
 import type { AgentKnowledge } from '../../analysis/diffusion.js';

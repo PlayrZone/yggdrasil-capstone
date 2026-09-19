@@ -1,11 +1,5 @@
-import type {
-  ContextFeatureKey,
-  ContextFeatures,
-  NeedKey,
-  RelationshipRecord,
-  SimEventType,
-  Traits,
-} from './types.js';
+import type { ContextFeatureId, ContextRecord, DriveId, EventId } from './ids.js';
+import type { RelationshipRecord, Traits } from './types.js';
 
 /**
  * THE SEAM (docs/rework/W1-B-worldadapter.md). One object of DATA, supplied by
@@ -22,16 +16,10 @@ import type {
  *  - It is handed over explicitly. There is no module-level current world, so
  *    two experiments with two different worlds can run in one process.
  *
- * STEP B1 ONLY. The ids below are still the forager world's own unions, because
- * B1 moves the tables and B2 retypes the mind against opaque ids. Everything
- * marked with a later step is declared and empty.
+ * W1-B2: every id below is an opaque string (`./ids.ts`) and nothing in the
+ * mind is typed against this world's unions any more. What remains marked with
+ * a later step is declared and empty.
  */
-
-/** B2 widens these three to opaque strings; until then the mind's own records
- *  are typed against the forager unions and these must agree with them. */
-export type EventId = SimEventType;
-export type ContextFeatureId = ContextFeatureKey;
-export type DriveId = NeedKey;
 
 /** The scalars one person's record of another can move. */
 export type RelationshipDeltas = Partial<
@@ -55,9 +43,9 @@ export interface DriveSchema {
 
 export interface ContextSchema {
   readonly id: ContextFeatureId;
-  /** Which field of a memory's context record carries it. */
-  readonly source: keyof ContextFeatures;
-  /** `flag`: the field is the feature. `band`: the feature is `field === band`. */
+  /** Which slot of a memory's context record carries it. */
+  readonly source: string;
+  /** `flag`: the slot is the feature. `band`: the feature is `slot === band`. */
   readonly kind: 'flag' | 'band';
   readonly band?: number;
 }
@@ -87,6 +75,42 @@ export interface EventRoles {
   readonly bystander?: EventRoleSchema;
 }
 
+/**
+ * WHAT A MEMORY OF THIS MEANS BETWEEN TWO PEOPLE, from the rememberer's side.
+ *
+ * `SocialMiner` used to switch on this world's event names to decide what a
+ * memory was — a gift, a blow, a word. It reads this instead, so the pattern it
+ * mines ("who gives back", "who is dangerous") is about ROLES and works in a
+ * world whose gifts are called something else. The miner still decides what a
+ * PATTERN of these amounts to; the world only says which role each event is.
+ */
+export type SocialRole =
+  /** I gave them something. */
+  | 'gave'
+  /** They gave me something. */
+  | 'received'
+  /** They harmed me. */
+  | 'harmed'
+  /** I harmed them. */
+  | 'harmedOther'
+  /** We had dealings, and nothing more is claimed. */
+  | 'engaged';
+
+/**
+ * THIS EVENT SHOWS SOMETHING BEING MADE. `CraftObservationMiner` used to test
+ * the event name; it reads this, and then reads the two parts of the memory
+ * this names. The field names are narrow literals because `MemoryRecord` has
+ * exactly these two carriers today — a world that needs another says so when
+ * B3 widens the memory shape, not by writing a name the mind would have to
+ * trust.
+ */
+export interface DemonstrationSchema {
+  /** Which part of a memory names the thing that was made. */
+  readonly output: 'objectKind';
+  /** Which part carries what was seen going into it. */
+  readonly inputs: 'craftInputs';
+}
+
 /** Respect the actor earns from each being that sees this done. */
 export interface PrestigeSchema {
   readonly respect: number;
@@ -114,6 +138,10 @@ export interface EventSchema {
   readonly observerDeltas?: RelationshipDeltas;
   readonly prestige?: PrestigeSchema;
   readonly roles?: EventRoles;
+  /** What a memory of this is between the rememberer and the other party. */
+  readonly social?: SocialRole;
+  /** Set when this event is a making others can learn the practice from. */
+  readonly demonstrates?: DemonstrationSchema;
   /** The actor's life ends here. */
   readonly endsLife?: boolean;
   /** This world can retell it as a story. */
@@ -196,9 +224,9 @@ export type WorldSpec = Omit<WorldAdapter, 'eventById'>;
  */
 export function defineWorld(spec: WorldSpec): WorldAdapter {
   deepFreeze(spec);
-  const eventById = new Map<EventId, EventSchema>();
-  for (const event of spec.events) eventById.set(event.id, event);
-  return Object.freeze({ ...spec, eventById });
+  const index = new Map<EventId, EventSchema>();
+  for (const event of spec.events) index.set(event.id, event);
+  return Object.freeze({ ...spec, eventById: new SealedMap(index) });
 }
 
 function deepFreeze(value: unknown): void {
@@ -207,10 +235,86 @@ function deepFreeze(value: unknown): void {
   Object.freeze(value);
 }
 
+/**
+ * A lookup a mind genuinely cannot write to. `Object.freeze` does not touch a
+ * Map's contents, so the frozen world handed to every mind used to sit behind a
+ * live `Map` whose `set` rewrote that world for all of them (W1-B1 verifier,
+ * backlog 1). The mutators exist so that a cast to `Map` reaches THESE and
+ * throws, rather than silently succeeding.
+ */
+class SealedMap<K, V> implements ReadonlyMap<K, V> {
+  constructor(private readonly entries_: ReadonlyMap<K, V>) {
+    Object.freeze(this);
+  }
+
+  get(key: K): V | undefined {
+    return this.entries_.get(key);
+  }
+  has(key: K): boolean {
+    return this.entries_.has(key);
+  }
+  get size(): number {
+    return this.entries_.size;
+  }
+  forEach(visit: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: unknown): void {
+    this.entries_.forEach((value, key) => visit.call(thisArg, value, key, this));
+  }
+  keys(): IterableIterator<K> {
+    return this.entries_.keys();
+  }
+  values(): IterableIterator<V> {
+    return this.entries_.values();
+  }
+  entries(): IterableIterator<[K, V]> {
+    return this.entries_.entries();
+  }
+  [Symbol.iterator](): IterableIterator<[K, V]> {
+    return this.entries_[Symbol.iterator]();
+  }
+
+  set(): never {
+    throw new TypeError('a world is read-only: its event table cannot be written to');
+  }
+  delete(): never {
+    throw new TypeError('a world is read-only: its event table cannot be written to');
+  }
+  clear(): never {
+    throw new TypeError('a world is read-only: its event table cannot be written to');
+  }
+}
+
 /** Is this feature active in the context a memory was formed in? */
-export function featureActive(context: ContextFeatures, feature: ContextSchema): boolean {
+export function featureActive(context: ContextRecord, feature: ContextSchema): boolean {
   const raw = context[feature.source];
   return feature.kind === 'band' ? raw === feature.band : raw === true;
+}
+
+/**
+ * A context in which NOTHING this world can notice is the case — what an
+ * intervention reaching in from outside the world has to supply when it authors
+ * a memory that did not happen anywhere (`AgentMind.injectIdea`). Built from
+ * the declared features, so it is a fact about the world rather than a literal
+ * a host had to know.
+ */
+export function emptyContext(world: WorldAdapter): ContextRecord {
+  const context: ContextRecord = {};
+  for (const feature of world.context) {
+    // A band's empty value is any number the band is not.
+    context[feature.source] = feature.kind === 'band' ? (feature.band === 0 ? 1 : 0) : false;
+  }
+  return context;
+}
+
+/**
+ * The event this world uses to carry something SAID — the one whose roles
+ * record it as heard. Undefined in a world with no speech, which is a world
+ * where an idea cannot be whispered in.
+ */
+export function heardEvent(world: WorldAdapter): EventId | undefined {
+  for (const event of world.events) {
+    if (event.roles?.target?.heard || event.roles?.bystander?.heard) return event.id;
+  }
+  return undefined;
 }
 
 /** The cognition parameter this curve gives a being of this temperament. */

@@ -3,6 +3,7 @@ import type { Transform2D } from '../core/Transform2D.js';
 import type { ObjectKind } from './contract.js';
 import type { SimEventBus } from './SimEventBus.js';
 import { createResourceNode } from './ResourceNodeSystem.js';
+import { TICKS_PER_DAY } from './clock.js';
 
 /**
  * The discoverable regularities of reality — physical mechanics only,
@@ -12,7 +13,7 @@ import { createResourceNode } from './ResourceNodeSystem.js';
  * aren't here at all.
  */
 
-export const TICKS_PER_DAY = 2400;
+export { TICKS_PER_DAY } from './clock.js';
 /** The final third of each day is night. */
 export function isNight(tick: number): boolean {
   return tick % TICKS_PER_DAY >= (TICKS_PER_DAY * 2) / 3;

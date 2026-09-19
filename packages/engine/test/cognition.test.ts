@@ -7,6 +7,7 @@ import {
   MockMindBackend,
   ReflexMind,
   buildThinkPrompt,
+  foragerAdapter,
   parseMindOutput,
 } from '../src/index.js';
 import type { CognitionRecord, KnowledgeRecord, MindOutput, ThinkInput } from '../src/index.js';
@@ -130,7 +131,7 @@ describe('LlmMind', () => {
   it('produces a valid plan through the backend and logs the call', async () => {
     const log: CognitionRecord[] = [];
     let clock = 0;
-    const mind = new LlmMind(new MockMindBackend(), { onCognition: (r) => log.push(r), now: () => (clock += 5) });
+    const mind = new LlmMind(new MockMindBackend({ world: foragerAdapter }), { world: foragerAdapter, onCognition: (r) => log.push(r), now: () => (clock += 5) });
     const out = await mind.complete(input());
     expect(out.plan.length).toBeGreaterThan(0); // hungry → eats the berry
     expect(log).toHaveLength(1);
@@ -141,8 +142,8 @@ describe('LlmMind', () => {
 
   it('retries once then falls back to reflex on persistent bad output', async () => {
     const log: CognitionRecord[] = [];
-    const backend = new MockMindBackend({ failTimes: 5 }); // always junk
-    const mind = new LlmMind(backend, { fallback: new ReflexMind(), onCognition: (r) => log.push(r) });
+    const backend = new MockMindBackend({ world: foragerAdapter, failTimes: 5 }); // always junk
+    const mind = new LlmMind(backend, { fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
     const out = await mind.complete(input());
     expect(out).toBeDefined(); // reflex carried it
     expect(log[0]!.valid).toBe(false);
@@ -157,7 +158,7 @@ describe('LlmMind', () => {
 
   it('recovers on the retry when the model fails just once', async () => {
     const log: CognitionRecord[] = [];
-    const mind = new LlmMind(new MockMindBackend({ failTimes: 1 }), { onCognition: (r) => log.push(r) });
+    const mind = new LlmMind(new MockMindBackend({ world: foragerAdapter, failTimes: 1 }), { world: foragerAdapter, onCognition: (r) => log.push(r) });
     await mind.complete(input());
     expect(log[0]!.valid).toBe(true);
     expect(log[0]!.retried).toBe(true);

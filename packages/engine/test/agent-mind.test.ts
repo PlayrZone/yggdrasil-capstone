@@ -88,7 +88,7 @@ describe('ReflexMind consuming knowledge', () => {
 
   it('eats safe food from inventory when hungry', () => {
     const input = baseInput({ inventory: { berry: 2 } });
-    const out = new ReflexMind().think(input);
+    const out = new ReflexMind(foragerAdapter).think(input);
     expect(out.plan[0]).toEqual({ kind: 'Eat', objectKind: 'berry' });
   });
 
@@ -115,10 +115,10 @@ describe('ReflexMind consuming knowledge', () => {
         lastReinforced: 400,
       },
     ];
-    const out = new ReflexMind().think(input);
+    const out = new ReflexMind(foragerAdapter).think(input);
     expect(out.plan[0]?.kind).not.toBe('Eat');
     // Without that knowledge, the same situation ends in eating the mushroom.
-    const naive = new ReflexMind().think(baseInput({ inventory: { mushroomRed: 2 } }));
+    const naive = new ReflexMind(foragerAdapter).think(baseInput({ inventory: { mushroomRed: 2 } }));
     expect(naive.plan[0]).toEqual({ kind: 'Eat', objectKind: 'mushroomRed' });
   });
 });

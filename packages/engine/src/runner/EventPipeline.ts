@@ -79,7 +79,7 @@ export function installEventPipeline(host: EventPipelineHost, opts: EventPipelin
       if (!witness) continue;
       const t = witness.components['Transform2D'] as { x: number; y: number };
       const context = host.perception.contextAt(host.world, t.x, t.y, event.tick);
-      const memory = memoryFromEvent(opts.world, event, witnessId, context);
+      const memory = memoryFromEvent(opts.world, event, witnessId, context, mind.gate);
       if (memory) mind.observe(memory);
       // A memorable event becomes a STORY the witness carries.
       if (story) mind.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);

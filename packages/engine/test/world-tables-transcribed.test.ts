@@ -8,7 +8,8 @@ import { seasonAt } from '../src/body/Climate.js';
 import { AgentMind } from '../src/agent/AgentMind.js';
 import { RuleIntern } from '../src/knowledge/KnowledgeStore.js';
 import { featureActive, traitCurveValue } from '../src/contract/adapter.js';
-import type { ContextFeatures, MemoryRecord, SimEvent, SimEventType, Traits } from '../src/contract/types.js';
+import type { MemoryRecord, SimEvent, Traits } from '../src/contract/types.js';
+import type { ContextFeatureKey, ContextFeatures, SimEventType } from '../src/worlds/forager/types.js';
 import { importanceOf } from '../src/memory/importance.js';
 import { memoryFromEvent } from '../src/memory/memoryFromEvent.js';
 import { RelationshipStore } from '../src/relationships/RelationshipStore.js';
@@ -60,7 +61,7 @@ describe('the forager tables, as they stood before the move', () => {
   it('carries the same relationship deltas — including the empty one', () => {
     const moved: Partial<Record<SimEventType, Deltas>> = {};
     for (const e of foragerAdapter.events) {
-      if (e.relationshipDeltas) moved[e.id] = { ...e.relationshipDeltas };
+      if (e.relationshipDeltas) moved[e.id as SimEventType] = { ...e.relationshipDeltas };
     }
     expect(moved).toEqual(EVENT_DELTAS);
     // Present-but-empty is not the same as absent: it still counts as having met.
@@ -72,7 +73,7 @@ describe('the forager tables, as they stood before the move', () => {
     const moved = foragerAdapter.events.filter((e) => e.observerDeltas).map((e) => e.id);
     expect(new Set(moved)).toEqual(OBSERVER_APPLICABLE);
     for (const id of moved) {
-      expect(foragerAdapter.eventById.get(id)!.observerDeltas).toEqual(EVENT_DELTAS[id]);
+      expect(foragerAdapter.eventById.get(id)!.observerDeltas).toEqual(EVENT_DELTAS[id as SimEventType]);
     }
   });
 
@@ -88,7 +89,7 @@ describe('the forager tables, as they stood before the move', () => {
             const context: ContextFeatures = { nearWater, night, inShelter, elevationBand };
             for (const schema of foragerAdapter.context) {
               expect(featureActive(context, schema), `${schema.id} in ${JSON.stringify(context)}`).toBe(
-                wasFeatureActive(context, schema.id),
+                wasFeatureActive(context, schema.id as ContextFeatureKey),
               );
             }
           }

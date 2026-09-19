@@ -1,4 +1,6 @@
 import type { WorldAdapter } from '../contract/adapter.js';
+import { WorldGate } from '../contract/gate.js';
+import type { ContextRecord, EventId } from '../contract/ids.js';
 import type {
   AgentSnapshot,
   Goal,
@@ -76,7 +78,16 @@ export class AgentMind {
   readonly narratives = new NarrativeStore();
   readonly learners: ILearner[];
   goals: Goal[] = [];
+  /**
+   * THIS BEING'S EDGE ONTO ITS WORLD, and the tally of what it was handed that
+   * the world has never heard of. The event pipeline forms memories through it
+   * so a refusal is attributed to the being it was offered to. An INSTRUMENT:
+   * nothing in the simulation reads `counts`, and they stay at zero in a world
+   * whose adapter and body agree.
+   */
+  readonly gate = new WorldGate();
 
+  private readonly world: WorldAdapter;
   private readonly mind: IMind;
   private readonly thinkInterval: number;
   private readonly consolidateInterval: number;
@@ -92,6 +103,7 @@ export class AgentMind {
     world: WorldAdapter,
     options: AgentMindOptions = {},
   ) {
+    this.world = world;
     this.memory = new MemoryStream(options.memoryHotCapacity ?? 512);
     const provenance = options.provenance ?? 'compact';
     this.knowledge = new KnowledgeStore(provenance);
@@ -99,10 +111,10 @@ export class AgentMind {
     this.learners = [
       new ContextMiner(world, provenance),
       new SuccessionMiner(world, { provenance }),
-      new SocialMiner(provenance),
+      new SocialMiner(world, provenance),
       new OutcomeMiner(world, provenance),
     ];
-    if (options.craftLearning) this.learners.push(new CraftObservationMiner(provenance));
+    if (options.craftLearning) this.learners.push(new CraftObservationMiner(world, provenance));
     this.mind = options.mind ?? new ReflexMind(world);
     this.thinkInterval = options.thinkInterval ?? 120;
     this.consolidateInterval = options.consolidateInterval ?? 300;
@@ -113,8 +125,15 @@ export class AgentMind {
    * Record an experience: memory write, miner counters, relationship
    * deltas, and — when the experience is hearing a share-knowledge
    * utterance — testimony intake, discounted by trust in the speaker.
+   *
+   * THE MIND'S EDGE (W1-B2). A memory naming an event this world does not
+   * declare is refused here, counted, and returns undefined: taken in, it would
+   * weigh nothing, move nothing and mine into a belief about a thing that
+   * cannot happen. Every path the engine has already passed through
+   * `memoryFromEvent`, so this bites what a HOST authors.
    */
-  observe(record: Omit<MemoryRecord, 'id'>): MemoryRecord {
+  observe(record: Omit<MemoryRecord, 'id'>): MemoryRecord | undefined {
+    if (!this.gate.admitMemory(this.world, record)) return undefined;
     const stored = this.memory.append(record);
     for (const learner of this.learners) learner.observe(stored);
     if (stored.origin === 'experience') {
@@ -148,7 +167,15 @@ export class AgentMind {
         false,
       );
     }
-    if (stored.utterance?.speechAct === 'share-knowledge' && stored.utterance.rule && stored.toldBy) {
+    if (
+      stored.utterance?.speechAct === 'share-knowledge' &&
+      stored.utterance.rule &&
+      stored.toldBy &&
+      // A belief about an event, circumstance or drive this world has no name
+      // for is not taken in: it could never be reinforced or contradicted, so
+      // it would sit in the store forever as unfalsifiable hearsay.
+      this.gate.admitTestimony(this.world, stored.utterance.rule)
+    ) {
       const trust = (this.relationships.recordFor(stored.toldBy, stored.tick).trust ?? 50) / 100;
       this.knowledge.intakeTestimony(
         stored.utterance.rule,
@@ -202,6 +229,12 @@ export class AgentMind {
 
   /** Assemble the think input — shared by the reflex and LLM paths. */
   buildThinkInput(snapshot: AgentSnapshot, worldView: WorldView, trigger: ThinkTrigger): ThinkInput {
+    // The other edge: a body reporting a pressure its world declares no drive
+    // for. Nothing is rewritten — the snapshot is what a recorded think was
+    // built from, and everything that reads drives reads them in the world's
+    // declared order, so an undeclared one is already inert — but it is
+    // counted, so that silence is not the only evidence of a mismatch.
+    this.gate.admitDrives(this.world, snapshot.needs);
     // Belief → behaviour (Cycle 11): a being's sacred place is the oldest
     // founder/hero story it was TOLD but did not witness — a legend whose place
     // it knows only through the telling, NOT where it lives. This separates the
@@ -315,13 +348,19 @@ export class AgentMind {
    * MAY reason about it and act, or not. The engine never calls this — only
    * the user does. It carries no rule, so it is NOT folded into knowledge:
    * it is a prompt to think, not a fact to believe.
+   *
+   * The HOST says what kind of happening a whisper from outside is, and what
+   * "nowhere in particular" looks like in its world (`heardEvent`,
+   * `emptyContext`): the mind has no way to invent either, and inventing them
+   * is what this used to do.
    */
-  injectIdea(text: string, tick: number): void {
+  injectIdea(text: string, tick: number, event: EventId, context: ContextRecord): void {
+    if (!this.gate.admitMemory(this.world, { type: event })) return;
     this.memory.append({
       tick,
-      type: 'UtteranceSpoken',
+      type: event,
       subjects: [],
-      context: { nearWater: false, night: false, inShelter: false, elevationBand: 0 },
+      context,
       needDeltas: {},
       outcome: 'neutral',
       summaryText: `A thought came to you: "${text}"`,

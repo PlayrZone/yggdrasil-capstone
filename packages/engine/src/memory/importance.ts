@@ -1,5 +1,5 @@
 import type { WorldAdapter } from '../contract/adapter.js';
-import type { SimEventType, Needs } from '../contract/types.js';
+import type { DriveDeltas, EventId } from '../contract/ids.js';
 
 /**
  * Deterministic importance heuristic. The world's declared salience for the
@@ -10,15 +10,14 @@ import type { SimEventType, Needs } from '../contract/types.js';
  *
  * An event the world does not declare has no salience at all.
  */
-export function importanceOf(
-  world: WorldAdapter,
-  type: SimEventType,
-  needDeltas: Partial<Needs>,
-): number {
+export function importanceOf(world: WorldAdapter, type: EventId, needDeltas: DriveDeltas): number {
   const base = world.eventById.get(type)?.salience ?? 0;
   let magnitude = 0;
   for (const delta of Object.values(needDeltas)) {
-    magnitude = Math.max(magnitude, Math.abs(delta) / 100);
+    // A slot present but EMPTY poisons the result, exactly as `Math.abs(
+    // undefined)` did when this record's type made that unrepresentable. No
+    // body writes one; preserved rather than quietly repaired.
+    magnitude = Math.max(magnitude, Math.abs(delta ?? Number.NaN) / 100);
   }
   return Math.min(1, base + magnitude * 0.3);
 }

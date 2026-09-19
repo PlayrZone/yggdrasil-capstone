@@ -1,7 +1,7 @@
 import type { World } from '../core/World.js';
 import type { Entity } from '../core/Entity.js';
 import type { WorldAdapter } from '../contract/adapter.js';
-import type { ResourceNodeKind } from '../contract/types.js';
+import type { ResourceNodeKind } from '../worlds/forager/types.js';
 import type { TerrainField } from '../body/PerceptionSystem.js';
 import { WildlifeSystem, createResourceNode, spawnGahallians, TICKS_PER_SEASON } from '../body/index.js';
 import { mulberry32, hashSeed } from '../body/prng.js';

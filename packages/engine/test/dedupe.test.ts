@@ -6,8 +6,8 @@ import {
   contentHash,
   shingleJaccard,
 } from '../src/training/dedupe.js';
+import type { ContextFeatures, Needs } from '../src/worlds/forager/types.js';
 import type {
-  ContextFeatures,
   KnowledgeRecord,
   KnownPerson,
   KnownStory,
@@ -318,12 +318,15 @@ function sameSituationRows(scale: 'sparse' | 'populated', n: number): Row[] {
 /** The same being a few ticks later: a handful of numbers move, nothing else. */
 function nearSituationRows(scale: 'sparse' | 'populated', n: number): Row[] {
   const base = realisticInput(0x9001, scale);
+  // A snapshot carries one pressure per DRIVE the world declares; this fixture
+  // is the forager world's, whose four are always there.
+  const needs = base.snapshot.needs as Needs;
   return Array.from({ length: n }, (_, i) => {
     const input: ThinkInput = {
       ...base,
       snapshot: {
         ...base.snapshot,
-        needs: { ...base.snapshot.needs, hunger: base.snapshot.needs.hunger + i, rest: base.snapshot.needs.rest + i },
+        needs: { ...needs, hunger: needs.hunger + i, rest: needs.rest + i },
       },
       worldView: { ...base.worldView, tick: base.worldView.tick + i * 7 },
     };

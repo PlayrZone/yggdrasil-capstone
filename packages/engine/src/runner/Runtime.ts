@@ -1,6 +1,7 @@
 import { World } from '../core/World.js';
 import type { Entity } from '../core/Entity.js';
 import type { GahallianBody } from '../body/GahallianBody.js';
+import type { Intent as BodyIntent } from '../body/contract.js';
 import {
   PerceptionSystem,
   ResourceNodeSystem,
@@ -111,6 +112,9 @@ export class SimRuntime implements RuntimeView, SocietyHost {
       this.cognitionLog = new CognitionLog();
       const log = this.cognitionLog;
       this.llm = new LlmMind(mindBackend, {
+        // What carries a being when the model fails is THIS world's reflex
+        // policy, named rather than defaulted (W1-B1 verifier, backlog 2).
+        world: this.adapter,
         onCognition: (record) => {
           log.push(record);
           this.recorder?.attempt(record);
@@ -257,7 +261,13 @@ export class SimRuntime implements RuntimeView, SocietyHost {
       ...output.utterances.map((utterance) => ({ kind: 'Speak' as const, utterance })),
       ...output.plan,
     ];
-    this.body.setPlan(body, plan);
+    // THE OUTBOUND EDGE, named in one place. A plan leaves a mind carrying
+    // opaque kind ids; the body executes this world's own narrow kinds and
+    // validates every intent against physics regardless. Nothing checks the
+    // crossing yet — B3 binds a plan's actions through the adapter and this
+    // cast becomes a real gate — so it is one documented narrowing here rather
+    // than a body that has to widen to meet it.
+    this.body.setPlan(body, plan as BodyIntent[]);
     return plan;
   }
 

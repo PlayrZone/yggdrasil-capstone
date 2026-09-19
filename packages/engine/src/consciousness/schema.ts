@@ -1,4 +1,5 @@
-import type { BuildKind, Goal, Intent, IntentKind, MindOutput, ObjectKind, SpeechAct, Utterance } from '../contract/types.js';
+import type { Goal, Intent, IntentKind, MindOutput, SpeechAct, Utterance } from '../contract/types.js';
+import type { BuildKind, NeedKey, ObjectKind } from '../worlds/forager/types.js';
 
 /**
  * Parse + validate raw LLM output into a MindOutput. The contract is strict
@@ -126,7 +127,7 @@ const OBJECT_KIND_LIST = [
   'silver', 'gold', 'gemstone', 'shelter', 'wall', 'container', 'corpse',
 ] as const satisfies readonly ObjectKind[];
 
-/** Compile-time exhaustiveness: a new kind in `contract/types.ts` fails here. */
+/** Compile-time exhaustiveness: a new kind in this world's vocabulary fails here. */
 type Missing<Union extends string, Listed extends string> = Exclude<Union, Listed>;
 const _ALL_BUILD_KINDS_LISTED: Missing<BuildKind, (typeof BUILD_KIND_LIST)[number]> extends never ? true : never = true;
 const _ALL_OBJECT_KINDS_LISTED: Missing<ObjectKind, (typeof OBJECT_KIND_LIST)[number]> extends never ? true : never = true;
@@ -137,8 +138,10 @@ const BUILD_KINDS = new Set<string>(BUILD_KIND_LIST);
 const OBJECT_KINDS = new Set<string>(OBJECT_KIND_LIST);
 
 /** The needs a goal may name — the four the prompt renders, and nothing else. */
-const GOAL_NEEDS = ['hunger', 'rest', 'safety', 'socialConnection'] as const satisfies readonly NonNullable<Goal['need']>[];
-const _ALL_GOAL_NEEDS_LISTED: Missing<NonNullable<Goal['need']>, (typeof GOAL_NEEDS)[number]> extends never ? true : never = true;
+// A goal's `need` is a `DriveId` now, so the list is pinned against the
+// forager world's own drives; B3 takes it from the adapter's `drives`.
+const GOAL_NEEDS = ['hunger', 'rest', 'safety', 'socialConnection'] as const satisfies readonly NeedKey[];
+const _ALL_GOAL_NEEDS_LISTED: Missing<NeedKey, (typeof GOAL_NEEDS)[number]> extends never ? true : never = true;
 void _ALL_GOAL_NEEDS_LISTED;
 const NEED_KINDS = new Set<string>(GOAL_NEEDS);
 

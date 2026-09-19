@@ -1,6 +1,7 @@
 import { featureActive } from '../contract/adapter.js';
 import type { ContextSchema, WorldAdapter } from '../contract/adapter.js';
-import type { ContextFeatureKey, MemoryRecord, NeedKey } from '../contract/types.js';
+import type { ContextFeatureId, DriveId } from '../contract/ids.js';
+import type { MemoryRecord } from '../contract/types.js';
 import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample } from './ILearner.js';
 
@@ -31,7 +32,7 @@ export class OutcomeMiner implements ILearner {
   private cells = new Map<string, OutcomeCell>();
   private keyParts = new Map<
     string,
-    { actionType: MemoryRecord['type']; feature: ContextFeatureKey | null; need: NeedKey }
+    { actionType: MemoryRecord['type']; feature: ContextFeatureId | null; need: DriveId }
   >();
 
   observe(memory: MemoryRecord): void {
@@ -40,9 +41,9 @@ export class OutcomeMiner implements ILearner {
     // handled separately (KnowledgeStore), so it is ignored here.
     const weight = memory.origin === 'experience' ? 1 : memory.origin === 'observation' ? 0.4 : 0;
     if (weight === 0) return;
-    for (const [need, delta] of Object.entries(memory.needDeltas) as [NeedKey, number][]) {
+    for (const [need, delta] of Object.entries(memory.needDeltas) as [DriveId, number][]) {
       if (delta === 0) continue;
-      const conditions: (ContextFeatureKey | null)[] = [
+      const conditions: (ContextFeatureId | null)[] = [
         null,
         ...this.features.filter((f) => featureActive(memory.context, f)).map((f) => f.id),
       ];

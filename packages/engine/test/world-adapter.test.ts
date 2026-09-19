@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { AgentMind } from '../src/agent/AgentMind.js';
 import { defineWorld, traitCurveValue } from '../src/contract/adapter.js';
-import type { ContextFeatures, SimEvent, Traits } from '../src/contract/types.js';
+import type { SimEvent, Traits } from '../src/contract/types.js';
+import type { ContextFeatures } from '../src/worlds/forager/types.js';
 import { importanceOf } from '../src/memory/importance.js';
 import { memoryFromEvent } from '../src/memory/memoryFromEvent.js';
 import { foragerAdapter } from '../src/worlds/forager/adapter.js';

@@ -1,5 +1,6 @@
 import type { RelationshipDeltas, WorldAdapter } from '../contract/adapter.js';
-import type { RelationshipRecord, SimEventType } from '../contract/types.js';
+import type { EventId } from '../contract/ids.js';
+import type { RelationshipRecord } from '../contract/types.js';
 
 /** Without interaction, every dimension drifts toward neutral (50). */
 const DECAY_INTERVAL = 2400;
@@ -37,7 +38,7 @@ export class RelationshipStore {
     return r;
   }
 
-  applyEvent(partnerId: number, type: SimEventType, tick: number): void {
+  applyEvent(partnerId: number, type: EventId, tick: number): void {
     const deltas = this.world.eventById.get(type)?.relationshipDeltas;
     if (!deltas) return;
     const r = this.recordFor(partnerId, tick);
@@ -53,7 +54,7 @@ export class RelationshipStore {
    * is not interacting, so — like `gainRespect` — this leaves
    * `interactionCount` alone: the scalar moves, the familiarity does not.
    */
-  applyObservedEvent(partnerId: number, type: SimEventType, tick: number): void {
+  applyObservedEvent(partnerId: number, type: EventId, tick: number): void {
     const deltas = this.world.eventById.get(type)?.observerDeltas;
     if (!deltas) return;
     apply(this.recordFor(partnerId, tick), deltas);

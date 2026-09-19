@@ -17,6 +17,7 @@ import {
   domainMatcher,
   domainStems,
   evalKnowledgeFidelity,
+  foragerAdapter,
   holdsGround,
   judgeDetector,
   leakTrapBattery,
@@ -1202,7 +1203,7 @@ describe('adversarial policies all fail', () => {
   });
 
   it('the reflex fallback is clean on the traps and still cannot pass', async () => {
-    const r = await evalKnowledgeFidelity(new MockMindBackend());
+    const r = await evalKnowledgeFidelity(new MockMindBackend({ world: foragerAdapter }));
     expect(r.leaks).toBe(0);
     expect(r.verdict).toBe('FAIL'); // it acts on no control
   });
@@ -1222,7 +1223,7 @@ async function realThinkInputs(): Promise<ThinkInput[]> {
   const exp = new Experiment({
     seed: 'fidelity-parity',
     agentCount: 10,
-    mindBackend: new MockMindBackend(),
+    mindBackend: new MockMindBackend({ world: foragerAdapter }),
     recording: { sink, runId: 'run-parity', nowMs: () => 0 },
   });
   for (const id of exp.agentIds.slice(0, 3)) exp.makeConscious(id);

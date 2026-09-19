@@ -1,5 +1,7 @@
 import { CRAFT_RECIPES } from '../body/index.js';
-import type { Needs, ObjectKind, SimEvent } from '../contract/types.js';
+import { emptyContext, heardEvent } from '../contract/adapter.js';
+import type { SimEvent } from '../contract/types.js';
+import type { Needs, ObjectKind } from '../worlds/forager/types.js';
 // World geography reached from an intervention: the default seeding point and
 // the clamp. Inherited leakage (audit 01 §4); it moves to the adapter's
 // `space` in W1-B.
@@ -170,12 +172,21 @@ export class Interventions {
     const rt = this.rt;
     const clean = text.trim().slice(0, 200);
     if (!clean) return 0;
+    // A thought arrives as the kind of happening this world uses to carry
+    // something said, in a context in which nothing this world notices is the
+    // case — both read off the adapter, because a whisper from outside comes
+    // from nowhere in particular and the mind has no way to invent either. A
+    // world with no speech in it cannot be whispered to.
+    const heard = heardEvent(rt.adapter);
+    if (heard === undefined) return 0;
     const ids = target === 'all' ? rt.agentIds : [target];
     const reached: number[] = [];
     for (const id of ids) {
       const mind = rt.minds.get(id);
       if (mind && rt.agentBody(id)?.alive) {
-        mind.injectIdea(clean, rt.tick);
+        // A fresh context per being, as the literal it replaces was: no two
+        // memories in the world share one.
+        mind.injectIdea(clean, rt.tick, heard, emptyContext(rt.adapter));
         reached.push(id);
       }
     }

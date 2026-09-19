@@ -1,4 +1,4 @@
-import type { ObjectKind } from '../contract/types.js';
+import type { ObjectKind } from '../worlds/forager/types.js';
 
 /**
  * Materials have PROPERTIES, not recipes (yggdrasil_world_design.md). Agents

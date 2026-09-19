@@ -3,11 +3,11 @@ import type {
   Intent,
   IntentKind,
   KnowledgeStatus,
-  Needs,
   SimEvent,
-  SimEventType,
   Utterance,
 } from '../contract/types.js';
+import type { EventId } from '../contract/ids.js';
+import type { Needs, SimEventType } from '../worlds/forager/types.js';
 import { ruleKey } from '../learning/ruleKey.js';
 import { snapshotJson } from './serialize.js';
 import type {
@@ -26,7 +26,10 @@ import { COGNITION_SCHEMA_VERSION } from './types.js';
  * could have caused it — so an exposure or a sickness that lands mid-plan is
  * never credited to a MoveTo.
  */
-const INTENT_YIELDS: Partial<Record<IntentKind, readonly SimEventType[]>> = {
+// The read type is widened to opaque ids (an event's type is a `EventId` now);
+// the literal is still checked against this world's own vocabulary, so a typo
+// in it is still a compile error.
+const INTENT_YIELDS: Partial<Record<IntentKind, readonly EventId[]>> = {
   Gather: ['GatherSucceeded', 'GatherFailed'],
   Dig: ['GatherSucceeded'],
   Eat: ['AteFood', 'BecameSick'],
@@ -39,7 +42,7 @@ const INTENT_YIELDS: Partial<Record<IntentKind, readonly SimEventType[]>> = {
   Give: ['GaveItem'],
   Attack: ['AttackedAgent', 'AgentDied'],
   Speak: ['UtteranceSpoken'],
-};
+} satisfies Partial<Record<IntentKind, readonly SimEventType[]>>;
 
 /**
  * Everything measured AT the tick the window closed. Taken there and kept,

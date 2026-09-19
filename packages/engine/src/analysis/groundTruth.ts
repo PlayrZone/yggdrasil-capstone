@@ -1,4 +1,5 @@
-import type { KnowledgeRule, ObjectKind } from '../contract/types.js';
+import type { KnowledgeRule } from '../contract/types.js';
+import type { ObjectKind } from '../worlds/forager/types.js';
 
 /**
  * Ground-truth classification of a discovered rule against the world's REAL
@@ -46,7 +47,7 @@ export function classifyRuleTruth(rule: KnowledgeRule): RuleTruth {
  * no food there at all. So a highland association is a real regularity, in
  * whichever direction the world actually runs.
  */
-const UPLAND_YIELDS: ReadonlySet<ObjectKind> = new Set<ObjectKind>([
+const UPLAND_YIELDS: ReadonlySet<string> = new Set<ObjectKind>([
   // Every vein is scattered in `mountain` alone, and band 2 ⊆ mountain.
   'copperOre', 'tinOre', 'ironOre', 'coal', 'silver', 'gold', 'gemstone',
 ]);
@@ -59,7 +60,7 @@ const UPLAND_YIELDS: ReadonlySet<ObjectKind> = new Set<ObjectKind>([
 /** Won only in the lowlands: the mountains are deliberately food-poor, and the
  *  forests/river/coast hold the wood, clay, fiber and salt. Land animals shun
  *  the range (body/WildlifeSystem `habitatOk`), so meat is lowland too. */
-const LOWLAND_YIELDS: ReadonlySet<ObjectKind> = new Set<ObjectKind>([
+const LOWLAND_YIELDS: ReadonlySet<string> = new Set<ObjectKind>([
   'berry', 'tuber', 'mushroomRed', 'nightshade', 'meat', 'wood', 'clay', 'fiber', 'salt', 'water',
 ]);
 
