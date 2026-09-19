@@ -59,7 +59,7 @@ Load bearing; `test/golden-state.test.ts` locks it.
 
 ## Listener order (`installEventPipeline`)
 
-Registration order is firing order. `test/runner-listener-order.test.ts` asserts it.
+Registration order is firing order.
 
 1. `recorder.observeBefore` — "who already knew this?" is only answerable before
    the witnesses hear an utterance.
@@ -67,6 +67,15 @@ Registration order is firing order. `test/runner-listener-order.test.ts` asserts
 3. `recorder.observeAfter` — "who took it in?" is only answerable after.
 4. `entomb` — **last**, so every other reader of a being that just died has
    already run.
+
+Positions 1–3 are load bearing behaviourally. Position 4 is a **safety margin**:
+no reader above currently touches what `entomb` frees (witnesses are the living
+only; the actor's own story lands in `narratives`, which survives; the
+recorder's window exposes nothing freed), so moving it first changes no
+fingerprint *today* — which is exactly why it is pinned structurally rather
+than left to a behavioural test.
+`test/runner-listener-order.test.ts` captures the four registrations in order
+and asserts the identity or the effect of each; it fails if any of them moves.
 
 ## RNG streams
 

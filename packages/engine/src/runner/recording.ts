@@ -67,6 +67,10 @@ export function createRecorder(host: RecorderHost, spec: RecorderSpec): Cognitio
       offerMaking: spec.flags.offerMaking,
       craftLearning: spec.flags.craftLearning,
       outcomeWindowTicks: recording.outcomeWindowTicks ?? DEFAULT_OUTCOME_WINDOW,
+      // Two runs at different provenance levels are not the same experiment.
+      // The recorder defaults this when a host omits it, which meant every
+      // manifest claimed the default however the run was actually made.
+      provenance: spec.flags.provenance,
     },
     scaffold: host.scaffold,
     world: recorderWorld(host),

@@ -1,5 +1,4 @@
 import type { World } from '../core/World.js';
-import type { SimEventBus } from '../body/SimEventBus.js';
 import type { PerceptionSystem } from '../body/PerceptionSystem.js';
 import type { GahallianBody } from '../body/GahallianBody.js';
 import type { AgentMind } from '../agent/AgentMind.js';
@@ -9,9 +8,15 @@ import type { SimEvent } from '../contract/types.js';
 import type { RunCounters } from './RunCounters.js';
 import type { NarrativeAuthor } from './society/SocietySystem.js';
 
+/** Just enough of `SimEventBus` to register a listener — so a test can watch
+ *  the registrations themselves, which is the only way the order is pinned. */
+export interface ListenerSink {
+  on(listener: (event: SimEvent) => void): () => void;
+}
+
 export interface EventPipelineHost {
   readonly world: World;
-  readonly bus: SimEventBus;
+  readonly bus: ListenerSink;
   readonly perception: PerceptionSystem;
   readonly minds: ReadonlyMap<number, AgentMind>;
   readonly counters: RunCounters;
@@ -45,7 +50,16 @@ export interface EventPipelineOptions {
  *     already run. From here it can never think again, so the tiers only a
  *     thinking mind uses are released.
  *
- * `test/runner-listener-order.test.ts` asserts all four positions.
+ * Position 4 is currently a SAFETY MARGIN, not a live dependency: no reader
+ * above touches what `entomb` frees. `witnessesOf` returns only the living, so
+ * the dying being never takes a memory from its own death; the actor's own
+ * story write lands in `narratives`, which survives entombing; and the
+ * recorder's window (`RecorderWorld`) exposes only body / knowledge /
+ * narratives / name / generation / day — none of them freed. Moving `entomb`
+ * first therefore changes no fingerprint today, and would silently start
+ * mattering the moment any of those readers grows. So the order is pinned
+ * STRUCTURALLY instead of behaviourally: `test/runner-listener-order.test.ts`
+ * captures the registrations in order and asserts what each of the four is.
  */
 export function installEventPipeline(host: EventPipelineHost, opts: EventPipelineOptions): void {
   if (opts.recorder) host.bus.on(opts.recorder.observeBefore);
