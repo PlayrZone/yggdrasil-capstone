@@ -33,7 +33,7 @@ import type {
   SocietyReport,
 } from '@yggdrasil/engine';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /**
  * What a being is DOING — the activity axis. Drawn as a shape (a glyph over the
@@ -73,6 +73,27 @@ export const STAGE_ELDER = 2;
 /** Kind codes ride in a Uint8; 255 is the "more kinds than fit" bucket. */
 export const KIND_UNKNOWN = 255;
 const MAX_KINDS = 255;
+
+/**
+ * What a being is TRYING to do — the engine's own plan step, by code.
+ *
+ * The activity lane says what it is doing this instant; this says what that is
+ * *for*. A being walking to a berry bush and a being walking home read the same
+ * in any picture and are answers to different questions, and "what is its
+ * goal?" is one of the first things anyone asks of an agent-based model.
+ *
+ * The order is the wire; append only. `GOAL_NONE` is a being with no plan left
+ * — the one honest answer when the engine has none, and never a guess.
+ */
+export const GOAL_WORDS: readonly string[] = [
+  'move to', 'gather', 'dig', 'eat', 'drink', 'sleep', 'build', 'store',
+  'take from store', 'give', 'attack', 'craft', 'speak', 'follow', 'flee', 'idle',
+];
+export const GOAL_NONE = 255;
+
+export function goalWord(code: number): string | null {
+  return GOAL_WORDS[code] ?? null;
+}
 
 /** The inspector's view of one being — the engine's own shape, not a copy. */
 export type AgentDetail = NonNullable<ReturnType<Experiment['agentDetail']>>;
@@ -152,10 +173,16 @@ export interface TiesReport {
 // ── Frame buffers ────────────────────────────────────────────────────────────
 
 /**
- * One frame of world state. Nine buffers, transferred to the UI and transferred
- * straight back on `ack`, so the steady state is zero allocation on both sides.
- * `ids[i]`, `pos[2i]`/`pos[2i+1]`, `heading[i]`, `act[i]`, `cond[i]` and
- * `stage[i]` describe being i.
+ * One frame of world state. Fourteen buffers, transferred to the UI and
+ * transferred straight back on `ack`, so the steady state is zero allocation on
+ * both sides. `ids[i]`, `pos[2i]`/`pos[2i+1]`, `heading[i]`, `act[i]`,
+ * `cond[i]`, `stage[i]`, `hunger[i]`, `rest[i]`, `goal[i]`, `planAt[i]` and
+ * `planOf[i]` describe being i.
+ *
+ * The needs and the goal ride here rather than being asked for per being
+ * because the roster shows them for everyone at once: three hundred `detail`
+ * queries at 4 Hz would be twelve hundred round trips a second to say what
+ * four hundred bytes of typed array already says.
  */
 export interface FrameArrays {
   ids: Int32Array;
@@ -164,6 +191,15 @@ export interface FrameArrays {
   act: Uint8Array;
   cond: Uint8Array;
   stage: Uint8Array;
+  /** Need pressure in [0, 100]: 0 satisfied, 100 desperate. The engine's own sense. */
+  hunger: Uint8Array;
+  rest: Uint8Array;
+  /** The current plan step's intent, by `GOAL_WORDS` code, or `GOAL_NONE`. */
+  goal: Uint8Array;
+  /** Which step of the plan it is on, 1-based; 0 while there is no plan. */
+  planAt: Uint8Array;
+  /** How many steps the plan has, clamped to 255. */
+  planOf: Uint8Array;
   wildIds: Int32Array;
   wildPos: Float32Array;
   wildKind: Uint8Array;
@@ -179,6 +215,11 @@ export function allocFrameArrays(beings: number, wildlife: number): FrameArrays 
     act: new Uint8Array(b),
     cond: new Uint8Array(b),
     stage: new Uint8Array(b),
+    hunger: new Uint8Array(b),
+    rest: new Uint8Array(b),
+    goal: new Uint8Array(b).fill(GOAL_NONE),
+    planAt: new Uint8Array(b),
+    planOf: new Uint8Array(b),
     wildIds: new Int32Array(w),
     wildPos: new Float32Array(w * 2),
     wildKind: new Uint8Array(w),
@@ -189,6 +230,7 @@ export function allocFrameArrays(beings: number, wildlife: number): FrameArrays 
 export function frameBuffers(a: FrameArrays): ArrayBuffer[] {
   return [
     a.ids.buffer, a.pos.buffer, a.heading.buffer, a.act.buffer, a.cond.buffer, a.stage.buffer,
+    a.hunger.buffer, a.rest.buffer, a.goal.buffer, a.planAt.buffer, a.planOf.buffer,
     a.wildIds.buffer, a.wildPos.buffer, a.wildKind.buffer,
   ] as ArrayBuffer[];
 }

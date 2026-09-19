@@ -1275,7 +1275,14 @@ export type LegendItem =
   | { kind: 'dot'; label: string }
   | { kind: 'chip'; label: string }
   | { kind: 'swatch'; color: string; round: boolean; label: string }
-  | { kind: 'note'; label: string };
+  /**
+   * A sentence rather than a mark. `quiet` ones open with the key instead of
+   * standing in it: five prose lines under the canvas cost two hundred pixels
+   * of the world, which is the instrument. What stays inline is only what a
+   * reader needs to avoid MISREADING the frame in front of them — above all,
+   * that a mark can be withheld.
+   */
+  | { kind: 'note'; label: string; quiet?: boolean };
 
 export interface LegendSection {
   name: string;
@@ -1310,6 +1317,23 @@ export const GHOST_NOTE = 'anything standing between you and a being turns to a 
  * estimate. Every being in the frame is in exactly one of the two terms.
  */
 export const COUNT_NOTE = 'to count the frame: count the pins, add the numbers — every being is one or the other, never both';
+
+/**
+ * The truth about what a mark does NOT say, per band, and it is a promise about
+ * the picture rather than an apology for it.
+ *
+ * Five rounds tried to make a pictogram and a heading arrow readable in a
+ * crowd. On the specimen — one being per square of flat ground — they read. In
+ * a settlement they did not: activity scored 38%, and nearly every miss was a
+ * reader finding a mark and attaching it to the body beside the one it belonged
+ * to. So in a crowd the marks are WITHHELD, and this says so, because a legend
+ * that lists a pictogram the frame is not drawing is the one failure a reader
+ * cannot recover from. The chip over the canvas prints how many were held.
+ */
+export const CROWD_NOTE = 'two marks close enough to touch are BOTH dropped rather than point at the wrong person — the chip says how many';
+
+/** What the reader should do instead, out where marks say least. */
+export const ASK_NOTE = 'hover any pin for name, age, condition, activity and plan · the roster below lists everyone, and the chips filter them';
 
 function marker(over: Partial<Extract<LegendItem, { kind: 'marker' }>> & { label: string }): LegendItem {
   return {
@@ -1358,8 +1382,8 @@ export function legendFor(band: ZoomBand): LegendSection[] {
           { kind: 'chip', label: 'a ring of people — the number is ALL of them, and no dot is drawn inside it' },
           { kind: 'swatch', color: SELECT_HEX, round: true, label: 'the one you selected — the only being named out here' },
           { kind: 'note', label: COUNT_NOTE },
-          { kind: 'note', label: SCALE_NOTE },
-          { kind: 'note', label: 'a whole being is under a pixel from here, so these marks are map pins, not people — zoom in for who and what' },
+          { kind: 'note', label: SCALE_NOTE, quiet: true },
+          { kind: 'note', label: 'a whole being is under a pixel from here, so these marks are map pins, not people — zoom in for who and what', quiet: true },
         ],
       },
     ];
@@ -1379,8 +1403,9 @@ export function legendFor(band: ZoomBand): LegendSection[] {
       {
         name: '',
         items: [
-          { kind: 'note', label: 'ring shape says it too, so nothing rests on colour' },
-          { kind: 'note', label: `${SCALE_NOTE} · a pin holds its size on screen; the being under it does not. Come closer and the pin becomes their footprint and the world takes over` },
+          { kind: 'note', label: 'ring shape says it too, so nothing rests on colour', quiet: true },
+          { kind: 'note', label: CROWD_NOTE },
+          { kind: 'note', label: `${SCALE_NOTE} · a pin holds its size on screen; the being under it does not. Come closer and the pin becomes their footprint and the world takes over`, quiet: true },
         ],
       },
     ];
@@ -1404,7 +1429,11 @@ export function legendFor(band: ZoomBand): LegendSection[] {
     { name: 'how it is', items: CONDITION_ITEMS },
     {
       name: 'doing',
-      items: [...ACTIVITY_ITEMS, { kind: 'note', label: 'no mark = standing or walking' }],
+      items: [
+        ...ACTIVITY_ITEMS,
+        { kind: 'note', label: 'no mark = standing or walking, OR too close to a neighbour to say' },
+        { kind: 'note', label: CROWD_NOTE },
+      ],
     },
   ];
   if (band === 'near') {
@@ -1412,9 +1441,9 @@ export function legendFor(band: ZoomBand): LegendSection[] {
       name: '',
       items: [
         { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
-        { kind: 'note', label: 'every being close enough to walk to is named — the chip over the frame says how far that reached' },
-        { kind: 'note', label: GHOST_NOTE },
-        { kind: 'note', label: SCALE_NOTE },
+        { kind: 'note', label: 'every being close enough to walk to is named — the chip over the frame says how far that reached', quiet: true },
+        { kind: 'note', label: GHOST_NOTE, quiet: true },
+        { kind: 'note', label: SCALE_NOTE, quiet: true },
       ],
     });
   } else {
@@ -1423,8 +1452,8 @@ export function legendFor(band: ZoomBand): LegendSection[] {
       items: [
         { kind: 'chip', label: 'a crowd, and how many are in it' },
         { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
-        { kind: 'note', label: GHOST_NOTE },
-        { kind: 'note', label: SCALE_NOTE },
+        { kind: 'note', label: GHOST_NOTE, quiet: true },
+        { kind: 'note', label: SCALE_NOTE, quiet: true },
       ],
     });
   }
@@ -1447,6 +1476,10 @@ export const LEGEND_EXTRA: LegendSection[] = [
       { kind: 'swatch', color: '#6d6459', round: false, label: 'a death, fading' },
       { kind: 'swatch', color: '#7fd8a8', round: true, label: 'spoke, threaded to who heard' },
     ],
+  },
+  {
+    name: 'ask',
+    items: [{ kind: 'note', label: ASK_NOTE }],
   },
   {
     name: '',

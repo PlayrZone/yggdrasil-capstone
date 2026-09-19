@@ -11,6 +11,8 @@ import {
   ACT_SOCIAL,
   ACT_WALKING,
   ACT_WORKING,
+  GOAL_NONE,
+  goalWord,
   KIND_UNKNOWN,
   STAGE_ADULT,
   STAGE_CHILD,
@@ -19,6 +21,16 @@ import {
   type ResourcePayload,
   type StructureUpdate,
 } from './sim/protocol.js';
+import {
+  conditionMix,
+  groupByActivity,
+  orderCandidates,
+  suppressOverlaps,
+  type MarkPoint,
+  type MixSegment,
+  type PickCandidate,
+} from './crowd.js';
+import type { RosterRow } from './roster.js';
 import {
   activityWord,
   ADULT_M,
@@ -196,8 +208,45 @@ const HAZE_FLOOR = 0.00013;
 const RING_R = 0.40;
 /** The ring's outermost radius, as a multiple of `RING_R` — its real footprint. */
 const RING_OUTER = 1.16;
+/**
+ * How much of a mark survives while it is NOT one of the beings the filter is
+ * asking about. Low enough that a match is found without hunting, high enough
+ * that the frame still contains — and still counts — everybody.
+ */
+const DIM = 0.20;
+/** The body's own colour, dimmed. Bodies are lit, so this multiplies the tint. */
+const DIM_BODY = 0.34;
+/**
+ * How much wider than its ring a being's marks reach.
+ *
+ * The pictogram is welded to the RIM — that is what `PICTO_RIM` buys — so the
+ * ring's own outer edge is the right threshold: two rings that touch have
+ * pictograms in each other's territory, and two that clear each other do not.
+ * Round one of this item used 1.35 and withheld 31 marks of 32 in an ordinary
+ * settlement, which is truthful and useless: a rule that fires on everything
+ * is not telling a reader anything about the frame they are looking at.
+ */
+const MARK_CLEARANCE = 1.0;
+/**
+ * The smallest a hover target is ever allowed to be, in CSS pixels. Out wide a
+ * map pin is about twenty-four across; this keeps the thing under the cursor
+ * reachable without swallowing the neighbour, and everything it does swallow is
+ * offered in the disambiguation list rather than chosen silently.
+ */
+const HOVER_MIN_PX = 10;
 /** Four conditions, each with or without the elder's outer ring. */
-const RING_BUCKETS = RING_STYLE_COUNT * 2;
+/**
+ * Four condition shapes × adult-or-elder centre × arrow-or-none. The arrow is
+ * baked into the ring's geometry rather than drawn as a second instance, so
+ * "this being's mark carries no facing" has to be a different bucket; sixteen
+ * instanced meshes is the price of being able to withhold a claim per being.
+ */
+const RING_BUCKETS = RING_STYLE_COUNT * 4;
+
+/** style × core × arrow → which ring mesh this being's mark belongs in. */
+function ringBucket(style: number, core: boolean, arrow: boolean): number {
+  return style * 4 + (core ? 2 : 0) + (arrow ? 1 : 0);
+}
 
 /** A presence dot at FAR, as a fraction of the marker height. */
 const DOT_R = 0.30;
@@ -224,6 +273,8 @@ const RENDER_FOOT = 3;
 const RENDER_XRAY = 4;
 const RENDER_BODY = 6;
 const RENDER_TRAIL = 10;
+/** Under the ring, so a match's halo frames the mark rather than covering it. */
+const RENDER_HALO = 11;
 const RENDER_RING = 12;
 const RENDER_PICTO = 14;
 
@@ -258,6 +309,8 @@ const PICTO_NEAR_SCALE = 0.58;
  * and it earns a number once this many are in it. Both are in screen space:
  * crowding is a property of the picture, not of the continent.
  */
+/** Four conditions, so four segments is the whole of a chip's mix bar. */
+const MIX_SEGMENTS = 4;
 const CLUSTER_CELL_MARKERS = 1.25;
 const CLUSTER_MIN = 3;
 
@@ -512,7 +565,7 @@ function figureGeometry(stage: number): THREE.BufferGeometry {
  * a ring that is only bright disappears on snow while a ring that is only dark
  * disappears in a forest.
  */
-function ringGeometry(style: number, core: boolean): THREE.BufferGeometry {
+function ringGeometry(style: number, core: boolean, arrow: boolean): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
   const weigh = (g: THREE.BufferGeometry, w: [number, number, number]): THREE.BufferGeometry => {
     const count = g.attributes['position']!.count;
@@ -615,10 +668,16 @@ function ringGeometry(style: number, core: boolean): THREE.BufferGeometry {
     g.computeVertexNormals();
     return g;
   };
-  weigh(bar(0.26, -0.96, -1.66, 0.006), INK);
-  weigh(tri(0.62, -1.50, -0.62, -1.50, 0, -2.86, 0.006), INK);
-  weigh(bar(0.145, -1.02, -1.62, 0.012), BONE);
-  weigh(tri(0.46, -1.56, -0.46, -1.56, 0, -2.70, 0.012), BONE);
+  // …and in a crowd, no arrow at all. An arrow whose tail sits inside the
+  // neighbour's mark is read as the NEIGHBOUR's facing about as often as its
+  // own, and a confident wrong answer is worse than a missing one. See
+  // `suppressOverlaps`; the legend says so, per band, in as many words.
+  if (arrow) {
+    weigh(bar(0.26, -0.96, -1.66, 0.006), INK);
+    weigh(tri(0.62, -1.50, -0.62, -1.50, 0, -2.86, 0.006), INK);
+    weigh(bar(0.145, -1.02, -1.62, 0.012), BONE);
+    weigh(tri(0.46, -1.56, -0.46, -1.56, 0, -2.70, 0.012), BONE);
+  }
 
   const merged = mergeGeometries(parts, false) ?? parts[0]!;
   merged.rotateX(-Math.PI / 2); // the ring is authored in XY; the ground is XZ
@@ -730,9 +789,15 @@ function dotGeometry(): THREE.BufferGeometry {
  * standing in front of them, two of which a reviewer could only find at 3–4×
  * magnification. The annotation layer is drawn OVER the world it annotates, in
  * every band, always — that is what makes it annotation and not scenery.
+ *
+ * `aDim` is the filter's only effect on a mark: 1 for a being that answers the
+ * question, a fraction for one that does not. It touches ALPHA and nothing
+ * else, so a dimmed mark is the same mark drawn faintly — never a different
+ * colour, never a different shape, and never absent. A filter that deleted
+ * beings from the picture would break the one claim this view is built on.
  */
 function ringMaterial(fade: { value: number }): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+  const mat = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     depthTest: false,
@@ -740,6 +805,7 @@ function ringMaterial(fade: { value: number }): THREE.ShaderMaterial {
     uniforms: { uOpacity: fade },
     vertexShader: `
       attribute vec3 aWeights;
+      attribute float aDim;
       varying vec3 vInk;
       varying float vAlpha;
       void main() {
@@ -748,7 +814,7 @@ function ringMaterial(fade: { value: number }): THREE.ShaderMaterial {
         vInk = aWeights.x * instanceColor
              + aWeights.y * vec3(0.012, 0.014, 0.016)
              + aWeights.z * vec3(0.94, 0.90, 0.82);
-        vAlpha = aWeights.x + aWeights.y * 0.9 + aWeights.z;
+        vAlpha = (aWeights.x + aWeights.y * 0.9 + aWeights.z) * aDim;
       }`,
     fragmentShader: `
       uniform float uOpacity;
@@ -759,6 +825,10 @@ function ringMaterial(fade: { value: number }): THREE.ShaderMaterial {
         #include <colorspace_fragment>
       }`,
   });
+  // A mark whose geometry has no strength lane is drawn at full strength —
+  // which is what every mark is until something asks a question.
+  mat.defaultAttributeValues = { aDim: [1] };
+  return mat;
 }
 
 // ── Materials that fade ──────────────────────────────────────────────────────
@@ -1012,6 +1082,9 @@ export class World3D {
   /** One mesh per ring style × elder, so condition and age are shapes. */
   private ringMeshes: THREE.InstancedMesh[] = [];
   private ringCount = new Array<number>(RING_BUCKETS).fill(0);
+  /** Per ring bucket: how strongly each drawn mark is painted. See `ringMaterial`. */
+  private ringDim: (THREE.InstancedBufferAttribute | null)[] = new Array<null>(RING_BUCKETS).fill(null);
+  private dotDim: THREE.InstancedBufferAttribute | null = null;
   private pictos: THREE.InstancedMesh | null = null;
   private pictoCell: THREE.InstancedBufferAttribute | null = null;
   /** The streak behind a being that is on the move. */
@@ -1029,10 +1102,24 @@ export class World3D {
   private beingCond = new Uint8Array(0);
   private beingStage = new Uint8Array(0);
   private beingHeading = new Float32Array(0);
+  /** Need pressure in [0, 100], straight off the wire. 0 is satisfied. */
+  private beingHunger = new Uint8Array(0);
+  private beingRest = new Uint8Array(0);
+  /** The engine's current plan step, by `GOAL_WORDS` code, and where in the plan. */
+  private beingGoal = new Uint8Array(0);
+  private beingPlanAt = new Uint8Array(0);
+  private beingPlanOf = new Uint8Array(0);
   /** 1 while this being is inside a crowd that carries its own number. */
   private beingCrowded = new Uint8Array(0);
   /** 1 while this being projected inside the canvas on the last frame. */
   private beingOnScreen = new Uint8Array(0);
+  /**
+   * 1 while this being's mark stands clear of every neighbour's, and may
+   * therefore carry a pictogram and a heading arrow without the reader having
+   * to guess whose they are. See `suppressOverlaps` — this is the whole of
+   * item L4's fifth promise, and `markAudit()` reports it.
+   */
+  private beingMarkClear = new Uint8Array(0);
   /** How many beings in frame drew a mark of their own — the countable term. */
   private pinsDrawn = 0;
   private instanceCount = 0;
@@ -1094,10 +1181,27 @@ export class World3D {
 
   private readonly selRing: THREE.Mesh;
   private readonly selBeam: THREE.Mesh;
+  /** The ring under whoever the hover card is describing. See `setHover`. */
+  private readonly hoverRing: THREE.Mesh;
   private selectedId: number | null = null;
   private hoveredId: number | null = null;
   private following = false;
   private focusUntil = 0;
+
+  /**
+   * The beings that answer the question the filter bar is asking, or `null`
+   * while it is asking nothing.
+   *
+   * The view's job with a filter is not to hide anything — a being removed from
+   * the picture cannot be counted, and this instrument's whole claim is that
+   * what you see is what is there. Matches are emphasised with a halo and full
+   * colour; everyone else stays exactly where they are, dimmed. The population
+   * on screen never changes, and `countAudit` still closes.
+   */
+  private highlight: ReadonlySet<number> | null = null;
+  private halos: THREE.InstancedMesh | null = null;
+  /** How many beings had their pictogram and arrow withheld this frame. */
+  private marksHeld = 0;
 
   /** Per-material handles on how much of a body's colour survives the dark. */
   private readonly bodyNight: { value: number }[] = [];
@@ -1160,12 +1264,16 @@ export class World3D {
   /** Crowds: an outline round the group and the number of beings inside it. */
   private readonly hullNodes: HTMLElement[] = [];
   private readonly countNodes: HTMLElement[] = [];
+  /** The parts inside one chip: the number, the match badge, the mix bar. */
+  private readonly countParts: { num: HTMLElement; badge: HTMLElement; mix: HTMLElement; seg: HTMLElement[] }[] = [];
   private readonly screenPoints: ScreenPoint[] = [];
   /** `screenPoints[k]` is being `screenIndex[k]` in the per-frame arrays. */
   private readonly screenIndex: number[] = [];
   private clusters: Cluster[] = [];
   /** Where the count chips are sitting, so names can be placed around them. */
   private readonly chipRects: LabelObstacle[] = [];
+  /** Per cluster: where its chip landed on the canvas, for hover and for probes. */
+  private readonly chipAt = new Float32Array(CLUSTER_BUDGET * 2);
   /** Per cluster: world centre x, y, z, and the camera distance it was found at. */
   private readonly clusterWorld = new Float32Array(CLUSTER_BUDGET * 4);
   private lastCluster = 0;
@@ -1213,10 +1321,23 @@ export class World3D {
   private readonly camWas = new THREE.Vector3(NaN, NaN, NaN);
   private camMoving = true;
 
+  /** Told when the pointer moves over a being, a crowd chip, or off both. */
+  private readonly onHover?: (candidates: PickCandidate[], x: number, y: number) => void;
+  private readonly onChip?: (cluster: number | null, x: number, y: number) => void;
+  private readonly onChipClick?: (cluster: number) => void;
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly onSelect?: (id: number | null) => void,
+    hooks?: {
+      onHover?: (candidates: PickCandidate[], x: number, y: number) => void;
+      onChip?: (cluster: number | null, x: number, y: number) => void;
+      onChipClick?: (cluster: number) => void;
+    },
   ) {
+    this.onHover = hooks?.onHover;
+    this.onChip = hooks?.onChip;
+    this.onChipClick = hooks?.onChipClick;
     // The label layer is this view's own: it has to exist before the first
     // frame, and a React ref on a sibling element is not guaranteed to have
     // attached by the time the canvas ref fires.
@@ -1350,6 +1471,21 @@ export class World3D {
     this.selBeam.visible = false;
     this.scene.add(this.selBeam);
 
+    // The being the card is describing. A name alone is not a highlight: in a
+    // crowd of fourteen the reader has to be able to see WHICH body the card
+    // belongs to, from across the frame, without reading anything. Bone, like
+    // the filter's halo and the lit chips — "found" is one channel everywhere.
+    this.hoverRing = new THREE.Mesh(
+      new THREE.RingGeometry(1.52, 1.86, 40).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: 0xf2f7fa, transparent: true, opacity: 0.92, depthTest: false, depthWrite: false,
+        side: THREE.DoubleSide, toneMapped: false,
+      }),
+    );
+    this.hoverRing.renderOrder = 19;
+    this.hoverRing.visible = false;
+    this.scene.add(this.hoverRing);
+
     this.buildFigures();
     this.buildLabels();
 
@@ -1373,7 +1509,7 @@ export class World3D {
     };
     this.onPointerLeave = (): void => {
       this.pointerInside = false;
-      this.hoveredId = null;
+      this.onHover?.([], -1, -1);
     };
     this.onWheel = (): void => {
       this.lastInput = performance.now();
@@ -1764,12 +1900,33 @@ export class World3D {
     this.scene.add(rocks);
   }
 
+  /**
+   * Give a mark geometry its per-instance strength lane, sized for `cap`.
+   *
+   * It lives on the GEOMETRY because `regrow` keeps the geometry and swaps the
+   * mesh, so a lane held on the mesh would silently lose its buffer the first
+   * time a world grew past sixty-four beings — which is every world.
+   */
+  private static dimLane(geo: THREE.BufferGeometry, cap: number): THREE.InstancedBufferAttribute {
+    const held = geo.getAttribute('aDim') as THREE.InstancedBufferAttribute | undefined;
+    if (held && held.count >= cap) return held;
+    const lane = new THREE.InstancedBufferAttribute(new Float32Array(cap).fill(1), 1);
+    lane.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aDim', lane);
+    return lane;
+  }
+
   private buildFigures(): void {
     const ringMat = ringMaterial(this.ringFade);
-    // Four conditions × adult or elder. Eight draw calls buy two whole
-    // encodings that need no colour and no badge.
+    // Four conditions × adult or elder × whether this mark is allowed to claim
+    // a facing. Sixteen draw calls buy three whole encodings that need no
+    // colour and no badge, and the ability to say nothing about a third.
     for (let bucket = 0; bucket < RING_BUCKETS; bucket++) {
-      const mesh = new THREE.InstancedMesh(ringGeometry(bucket >> 1, (bucket & 1) === 1), ringMat, 64);
+      const mesh = new THREE.InstancedMesh(
+        ringGeometry(bucket >> 2, ((bucket >> 1) & 1) === 1, (bucket & 1) === 1),
+        ringMat,
+        64,
+      );
       mesh.count = 0;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       // The shader reads `instanceColor`, and three only declares that
@@ -1778,6 +1935,7 @@ export class World3D {
       mesh.frustumCulled = false;
       mesh.renderOrder = RENDER_RING;
       this.ringMeshes[bucket] = mesh;
+      this.ringDim[bucket] = World3D.dimLane(mesh.geometry, 64);
       this.scene.add(mesh);
     }
 
@@ -1790,6 +1948,27 @@ export class World3D {
     this.trails = trails;
     this.scene.add(trails);
 
+    // The halo a being wears while it answers the question the filter is
+    // asking. A wide, soft bone annulus OUTSIDE the condition ring, drawn
+    // through the world like every other annotation — so a match on the far
+    // side of a hill is still a match you can see. It carries no hue of its
+    // own: "found" is not a condition, and giving it a colour would put a
+    // fifth swatch into a palette chosen on lightness for four.
+    const halos = new THREE.InstancedMesh(
+      new THREE.RingGeometry(1.30, 1.92, 40).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: 0xf6efdc, transparent: true, opacity: 0.72, depthWrite: false, depthTest: false,
+        side: THREE.DoubleSide, toneMapped: false, blending: THREE.AdditiveBlending,
+      }),
+      64,
+    );
+    halos.count = 0;
+    halos.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    halos.frustumCulled = false;
+    halos.renderOrder = RENDER_HALO;
+    this.halos = halos;
+    this.scene.add(halos);
+
     const dots = new THREE.InstancedMesh(dotGeometry(), ringMat, 64);
     dots.count = 0;
     dots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -1798,6 +1977,7 @@ export class World3D {
     dots.renderOrder = RENDER_RING;
     dots.visible = false;
     this.dots = dots;
+    this.dotDim = World3D.dimLane(dots.geometry, 64);
     this.scene.add(dots);
 
     this.xrayMat = xrayMaterial();
@@ -2004,12 +2184,41 @@ export class World3D {
       layer.appendChild(hull);
       this.hullNodes.push(hull);
     }
+    // A chip is a number, a stacked bar of what the crowd is made of, and a
+    // badge for how many of them answer the current filter. The parts are
+    // built once and moved; a chip that rebuilt its own markup ten times a
+    // second would be the most expensive thing in the frame.
     for (let i = 0; i < CLUSTER_BUDGET; i++) {
       const count = document.createElement('div');
       count.className = 'wcount';
       count.style.display = 'none';
+      const num = document.createElement('i');
+      num.className = 'wnum';
+      const badge = document.createElement('i');
+      badge.className = 'wmatch';
+      badge.style.display = 'none';
+      const mix = document.createElement('i');
+      mix.className = 'wmix';
+      const seg: HTMLElement[] = [];
+      for (let s = 0; s < MIX_SEGMENTS; s++) {
+        const bar = document.createElement('i');
+        bar.style.display = 'none';
+        mix.appendChild(bar);
+        seg.push(bar);
+      }
+      count.append(num, badge, mix);
+      // Chips are the one thing in the annotation layer you can point at, so
+      // they take the pointer back — `.wlabels` turns it off for everything.
+      count.style.pointerEvents = 'auto';
+      const cluster = i;
+      // Client coordinates, because the card that opens is positioned in them —
+      // the chip's own canvas-space position is recorded separately, for probes.
+      count.addEventListener('pointerenter', (e) => this.onChip?.(cluster, e.clientX, e.clientY));
+      count.addEventListener('pointerleave', () => this.onChip?.(null, -1, -1));
+      count.addEventListener('click', () => this.onChipClick?.(cluster));
       layer.appendChild(count);
       this.countNodes.push(count);
+      this.countParts.push({ num, badge, mix, seg });
     }
     for (let i = 0; i < LABEL_BUDGET_MAX; i++) {
       const leader = document.createElement('div');
@@ -2041,20 +2250,30 @@ export class World3D {
     this.beingCond = new Uint8Array(cap);
     this.beingStage = new Uint8Array(cap);
     this.beingHeading = new Float32Array(cap);
+    this.beingHunger = new Uint8Array(cap);
+    this.beingRest = new Uint8Array(cap);
+    this.beingGoal = new Uint8Array(cap);
+    this.beingPlanAt = new Uint8Array(cap);
+    this.beingPlanOf = new Uint8Array(cap);
     this.beingCrowded = new Uint8Array(cap);
     this.beingOnScreen = new Uint8Array(cap);
+    this.beingMarkClear = new Uint8Array(cap);
     this.stageIds = [new Int32Array(cap), new Int32Array(cap), new Int32Array(cap)];
     for (let bucket = 0; bucket < RING_BUCKETS; bucket++) {
       const mesh = this.ringMeshes[bucket];
-      if (mesh) this.ringMeshes[bucket] = regrow(this.scene, mesh, cap);
+      if (!mesh) continue;
+      this.ringMeshes[bucket] = regrow(this.scene, mesh, cap);
+      this.ringDim[bucket] = World3D.dimLane(this.ringMeshes[bucket]!.geometry, cap);
     }
     for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
       const mesh = this.figures[stage];
       if (mesh) this.figures[stage] = regrow(this.scene, mesh, cap);
     }
     if (this.trails) this.trails = regrow(this.scene, this.trails, cap);
+    if (this.halos) this.halos = regrow(this.scene, this.halos, cap);
     if (this.dots) {
       this.dots = regrow(this.scene, this.dots, cap);
+      this.dotDim = World3D.dimLane(this.dots.geometry, cap);
       this.dots.visible = this.band === 'far';
     }
     if (this.pictos) {
@@ -2080,8 +2299,10 @@ export class World3D {
     if (this.pictos) this.pictos.count = 0;
     if (this.trails) this.trails.count = 0;
     if (this.dots) this.dots.count = 0;
+    if (this.halos) this.halos.count = 0;
     this.figureCount = [0, 0, 0];
     this.ringCount.fill(0);
+    this.marksHeld = 0;
     this.specimen(false);
     this.simCount = 0;
     this.instanceCount = 0;
@@ -2279,7 +2500,16 @@ export class World3D {
       this.beingCond[i] = cell.cond;
       this.beingStage[i] = cell.stage;
       this.beingHeading[i] = (cell.octant * Math.PI) / 4;
+      // The specimen is a display of the vocabulary, not a being with a life:
+      // its needs are flat and it has no plan, and the hover card says so
+      // rather than inventing numbers to fill its columns.
+      this.beingHunger[i] = 0;
+      this.beingRest[i] = 0;
+      this.beingGoal[i] = GOAL_NONE;
+      this.beingPlanAt[i] = 0;
+      this.beingPlanOf[i] = 0;
       this.beingCrowded[i] = 0;
+      this.beingMarkClear[i] = 1;
     }
     this.specimenCount = plan.length;
     this.instanceCount = this.simCount + plan.length;
@@ -2334,7 +2564,13 @@ export class World3D {
       this.beingCond[i] = f.arrays.cond[i]!;
       this.beingStage[i] = f.arrays.stage[i]!;
       this.beingHeading[i] = f.arrays.heading[i]!;
+      this.beingHunger[i] = f.arrays.hunger[i]!;
+      this.beingRest[i] = f.arrays.rest[i]!;
+      this.beingGoal[i] = f.arrays.goal[i]!;
+      this.beingPlanAt[i] = f.arrays.planAt[i]!;
+      this.beingPlanOf[i] = f.arrays.planOf[i]!;
       this.beingCrowded[i] = 0;
+      this.beingMarkClear[i] = 1;
     }
     this.simCount = f.beings;
     this.instanceCount = f.beings;
@@ -2422,6 +2658,67 @@ export class World3D {
   }
 
   /**
+   * Which beings are standing clear enough of their neighbours to be allowed a
+   * mark of their own — the fifth promise of item L4, and the one that makes
+   * the other four necessary.
+   *
+   * Five rounds of work went into drawing a pictogram and a heading arrow a
+   * stranger could read. On the legibility specimen — where every being stands
+   * alone on flat ground — they worked. In a real settlement they did not: the
+   * final score was activity 38%, and the engineer's own note on nearly every
+   * miss was that the reader had found a mark and attached it to the body next
+   * to the one it belonged to. That is not a mark that needs to be louder. It
+   * is a claim the picture is not entitled to make, because at that density
+   * the picture cannot say whose it is.
+   *
+   * So it is withheld. Two beings whose marks would touch on screen BOTH lose
+   * their pictogram and their arrow; an isolated being keeps both. What is
+   * lost is answered by hovering, by the roster, and by a filter — by asking,
+   * which is how every serious instrument answers a question about one
+   * element out of three hundred.
+   */
+  private planMarks(): void {
+    this.beingMarkClear.fill(1, 0, this.instanceCount);
+    this.marksHeld = 0;
+    if (this.screenPoints.length < 2) return;
+    const points: MarkPoint[] = [];
+    const index: number[] = [];
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const i = this.screenIndex[k]!;
+      // A being a crowd chip has already counted draws nothing at all, so it
+      // cannot have a mark misattributed to it and must not suppress its
+      // neighbours' either.
+      if (this.isCollapsed(i)) continue;
+      const p = this.screenPoints[k]!;
+      points.push({ x: p.x, y: p.y, r: this.markRadiusOf(i) });
+      index.push(i);
+    }
+    const clear = suppressOverlaps(points);
+    for (let n = 0; n < index.length; n++) {
+      if (clear[n]) continue;
+      this.beingMarkClear[index[n]!] = 0;
+      this.marksHeld++;
+    }
+  }
+
+  /**
+   * How far out from a being's centre its per-being marks reach, in CSS pixels.
+   *
+   * The ring's outer edge, widened by `MARK_CLEARANCE` — because the pictogram
+   * sits ON the rim and the arrow runs out past it, so two rings that merely
+   * come close already have marks in each other's territory. Measured from the
+   * ring rather than the body: these marks are welded to the ring, and a body
+   * two hundred pixels tall in the street is not two hundred pixels wide.
+   */
+  private markRadiusOf(i: number): number {
+    const d = this.distanceTo(i);
+    if (d <= 0) return 0;
+    const markPx = this.beingMark[i]! / (d * this.worldPerPx);
+    if (!bandShowsBodies(this.band)) return markPx * DOT_R * 1.44 * MARK_CLEARANCE;
+    return markPx * RING_OUTER * RING_R * stageFootprint(this.beingStage[i]!, this.band) * MARK_CLEARANCE;
+  }
+
+  /**
    * Draw every being the way the current band promises, and no other way.
    *
    * FAR is a dot for anyone not inside a crowd that carries its own number —
@@ -2439,11 +2736,15 @@ export class World3D {
     const cells = this.pictoCell!;
     const trails = this.trails!;
     const dots = this.dots!;
+    const halos = this.halos!;
+    const dotDim = this.dotDim;
+    const filtering = this.highlight !== null;
     this.figureCount = [0, 0, 0];
     this.ringCount.fill(0);
     let pictoAt = 0;
     let trailAt = 0;
     let dotAt = 0;
+    let haloAt = 0;
     this.pinsDrawn = 0;
 
     for (let i = 0; i < this.instanceCount; i++) {
@@ -2484,6 +2785,25 @@ export class World3D {
       if (collapses && this.beingCrowded[i] === 1 && id !== this.selectedId) continue;
       if (this.beingOnScreen[i] === 1) this.pinsDrawn++;
 
+      // Does this being answer the question the filter bar is asking? A match
+      // keeps everything; everyone else keeps their mark at a fraction of its
+      // strength, so the frame still contains — and `countAudit` still counts —
+      // the whole population.
+      const match = !filtering || this.highlight!.has(id);
+      const dim = match ? 1 : DIM;
+
+      // The halo: the "found" channel, and the only thing a filter ADDS to the
+      // picture. Drawn wherever the being drew a mark of its own, in every
+      // band, so a search at FAR is as findable as one in the street.
+      if (filtering && match && this.beingOnScreen[i] === 1) {
+        const hr = deco * RING_R * (bodies ? stageFootprint(stage, this.band) : DOT_R * 2.4);
+        this.basis.makeBasis(this.right, this.up, this.fwd);
+        this.basis.scale(this.dummy.scale.setScalar(hr));
+        this.basis.setPosition(sx + this.up.x * hr * 0.06, surface + this.up.y * hr * 0.06, sz + this.up.z * hr * 0.06);
+        halos.setMatrixAt(haloAt, this.basis);
+        haloAt++;
+      }
+
       if (!bodies) {
         const rd = deco * DOT_R;
         this.basis.makeBasis(this.right, this.up, this.fwd);
@@ -2491,11 +2811,16 @@ export class World3D {
         this.basis.setPosition(sx + this.up.x * rd * 0.2, surface + this.up.y * rd * 0.2, sz + this.up.z * rd * 0.2);
         dots.setMatrixAt(dotAt, this.basis);
         dots.setColorAt(dotAt, this.color.setHex(ringHue));
+        if (dotDim) dotDim.setX(dotAt, dim);
         dotAt++;
         continue;
       }
 
-      const bucket = ringStyleFor(cond, act) * 2 + (stageCore(stage, this.band) ? 1 : 0);
+      // Whether this mark is allowed to claim a FACING. In a crowd it is not:
+      // the arrow is dropped from the geometry rather than drawn where a reader
+      // would have to guess whose it is.
+      const clear = this.beingMarkClear[i] === 1;
+      const bucket = ringBucket(ringStyleFor(cond, act), stageCore(stage, this.band), clear);
       const ringMesh = this.ringMeshes[bucket]!;
       const ringAt = this.ringCount[bucket]!;
       this.ringCount[bucket] = ringAt + 1;
@@ -2505,10 +2830,11 @@ export class World3D {
       this.basis.setPosition(sx + this.up.x * r * 0.09, surface + this.up.y * r * 0.09, sz + this.up.z * r * 0.09);
       ringMesh.setMatrixAt(ringAt, this.basis);
       ringMesh.setColorAt(ringAt, this.color.setHex(ringHue));
+      this.ringDim[bucket]?.setX(ringAt, dim);
 
       if (detail && movingFor(act)) {
         trails.setMatrixAt(trailAt, this.basis);
-        trails.setColorAt(trailAt, this.color.setHex(ringHue));
+        trails.setColorAt(trailAt, this.color.setHex(ringHue).multiplyScalar(dim));
         trailAt++;
       }
 
@@ -2555,9 +2881,15 @@ export class World3D {
       // carries the colour at full strength. Pushed well past its own value: a
       // lit body next to an unlit ring reads as a grey pin inside a white hoop
       // unless it is lifted to meet it.
-      mesh.setColorAt(at, this.color.setHex(bodyTint(hue)).multiplyScalar(1.45));
+      mesh.setColorAt(at, this.color.setHex(bodyTint(hue)).multiplyScalar(match ? 1.45 : 1.45 * DIM_BODY));
 
       if (!detail) continue;
+      // In a crowd, no pictogram either — and for the same reason as the
+      // arrow. Round five's activity score was 38% and nearly every miss was a
+      // chip read off the wrong body. The roster and the hover card answer
+      // "what is this one doing" now; the picture only claims it where the
+      // claim cannot be misattributed.
+      if (!clear) continue;
       // Exactly what this being is doing NOW, and nothing it was doing a
       // second ago. Round two let a recent utterance keep the speech badge
       // alive for a second and a half, so a reader called a walking being
@@ -2577,7 +2909,10 @@ export class World3D {
       // one exception is volume: at 2400× nearly everyone is talking, so the
       // speech chip is drawn quieter than the rest.
       cells.array[pictoAt] = picto;
-      pictos.setColorAt(pictoAt, this.color.setHex(HUE_WELL).multiplyScalar(picto === PICTO_SPEAK ? 0.74 : 1));
+      pictos.setColorAt(
+        pictoAt,
+        this.color.setHex(HUE_WELL).multiplyScalar((picto === PICTO_SPEAK ? 0.74 : 1) * (match ? 1 : DIM)),
+      );
       pictoAt++;
     }
 
@@ -2586,6 +2921,8 @@ export class World3D {
       mesh.count = bodies ? this.ringCount[bucket]! : 0;
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      const lane = this.ringDim[bucket];
+      if (lane) lane.needsUpdate = true;
       mesh.boundingSphere = null;
     }
     for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
@@ -2610,6 +2947,11 @@ export class World3D {
     dots.count = dotAt;
     dots.instanceMatrix.needsUpdate = true;
     if (dots.instanceColor) dots.instanceColor.needsUpdate = true;
+    if (dotDim) dotDim.needsUpdate = true;
+    halos.count = haloAt;
+    halos.visible = haloAt > 0;
+    halos.instanceMatrix.needsUpdate = true;
+    halos.boundingSphere = null;
     trails.count = trailAt;
     trails.instanceMatrix.needsUpdate = true;
     if (trails.instanceColor) trails.instanceColor.needsUpdate = true;
@@ -2969,6 +3311,81 @@ export class World3D {
 
   // ── Selection, focus, ties ─────────────────────────────────────────────────
 
+  /**
+   * Who the reader is currently pointing at — from the canvas, from a roster
+   * row, or from a driver.
+   *
+   * The view does not decide this for itself any more. The shell owns the
+   * brush (see `brushReduce`) because two things can point at once: the mouse
+   * over the world and the mouse over the table are the same question asked
+   * from two places, and whichever asked last must win without the other
+   * stamping on it a twelfth of a second later.
+   */
+  setHover(id: number | null): void {
+    if (this.hoveredId === id) return;
+    this.hoveredId = id;
+    // The name over a newly hovered being should appear now, not at the next
+    // quarter-second label refresh.
+    this.lastLabelPick = 0;
+  }
+
+  get hovered(): number | null {
+    return this.hoveredId;
+  }
+
+  /**
+   * The beings that answer the filter's question — emphasised, with everyone
+   * else dimmed. `null` turns the whole effect off.
+   *
+   * Nothing is removed from the picture and no count changes: `countAudit`
+   * closes over the same population with a filter on as with it off. A view
+   * that quietly deleted the beings you had not asked about would answer "how
+   * many are there" with "how many did you ask for", which is the one way an
+   * instrument can be wrong that a reader cannot detect.
+   */
+  setHighlight(ids: ReadonlySet<number> | null): void {
+    this.highlight = ids;
+  }
+
+  highlightedIds(): number[] {
+    if (this.highlight === null) return [];
+    const out: number[] = [];
+    for (let i = 0; i < this.instanceCount; i++) {
+      const id = this.ids[i]!;
+      if (this.highlight.has(id)) out.push(id);
+    }
+    return out;
+  }
+
+  /**
+   * How many beings had their pictogram and heading arrow withheld this frame
+   * because a neighbour's mark was close enough that a reader could not tell
+   * whose was whose — and how many kept them.
+   */
+  markAudit(): { drawn: number; held: number; clear: number } {
+    let drawn = 0;
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      if (!this.isCollapsed(this.screenIndex[k]!)) drawn++;
+    }
+    return { drawn, held: this.marksHeld, clear: drawn - this.marksHeld };
+  }
+
+  /**
+   * Where every drawn mark is and how far it reaches, so the suppression rule
+   * can be checked against the picture rather than taken on trust: no two
+   * beings that BOTH still show a facing may have overlapping marks.
+   */
+  markGeometry(): { id: number; x: number; y: number; r: number; clear: boolean }[] {
+    const out: { id: number; x: number; y: number; r: number; clear: boolean }[] = [];
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const i = this.screenIndex[k]!;
+      if (this.isCollapsed(i)) continue;
+      const p = this.screenPoints[k]!;
+      out.push({ id: p.id, x: p.x, y: p.y, r: this.markRadiusOf(i), clear: this.beingMarkClear[i] === 1 });
+    }
+    return out;
+  }
+
   setSelected(id: number | null): void {
     this.selectedId = id;
     if (id === null) {
@@ -3022,6 +3439,25 @@ export class World3D {
   private indexOf(id: number): number {
     for (let i = 0; i < this.instanceCount; i++) if (this.ids[i] === id) return i;
     return -1;
+  }
+
+  /**
+   * Put the bone ring under whoever the card is describing.
+   *
+   * Drawn through the world, like every other annotation, so the answer to
+   * "which one is it?" does not depend on the being being in front of the hut
+   * rather than behind it.
+   */
+  private updateHoverRing(t: number): void {
+    const i = this.hoveredId === null ? -1 : this.indexOf(this.hoveredId);
+    if (i < 0) {
+      this.hoverRing.visible = false;
+      return;
+    }
+    const h = this.beingMark[i]!;
+    this.hoverRing.visible = true;
+    this.hoverRing.position.set(this.beingPos[i * 3]!, this.beingPos[i * 3 + 1]! + h * 0.06, this.beingPos[i * 3 + 2]!);
+    this.hoverRing.scale.setScalar(h * RING_R * (1 + Math.sin(t * 5.2) * 0.045));
   }
 
   private updateSelection(t: number): void {
@@ -3102,49 +3538,76 @@ export class World3D {
 
   // ── Picking + labels ───────────────────────────────────────────────────────
 
-  private pick(clientX: number, clientY: number): number | null {
+  /**
+   * EVERY being under the cursor, in the order a disambiguation list should
+   * offer them — not the nearest one.
+   *
+   * Two sources, and the distinction between them is the whole point. A ray
+   * that strikes a BODY is an exact hit on an exact instance: `instanceId` →
+   * `stageIds` → the being's own id, never a nearest-by-accident. Beings whose
+   * bodies the ray missed but whose MARK the cursor is inside come second,
+   * because a twenty-pixel figure is mostly gaps and at FAR there are no bodies
+   * to hit at all — a reviewer's eight blind clicks into a populated DEFAULT
+   * frame once hit nothing whatsoever.
+   *
+   * `intersectObject` is asked for all hits rather than the first, so four
+   * people standing in a doorway come back as four candidates and the card can
+   * say "4 here" instead of quietly choosing one of them.
+   */
+  pickAt(clientX: number, clientY: number): PickCandidate[] {
     const rect = this.canvas.getBoundingClientRect();
-    this.ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    if (px < 0 || py < 0 || px > rect.width || py > rect.height) return [];
+    this.ndc.set((px / rect.width) * 2 - 1, -(py / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.ndc, this.camera);
-    let best: { d: number; id: number } | null = null;
+    const found = new Map<number, PickCandidate>();
     for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
       const mesh = this.figures[stage];
       if (!mesh || mesh.count === 0) continue;
-      const hits = this.raycaster.intersectObject(mesh, false);
-      const hit = hits[0];
-      if (hit?.instanceId === undefined) continue;
-      if (!best || hit.distance < best.d) best = { d: hit.distance, id: this.stageIds[stage]![hit.instanceId]! };
-    }
-    if (best) return best.id;
-    // The ray missed every body. That is not the same as missing every being:
-    // a reviewer's eight blind clicks near the centre of a default-camera frame
-    // hit nothing at all, because a twenty-pixel figure is a twenty-pixel
-    // target and the gaps between its limbs are most of it — and at FAR there
-    // are no bodies to hit. So fall back to the nearest marker on screen,
-    // inside its own footprint.
-    const px = clientX - rect.left;
-    const py = clientY - rect.top;
-    let nearest = -1;
-    let nearestD = Infinity;
-    for (let k = 0; k < this.screenPoints.length; k++) {
-      const p = this.screenPoints[k]!;
-      const dx = p.x - px;
-      const dy = p.y - py;
-      const d = dx * dx + dy * dy;
-      if (d < nearestD) {
-        nearestD = d;
-        nearest = k;
+      for (const hit of this.raycaster.intersectObject(mesh, false)) {
+        if (hit.instanceId === undefined) continue;
+        const id = this.stageIds[stage]![hit.instanceId];
+        if (id === undefined || found.has(id)) continue;
+        found.set(id, { id, onBody: true, distPx: 0, depth: hit.distance });
       }
     }
-    if (nearest < 0) return null;
-    const reach = Math.max(11, this.markerPixelsOf(this.screenIndex[nearest]!) * 0.7);
-    return nearestD <= reach * reach ? this.screenPoints[nearest]!.id : null;
+    // Everyone whose mark the cursor is inside. Kept even when a body was hit:
+    // the being standing behind the one you struck is exactly the being a
+    // disambiguation list exists to offer.
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const p = this.screenPoints[k]!;
+      const i = this.screenIndex[k]!;
+      if (this.isCollapsed(i)) continue; // nothing is drawn for it; it is in a chip's number
+      const dx = p.x - px;
+      const dy = p.y - py;
+      const distPx = Math.hypot(dx, dy);
+      const reach = Math.max(HOVER_MIN_PX, this.markerPixelsOf(i) * 0.55);
+      if (distPx > reach) continue;
+      const held = found.get(p.id);
+      if (held) {
+        held.distPx = distPx;
+        continue;
+      }
+      found.set(p.id, { id: p.id, onBody: false, distPx, depth: this.distanceTo(i) });
+    }
+    return orderCandidates([...found.values()]);
+  }
+
+  /** The one being a click means: the first candidate, or nothing. */
+  private pick(clientX: number, clientY: number): number | null {
+    return this.pickAt(clientX, clientY)[0]?.id ?? null;
   }
 
   private handleClick(e: PointerEvent): void {
     // Ignore drags (orbit); only near-stationary taps are clicks.
     if (Math.abs(e.clientX - this.downX) > 5 || Math.abs(e.clientY - this.downY) > 5) return;
-    const id = this.pick(e.clientX, e.clientY);
+    // A hovered being wins over a fresh pick: what the card is describing is
+    // what the reader believes they are about to click, and after arrowing
+    // through a disambiguation list those two are deliberately different.
+    const id = this.hoveredId !== null && this.indexOf(this.hoveredId) >= 0
+      ? this.hoveredId
+      : this.pick(e.clientX, e.clientY);
     this.setSelected(id);
     this.onSelect?.(id);
   }
@@ -3357,8 +3820,10 @@ export class World3D {
       hull.style.height = `${Math.round(ry * 2)}px`;
       hull.style.transform = `translate(-50%, -50%) translate(${Math.round(px)}px, ${Math.round(py)}px)`;
       const text = String(cl.count);
-      if (count.textContent !== text) count.textContent = text;
+      const parts = this.countParts[c];
+      if (parts && parts.num.textContent !== text) parts.num.textContent = text;
       count.style.display = 'block';
+      if (parts) this.paintChip(parts, cl);
       // OUTSIDE the outline, up and to the right, clear of the ellipse by the
       // chip's own radius. Round two put it on the boundary at 0.72 of the
       // extent, which is inside the crowd: a number printed over the people it
@@ -3384,9 +3849,67 @@ export class World3D {
         if (clear) break;
       }
       count.style.transform = `translate(-50%, -50%) translate(${chipX}px, ${chipY}px)`;
+      this.chipAt[c * 2] = chipX;
+      this.chipAt[c * 2 + 1] = chipY;
       // Names are placed around these, not on top of them.
       this.chipRects.push({ x0: chipX - halfW, y0: chipY - 9, x1: chipX + halfW, y1: chipY + 9 });
     }
+  }
+
+  /**
+   * The bar under a chip's number: what this crowd is MADE of.
+   *
+   * A number over a settlement answers one question and refuses the rest. Four
+   * segments in the legend's own order, widths in percent, colours from the
+   * condition palette that was chosen on lightness — so two chips can be
+   * compared at a glance and a reader with any colour vision still sees
+   * light-to-dark. With a filter on, the badge says how many of this crowd
+   * answer it, which is the only way a count out at FAR can mean anything
+   * while most of the frame is dimmed.
+   */
+  private paintChip(parts: { num: HTMLElement; badge: HTMLElement; mix: HTMLElement; seg: HTMLElement[] }, cl: Cluster): void {
+    const members: { cond: number; act: number }[] = [];
+    let matched = 0;
+    for (const m of cl.members) {
+      const i = this.screenIndex[m];
+      if (i === undefined) continue;
+      members.push({ cond: this.beingCond[i]!, act: this.beingAct[i]! });
+      if (this.highlight?.has(this.ids[i]!)) matched++;
+    }
+    const mix = conditionMix(members);
+    const total = members.length || 1;
+    for (let s = 0; s < parts.seg.length; s++) {
+      const bar = parts.seg[s]!;
+      const seg = mix[s];
+      if (!seg) {
+        if (bar.style.display !== 'none') bar.style.display = 'none';
+        continue;
+      }
+      bar.style.display = 'block';
+      bar.style.width = `${(seg.count / total) * 100}%`;
+      if (bar.style.background !== seg.color) bar.style.background = seg.color;
+    }
+    // A crowd of one condition is a flat bar, which says nothing a reader
+    // needs; the chip keeps its number and drops the ornament.
+    parts.mix.style.display = mix.length > 1 ? 'flex' : 'none';
+    const chip = parts.num.parentElement;
+    if (this.highlight === null) {
+      if (parts.badge.style.display !== 'none') parts.badge.style.display = 'none';
+      if (chip && chip.style.opacity !== '') chip.style.opacity = '';
+      return;
+    }
+    // A crowd with nothing in it recedes with the rest of the frame and drops
+    // the badge entirely: a hollow "0" welded to the right of "17" reads as the
+    // number one hundred and seventy at a glance, which is the one thing a
+    // count chip may never be misread as.
+    if (chip) chip.style.opacity = matched > 0 ? '1' : '0.42';
+    if (matched === 0) {
+      if (parts.badge.style.display !== 'none') parts.badge.style.display = 'none';
+      return;
+    }
+    parts.badge.style.display = 'inline';
+    const text = `${matched}`;
+    if (parts.badge.textContent !== text) parts.badge.textContent = text;
   }
 
   private updateLabels(now: number): void {
@@ -3414,9 +3937,13 @@ export class World3D {
       // the head of the list loses the selected being the moment it is not one
       // of the nearest — which is most of the time, and is the one name that
       // must never be missing.
+      // A being that answers the filter's question outranks the rest of the
+      // frame: "find the elder who is speaking" is answered by a halo you can
+      // see and a name you can read, not by a halo you then have to hover.
       const rankOf = (id: number): number => (id === this.selectedId ? 0
         : id === this.hoveredId ? 1
-          : this.kinSet.has(id) || this.bondSet.has(id) ? 2 : 3);
+          : this.kinSet.has(id) || this.bondSet.has(id) ? 2
+            : this.highlight?.has(id) ? 3 : 4);
       near.sort((a, b) => {
         const ra = rankOf(this.ids[this.screenIndex[a.k]!]!);
         const rb = rankOf(this.ids[this.screenIndex[b.k]!]!);
@@ -3443,12 +3970,13 @@ export class World3D {
         // A handful of names scattered over a continent is not an answer to
         // any of those, and the legend out there does not offer one.
         if (this.band === 'far' && rank > 1) continue;
-        if (nearOnly > 0 && rank === 3 && d > nearOnly) continue;
+        if (nearOnly > 0 && rank === 4 && d > nearOnly) continue;
         // A name over a being the view has folded into a crowd's number points
-        // at ground where nothing is drawn.
-        if (rank === 3 && bandCountsBeings(this.band) && this.beingCrowded[i] === 1) continue;
+        // at ground where nothing is drawn — and that stays true of a match,
+        // which draws no halo inside a chip either.
+        if (rank >= 3 && bandCountsBeings(this.band) && this.beingCrowded[i] === 1) continue;
         const top = this.beingTop[i]!;
-        if (rank === 3 && this.terrainHides(this.beingPos[i * 3]!, top, this.beingPos[i * 3 + 2]!)) continue;
+        if (rank === 4 && this.terrainHides(this.beingPos[i * 3]!, top, this.beingPos[i * 3 + 2]!)) continue;
         this.labelCandidates.push({ id, x: this.screenPoints[k]!.x, y: this.screenPoints[k]!.y, rank, text: this.labelTextFor(i, id) });
       }
       this.labelPicked = this.labelCandidates.map((c) => c.id);
@@ -3598,6 +4126,200 @@ export class World3D {
     return id === this.selectedId || id === this.hoveredId
       ? `${name.text} · ${stageWord(this.beingStage[i]!)} · ${describeState(this.beingAct[i]!, this.beingCond[i]!)}`
       : name.text;
+  }
+
+  // ── Comprehension: the table, the card, the crowd ──────────────────────────
+
+  /**
+   * Every being the view is holding, as a table row.
+   *
+   * One pass, no queries, nothing allocated per being beyond the row itself —
+   * the shell asks for this a few times a second and hands it straight to a
+   * virtualized table, so it has to be cheap enough to be uninteresting.
+   *
+   * `distance` is measured from what the camera is LOOKING AT rather than from
+   * the eye. "How far is this one from where I am" is the question a researcher
+   * orbiting a settlement is actually asking, and the eye is often a kilometre
+   * behind the thing it is pointed at.
+   */
+  rosterRows(): RosterRow[] {
+    const out: RosterRow[] = new Array<RosterRow>(this.instanceCount);
+    const aim = this.controls.target;
+    for (let i = 0; i < this.instanceCount; i++) {
+      const id = this.ids[i]!;
+      const act = this.beingAct[i]!;
+      const cond = this.beingCond[i]!;
+      const stage = this.beingStage[i]!;
+      const name = displayName(id, this.names.get(id));
+      const on = this.headingOnScreenAt(i);
+      const dx = this.beingPos[i * 3]! - aim.x;
+      const dy = this.beingPos[i * 3 + 1]! - aim.y;
+      const dz = this.beingPos[i * 3 + 2]! - aim.z;
+      out[i] = {
+        id,
+        name: name.text,
+        selfChosen: name.selfChosen,
+        stage,
+        stageWord: stageWord(stage),
+        cond,
+        condWord: conditionWord(cond, act),
+        act,
+        actWord: activityWord(act),
+        headingDeg: on.deg,
+        headingWord: on.word,
+        hunger: this.beingHunger[i]!,
+        rest: this.beingRest[i]!,
+        distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
+        inFrame: this.beingOnScreen[i] === 1,
+        visible: this.isVisible(id),
+      };
+    }
+    return out;
+  }
+
+  /**
+   * Everything the hover card shows about one being — what it is, what it is
+   * doing, what it is TRYING to do, and how readable the frame is for it.
+   *
+   * The goal is the engine's own plan step rather than an inference from the
+   * activity: "walking" and "walking to the river to drink" are answers to
+   * different questions, and the second is the one an agent-based model is for.
+   */
+  hoverCardFor(id: number): {
+    id: number; name: string; selfChosen: boolean;
+    stage: string; condition: string; activity: string;
+    heading: string; headingDeg: number;
+    goal: string | null; planAt: number; planOf: number;
+    hunger: number; rest: number;
+    distance: number; inFrame: boolean; visible: boolean; crowded: boolean;
+    marksHeld: boolean; specimen: boolean;
+  } | null {
+    const i = this.indexOf(id);
+    if (i < 0) return null;
+    const act = this.beingAct[i]!;
+    const cond = this.beingCond[i]!;
+    const name = displayName(id, this.names.get(id));
+    const on = this.headingOnScreenAt(i);
+    const aim = this.controls.target;
+    const dx = this.beingPos[i * 3]! - aim.x;
+    const dy = this.beingPos[i * 3 + 1]! - aim.y;
+    const dz = this.beingPos[i * 3 + 2]! - aim.z;
+    const specimen = isSpecimenId(id);
+    return {
+      id,
+      name: name.text,
+      selfChosen: name.selfChosen,
+      stage: stageWord(this.beingStage[i]!),
+      condition: conditionWord(cond, act),
+      activity: activityWord(act),
+      heading: on.word,
+      headingDeg: on.deg,
+      goal: specimen ? null : goalWord(this.beingGoal[i]!),
+      planAt: this.beingPlanAt[i]!,
+      planOf: this.beingPlanOf[i]!,
+      hunger: this.beingHunger[i]!,
+      rest: this.beingRest[i]!,
+      distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
+      inFrame: this.beingOnScreen[i] === 1,
+      visible: this.isVisible(id),
+      crowded: this.isCollapsed(i),
+      marksHeld: this.beingMarkClear[i] === 0,
+      specimen,
+    };
+  }
+
+  /**
+   * What is inside one crowd chip: how many, of what condition, doing what.
+   *
+   * A number over a settlement answers "how many" and refuses every other
+   * question. The stacked bar under it answers "in what state", the hover list
+   * answers "doing what", and clicking it takes you there — so a crowd stops
+   * being the place where this instrument gives up.
+   */
+  chipSummary(cluster: number): {
+    cluster: number; count: number; matched: number;
+    mix: MixSegment[]; activities: { word: string; count: number }[]; ids: number[];
+  } | null {
+    const cl = this.clusters[cluster];
+    if (!cl) return null;
+    const members: { cond: number; act: number; actWord: string }[] = [];
+    const ids: number[] = [];
+    let matched = 0;
+    for (const m of cl.members) {
+      const i = this.screenIndex[m];
+      if (i === undefined) continue;
+      const act = this.beingAct[i]!;
+      members.push({ cond: this.beingCond[i]!, act, actWord: activityWord(act) });
+      ids.push(this.ids[i]!);
+      if (this.highlight?.has(this.ids[i]!)) matched++;
+    }
+    return {
+      cluster,
+      count: cl.count,
+      matched,
+      mix: conditionMix(members),
+      activities: groupByActivity(members),
+      ids,
+    };
+  }
+
+  /** Pull the camera back to frame one crowd, whole, with a margin around it. */
+  zoomToCluster(cluster: number): boolean {
+    const cl = this.clusters[cluster];
+    if (!cl) return false;
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    let n = 0;
+    let spread = 0;
+    for (const m of cl.members) {
+      const i = this.screenIndex[m];
+      if (i === undefined) continue;
+      x += this.beingPos[i * 3]!;
+      y += this.beingPos[i * 3 + 1]!;
+      z += this.beingPos[i * 3 + 2]!;
+      n++;
+    }
+    if (n === 0) return false;
+    x /= n;
+    y /= n;
+    z /= n;
+    for (const m of cl.members) {
+      const i = this.screenIndex[m];
+      if (i === undefined) continue;
+      spread = Math.max(spread, Math.hypot(this.beingPos[i * 3]! - x, this.beingPos[i * 3 + 2]! - z));
+    }
+    // Far enough out that the whole gathering fits with room around it, and
+    // never closer than the orbit's own floor.
+    const back = Math.max(this.controls.minDistance * 2, (spread + 6) / Math.tan((this.camera.fov * Math.PI) / 360) * 1.25);
+    this.camera.getWorldDirection(this.fwd);
+    this.controls.target.set(x, y + 1.2, z);
+    this.camera.position.set(x - this.fwd.x * back, y + back * 0.52, z - this.fwd.z * back);
+    this.keepAboveGround();
+    this.lastInput = performance.now();
+    return true;
+  }
+
+  /** Glide the camera onto one being without changing what is selected. */
+  centreOn(id: number): boolean {
+    if (this.indexOf(id) < 0) return false;
+    this.focusUntil = performance.now() + 1400;
+    this.lastInput = performance.now();
+    return true;
+  }
+
+  /**
+   * Where the chips are on screen right now, with enough on each to draw a
+   * badge beside it — what the shell needs to put a hover target over one.
+   */
+  chipsOnScreen(): { cluster: number; x: number; y: number; count: number }[] {
+    const out: { cluster: number; x: number; y: number; count: number }[] = [];
+    for (let c = 0; c < this.clusters.length; c++) {
+      const node = this.countNodes[c];
+      if (!node || node.style.display === 'none') continue;
+      out.push({ cluster: c, x: this.chipAt[c * 2]!, y: this.chipAt[c * 2 + 1]!, count: this.clusters[c]!.count });
+    }
+    return out;
   }
 
   // ── Probes (read-only, for drivers) ────────────────────────────────────────
@@ -3767,6 +4489,11 @@ export class World3D {
   activityShownOf(id: number): string | null {
     const i = this.indexOf(id);
     if (i < 0 || !this.isVisible(id)) return null;
+    // In a crowd the pictogram is withheld, so the picture no longer says what
+    // this being is doing and must not be scored as though it did. Standing and
+    // walking survive: they were never carried by a chip, only by the streak on
+    // the ground behind the being, which cannot point at a neighbour.
+    if (this.beingMarkClear[i] === 0 && pictogramFor(this.beingAct[i]!) !== PICTO_NONE) return null;
     return readableActivity(this.beingAct[i]!, this.band);
   }
 
@@ -3814,7 +4541,17 @@ export class World3D {
    */
   headingOnScreen(id: number): { deg: number; word: string } | null {
     const i = this.indexOf(id);
-    if (i < 0 || !bandShowsDetail(this.band) || !this.isVisible(id)) return null;
+    // The PICTURE only claims a facing where the band draws one AND the mark
+    // was allowed to carry it — in a crowd the arrow is withheld, so the
+    // picture says nothing and this must say nothing either. The roster and
+    // the hover card still answer, from `headingOnScreenAt`: that is what
+    // asking is for.
+    if (i < 0 || !bandShowsDetail(this.band) || !this.isVisible(id) || this.beingMarkClear[i] === 0) return null;
+    return this.headingOnScreenAt(i);
+  }
+
+  /** The facing, measured, whatever the picture is currently willing to claim. */
+  private headingOnScreenAt(i: number): { deg: number; word: string } {
     const h = this.beingHeading[i]!;
     const step = this.beingMark[i]! * 0.7;
     const x = this.beingPos[i * 3]!;
@@ -4230,7 +4967,22 @@ export class World3D {
 
   // ── Frame ──────────────────────────────────────────────────────────────────
 
+  /**
+   * How many frames this view has actually DRAWN.
+   *
+   * The only honest fps measurement here. Counting `requestAnimationFrame`
+   * callbacks measures the display — on this machine 144 Hz — while the frame
+   * limiter is deliberately holding the world to sixty, ten or two. Sampling
+   * this over a window says what the limiter did, not what the panel can do.
+   */
+  renderCount(): number {
+    return this.rendered;
+  }
+
+  private rendered = 0;
+
   render(): void {
+    this.rendered++;
     const t = this.clock.getElapsedTime();
     const now = performance.now();
     this.controls.update();
@@ -4247,17 +4999,28 @@ export class World3D {
     // landed on screen, and before anything is drawn.
     this.updateSubjects();
     this.updateCrowds(now);
+    // Who is standing clear enough to be allowed a mark of their own. After the
+    // crowds, because a being a chip has already counted is not drawn and can
+    // neither be misread nor cause a misreading.
+    this.planMarks();
     this.writeMarkers(t);
     this.updateFootprints();
     this.updateSelection(t);
+    this.updateHoverRing(t);
     this.updateTransients(t);
     // Hover costs a raycast against every drawn body, so it is paid only when
     // the pointer has actually moved, and at most a dozen times a second. A
     // still pointer — every screenshot, and most of the time — costs nothing.
-    if (this.pointerInside && this.pointerMoved && now - this.lastHoverPick > 80) {
+    //
+    // What comes back is the whole list of beings under the cursor, not the
+    // nearest one: in a settlement four bodies can share a dozen pixels, and a
+    // card that silently picks one of them is the "mark attributed to the wrong
+    // body" failure with a name and a stage on it. The list goes up to the
+    // shell, which decides what to show and tells this view who to highlight.
+    if (this.pointerInside && this.pointerMoved && now - this.lastHoverPick > 70) {
       this.lastHoverPick = now;
       this.pointerMoved = false;
-      this.hoveredId = this.pick(this.pointerX, this.pointerY);
+      this.onHover?.(this.pickAt(this.pointerX, this.pointerY), this.pointerX, this.pointerY);
     }
     this.updateLabels(now);
     this.updateBandChip();
@@ -4324,7 +5087,12 @@ export class World3D {
     // frame, because "every being in frame is named" was neither true nor
     // makeable true, and a measured claim beats a brave one.
     const reach = this.band === 'near' ? ` · named within ${this.namedWithin.toFixed(0)} m` : '';
-    const text = `${this.band} · ${size} · ${bandPromise(this.band).says}${reach}${this.specimenOn ? ' · SPECIMEN' : ''}`;
+    // Exactly how many beings are standing too close together for the picture
+    // to say what they are doing or which way they face. It is the one number
+    // that tells a reader when to stop reading and start asking, and it is
+    // measured from what was drawn — see `planMarks`.
+    const held = this.marksHeld > 0 ? ` · ${this.marksHeld} too close to mark` : '';
+    const text = `${this.band} · ${size} · ${bandPromise(this.band).says}${reach}${held}${this.specimenOn ? ' · SPECIMEN' : ''}`;
     if (words.textContent !== text) words.textContent = text;
   }
 

@@ -65,12 +65,26 @@ body {
   background: rgba(176, 206, 226, 0.15);
   box-shadow: inset 0 0 0 1px rgba(10, 14, 18, 0.35);
 }
-/* Dark like the names, not white like a being: a count is chrome, not a body. */
+/* Dark like the names, not white like a being: a count is chrome, not a body.
+   Under the number, a four-segment bar of what the crowd is made of — so a
+   chip answers "in what state" as well as "how many", and two chips can be
+   compared without reading either. */
 .wcount {
   position: absolute; top: 0; left: 0; white-space: nowrap;
   font-size: 10.5px; font-weight: 650; line-height: 1; letter-spacing: .2px;
   color: #eaf2f7; background: rgba(10, 14, 18, 0.78); border: 1px solid rgba(180, 200, 214, 0.42);
-  padding: 2px 5px 3px; border-radius: 9px;
+  padding: 2px 5px 3px; border-radius: 9px; cursor: pointer;
+}
+.wcount:hover { border-color: rgba(226, 236, 243, 0.85); background: rgba(16, 24, 30, 0.92); }
+.wcount .wnum { font-style: normal; font-variant-numeric: tabular-nums; }
+.wcount .wmix { display: flex; height: 3px; margin: 3px -2px 0; border-radius: 2px; overflow: hidden; }
+.wcount .wmix i { display: block; height: 100%; }
+/* How many of this crowd answer the current question. Only ever present while
+   something is being asked. */
+.wcount .wmatch {
+  font-style: normal; margin-left: 5px; padding: 0 4px 1px; border-radius: 7px;
+  background: var(--found); color: #10151a; font-size: 9.5px;
+  border-left: 1px solid rgba(10, 14, 18, 0.5);
 }
 
 /* Which band the view is in, and the scale of the ground under it. A view that
@@ -118,6 +132,9 @@ body {
 .litem { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .litem em { color: #57666f; font-style: normal; }
 .litem.quiet { color: #57666f; white-space: normal; }
+/* Opened, the prose gets its own block and a scroll of its own rather than
+   pushing the canvas up. */
+.legend .lprose { flex-direction: column; gap: 3px; max-height: 128px; overflow-y: auto; }
 .litem svg { display: block; flex: none; }
 .legend .sw { display: inline-block; width: 9px; height: 9px; flex: none; }
 .legend .swcount {
@@ -279,3 +296,172 @@ button.danger { background: #3a2326; border-color: #5b3030; }
 .society .detections li { padding: 7px 12px; margin-bottom: 6px; background: var(--panel2); border-left: 3px solid var(--accent); border-radius: 4px; color: #e7eef2; font-size: 13px; }
 .culture-list { list-style: none; margin: 6px 0 0; padding: 0; }
 .culture-list li { padding: 5px 8px; margin-bottom: 4px; background: #0c1216; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; color: #cdd8de; }
+
+/* ── Comprehension by interaction (item L4) ─────────────────────────────────
+   Four surfaces, one visual grammar, all of it the instrument's existing one:
+   near-black ground, hairline rules, tabular figures, and exactly two accents
+   with fixed meanings — BONE (#e9eef1) means "found by the question you asked",
+   the same thing the halo means in the world; AMBER (#ffd34d) means "selected",
+   the same thing the selection ring means. Nothing else here is allowed a
+   colour of its own. */
+
+:root {
+  /* Found by the filter, and hovered — the chrome's echo of the world's halo. */
+  --found: #e9eef1;
+  --pick: #ffd34d;
+  /* The condition palette, for the table's own condition column. */
+  --c-well: #cfc7b2;
+  --c-starving: #ffa726;
+  --c-sick: #a586f5;
+  --c-danger: #e0655f;
+}
+
+/* The world and the table beneath it are one column; the controls rail is not
+   part of the picture and must not push into it. */
+.worldcol { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* The canvas absorbs whatever the legend and the table leave, and never the
+   other way round: a stage that could not shrink pushed the roster off the
+   bottom of a 900 px window. */
+.worldcol > .stage { min-height: 0; }
+.worldcol > .stage .legend { flex: 0 0 auto; }
+
+.roster {
+  flex: 0 0 228px; display: flex; flex-direction: column; min-height: 0;
+  border-top: 1px solid var(--line); background: var(--panel);
+}
+.roster.closed { flex: 0 0 auto; }
+.rtoggle {
+  display: flex; align-items: baseline; gap: 10px; background: transparent; border: none;
+  color: #b7c4cc; font-size: 11px; letter-spacing: .5px; text-transform: uppercase;
+  padding: 7px 12px; cursor: pointer; white-space: nowrap;
+}
+.rtoggle:hover { color: #e7eef2; }
+.rtoggle::before { content: '▾'; font-size: 9px; color: var(--muted); }
+.roster.closed .rtoggle::before { content: '▸'; }
+.rtoggle span { color: var(--muted); text-transform: none; letter-spacing: 0; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+/* The question, as chips. Grouped by axis with a hairline between groups, so
+   "OR within a group, AND across groups" is visible in the layout rather than
+   only true in the code. */
+.rbar-top {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px;
+  padding: 5px 12px 6px; border-bottom: 1px solid var(--line);
+}
+.fgroup { display: flex; align-items: center; gap: 3px; }
+.fgroup.wrap { flex-wrap: wrap; }
+.fgroup + .fgroup { padding-left: 10px; border-left: 1px solid var(--line); }
+.fchip {
+  background: transparent; border: 1px solid #2a353e; color: #90a0aa;
+  font-size: 11px; line-height: 1; padding: 4px 7px 5px; border-radius: 3px; cursor: pointer;
+}
+.fchip:hover { color: #dfe9ef; border-color: #3d4b56; }
+.fchip.on { background: var(--found); border-color: var(--found); color: #10161b; font-weight: 600; }
+.fchip:focus-visible, .rtoggle:focus-visible, .fclear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fsearch {
+  width: 118px; background: #0c1216; border: 1px solid var(--line); color: var(--text);
+  border-radius: 3px; padding: 4px 7px; font: inherit; font-size: 11.5px;
+}
+.fsearch:focus { outline: none; border-color: var(--accent); }
+.fcount { color: #9fb0ba; font-size: 11.5px; font-variant-numeric: tabular-nums; margin-left: auto; }
+.fcount.none { color: #e09a3a; }
+.fclear {
+  background: transparent; border: 1px solid #2a353e; color: #b7c4cc;
+  font-size: 11px; padding: 4px 8px 5px; border-radius: 3px; cursor: pointer;
+}
+.fclear:hover { border-color: var(--found); color: var(--found); }
+.fscope { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; cursor: pointer; }
+.fscope input { margin: 0; accent-color: var(--accent); }
+
+/* One grid template for the header and every row, so the columns are aligned
+   by construction rather than by two lists of widths agreeing. */
+.rhead, .rrow {
+  display: grid;
+  grid-template-columns: minmax(104px, 1.5fr) 52px 74px minmax(120px, 1.1fr) 46px 58px 58px 68px;
+  align-items: center; gap: 10px; padding: 0 12px;
+}
+.rhead { border-bottom: 1px solid var(--line); height: 22px; }
+.rhead button {
+  background: transparent; border: none; padding: 0; cursor: pointer; text-align: left;
+  color: #8a99a3; font: inherit; font-size: 10.5px; letter-spacing: .3px;
+  display: flex; align-items: center; gap: 3px; min-width: 0;
+}
+.rhead button:hover { color: #cdd8de; }
+.rhead button.sorted { color: #dfe9ef; }
+.rhead button i { font-style: normal; font-size: 7px; }
+.rhead .c-need, .rhead .c-dist { justify-content: flex-end; }
+
+.rbody { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.rbody:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.rrow { height: 24px; font-size: 12px; color: #aebac2; cursor: pointer; box-shadow: inset 2px 0 0 transparent; }
+.rrow:nth-child(even) { background: rgba(255, 255, 255, 0.012); }
+.rrow > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rrow .c-name { color: #dbe4ea; text-decoration: underline dotted rgba(150, 166, 176, 0.32); text-underline-offset: 3px; }
+.rrow .c-name.named { color: #fff; text-decoration: none; }
+.rrow .c-stage, .rrow .c-head { color: #8d9ca6; }
+.rrow .c-head { font-variant-numeric: tabular-nums; }
+.rrow .c-dist { text-align: right; color: #8d9ca6; font-variant-numeric: tabular-nums; }
+.rrow .c-need { display: flex; justify-content: flex-end; }
+.c-well { color: var(--c-well); }
+.c-starving { color: var(--c-starving); }
+.c-sick { color: var(--c-sick); }
+.c-in-danger { color: var(--c-danger); }
+/* Brushed from either side: hover a row, the being lights up; hover the being,
+   this row scrolls in and lights up. One bar, one meaning. */
+.rrow.brush { background: #18222a; box-shadow: inset 2px 0 0 var(--found); color: #e3ebf0; }
+.rrow.sel { background: #211d0d; box-shadow: inset 2px 0 0 var(--pick); }
+.rrow.sel.brush { background: #2a2411; }
+.rrow.focus { outline: 1px solid rgba(47, 158, 110, 0.6); outline-offset: -1px; }
+.rbar { display: block; width: 46px; height: 5px; background: #0c1216; border-radius: 3px; overflow: hidden; }
+.rbar i { display: block; height: 100%; }
+.rempty { color: var(--muted); font-size: 12px; text-align: center; margin: 28px auto; max-width: 320px; line-height: 1.5; }
+
+/* The card. It answers the questions the picture stopped claiming to answer,
+   so it is dense on purpose: one being, six facts, in one glance. */
+/* The card follows the cursor, so it must not be IN the cursor's way: with the
+   card taking the pointer, moving from one being in a crowd to the next passed
+   over the card instead of over the world and the hover went dead. Only the
+   disambiguation list, which you click, takes it back. */
+.hovercard {
+  z-index: 40; pointer-events: none;
+  background: rgba(14, 20, 25, 0.96); border: 1px solid #2c3842; border-radius: 7px;
+  padding: 8px 10px 7px; backdrop-filter: blur(6px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+.hhead { display: flex; align-items: baseline; gap: 7px; }
+.hhead b { color: #fff; font-size: 13.5px; letter-spacing: .1px; }
+.hhead b.given { text-decoration: underline dotted rgba(205, 216, 222, 0.55); text-underline-offset: 3px; }
+.hhead span { color: var(--muted); font-size: 11px; margin-left: auto; }
+.hline { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; flex-wrap: wrap; }
+.hact { color: #dbe4ea; }
+.hfacing { display: inline-flex; align-items: center; gap: 3px; color: #8d9ca6; font-size: 11px; }
+.hgoal { margin-top: 5px; font-size: 11.5px; color: #8d9ca6; }
+.hgoal b { color: #cfe0d7; font-weight: 600; }
+.hnote { margin-top: 5px; font-size: 11px; color: #7f8e98; font-style: italic; }
+.hneeds { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+.hneed { display: grid; grid-template-columns: 44px 1fr 22px; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); }
+.hneed b { color: #b7c4cc; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+.hbar { display: block; height: 5px; background: #0c1216; border-radius: 3px; overflow: hidden; }
+.hbar i { display: block; height: 100%; }
+.hfoot { margin-top: 6px; padding-top: 5px; border-top: 1px solid #1d262d; display: flex; gap: 8px; font-size: 10.5px; color: #6c7b85; }
+.hwarn { color: #d99a4a; margin-left: auto; text-align: right; }
+/* Several beings share these few pixels. Say so, list them, and never choose
+   one of them quietly. */
+.hstack { margin-top: 6px; padding-top: 6px; border-top: 1px solid #1d262d; pointer-events: auto; }
+.hstack label { display: block; color: var(--muted); font-size: 10px; letter-spacing: .3px; margin-bottom: 4px; }
+.hstack ul { list-style: none; margin: 0; padding: 0; max-height: 112px; overflow-y: auto; }
+.hstack button {
+  display: flex; width: 100%; align-items: baseline; gap: 6px; text-align: left;
+  background: transparent; border: none; border-radius: 3px; padding: 3px 5px;
+  color: #b7c4cc; font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.hstack button:hover { background: #1b2630; color: #e7eef2; }
+.hstack button.sel { background: var(--found); color: #10161b; font-weight: 600; }
+.hstack button em { font-style: normal; color: var(--muted); margin-left: auto; font-size: 10.5px; }
+.hstack button.sel em { color: #3d4650; }
+
+.chipcard .hhead span { color: var(--found); font-weight: 600; }
+.hmix, .hacts { list-style: none; margin: 5px 0 0; padding: 0; }
+.hmix li, .hacts li { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #aebac2; line-height: 17px; }
+.hmix li i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.hmix li b, .hacts li b { margin-left: auto; color: #e7eef2; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hacts { border-top: 1px solid #1d262d; margin-top: 6px; padding-top: 5px; color: #8d9ca6; }

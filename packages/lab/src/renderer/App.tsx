@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SimClient, type SimFault } from './sim/client.js';
 import { SPEED_PRESETS, type SpeedPreset } from './sim/presets.js';
 import type { AgentDetail, FeedItem, QueryRequest, QueryResults, StatsMessage, WorldMessage } from './sim/protocol.js';
@@ -10,10 +10,36 @@ import { AnalysisView } from './AnalysisView.js';
 import { SocietyView } from './SocietyView.js';
 import { CultureView } from './CultureView.js';
 import { displayName, nextFrameAt, targetFps, type ZoomBand } from './beings.js';
+import { ChipCard, HoverCard, type HoverCardData } from './HoverCard.js';
+import { RosterDock } from './RosterDock.js';
+import {
+  countMatches,
+  emptyFilter,
+  matchesFilter,
+  isEmptyFilter,
+  type FilterState,
+} from './filters.js';
+import { brushReduce, NO_BRUSH, shouldScrollToBrush, type Brush } from './roster.js';
+import type { RosterRow } from './roster.js';
+import { cycleCandidate, type PickCandidate } from './crowd.js';
 
 type Tab = 'world' | 'activity' | 'analysis' | 'society' | 'culture' | 'reports';
 
 const FEED_CAP = 50;
+
+/**
+ * Whether two pick results name the same beings in the same order.
+ *
+ * The canvas re-picks a dozen times a second while the pointer moves, and over
+ * a settlement it returns the same four beings nearly every time. Replacing the
+ * array anyway would re-render the card, the disambiguation list and the key
+ * binding on every one of those — for a list that has not changed.
+ */
+function sameIds(a: readonly PickCandidate[], b: readonly PickCandidate[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i]!.id !== b[i]!.id) return false;
+  return true;
+}
 
 /**
  * Poll one of the worker's heavy read-outs while its tab is open. Never two in
@@ -116,8 +142,12 @@ function SpeedLabel({ client, preset, running }: { client: SimClient; preset: Sp
   );
 }
 
-/** The counters. Subscribes on its own so a stats tick never re-renders the canvas. */
-function LiveStats({ client }: { client: SimClient }): React.ReactElement | null {
+/**
+ * The counters. Subscribes on its own so a stats tick never re-renders the
+ * canvas — and memoized, so the roster's own 4 Hz refresh of the shell does not
+ * re-render IT either.
+ */
+const LiveStats = React.memo(function LiveStats({ client }: { client: SimClient }): React.ReactElement | null {
   const [stats, setStats] = useState<StatsMessage | null>(null);
   useEffect(() => client.onStats(setStats), [client]);
   if (!stats) return null;
@@ -137,7 +167,7 @@ function LiveStats({ client }: { client: SimClient }): React.ReactElement | null
       </tbody></table>
     </section>
   );
-}
+});
 
 /**
  * What they're doing & saying — a bounded tail, newest first, appended from
@@ -151,7 +181,7 @@ function LiveStats({ client }: { client: SimClient }): React.ReactElement | null
  * down. That is a pre-existing fault — HEAD reproduces it on a tab switch after
  * ~10 s of running — not something the worker introduced.
  */
-function LiveFeed({ client }: { client: SimClient }): React.ReactElement | null {
+const LiveFeed = React.memo(function LiveFeed({ client }: { client: SimClient }): React.ReactElement | null {
   const [feed, setFeed] = useState<FeedItem[]>([]);
   useEffect(() => client.onWorld(() => setFeed([])), [client]); // a new world starts a new log
   useEffect(
@@ -187,7 +217,7 @@ function LiveFeed({ client }: { client: SimClient }): React.ReactElement | null 
       </ul>
     </section>
   );
-}
+});
 
 /**
  * The selected being. Its own subscriber, so the stats cadence never touches it.
@@ -196,7 +226,7 @@ function LiveFeed({ client }: { client: SimClient }): React.ReactElement | null 
  * it: a panel that opens because you clicked a being must not then be sitting
  * on that being.
  */
-function Inspector({ client, onClose, onWidth }: { client: SimClient; onClose: () => void; onWidth: (px: number) => void }): React.ReactElement | null {
+const Inspector = React.memo(function Inspector({ client, onClose, onWidth }: { client: SimClient; onClose: () => void; onWidth: (px: number) => void }): React.ReactElement | null {
   const [detail, setDetail] = useState<AgentDetail | null>(null);
   const box = useRef<HTMLDivElement | null>(null);
   useEffect(() => client.onDetail(setDetail), [client]);
@@ -231,7 +261,7 @@ function Inspector({ client, onClose, onWidth }: { client: SimClient; onClose: (
       </div>
     </div>
   );
-}
+});
 
 export function App(): React.ReactElement {
   const [client] = useState(() => new SimClient());
@@ -260,6 +290,27 @@ export function App(): React.ReactElement {
   const [tiesOn, setTiesOn] = useState(false);
   const [band, setBand] = useState<ZoomBand>('default');
 
+  // ── Comprehension by interaction (item L4) ─────────────────────────────────
+  //
+  // The picture no longer tries to answer "what is THIS one doing" by drawing a
+  // mark small enough to be mistaken for the neighbour's. Four things answer it
+  // instead, and they all read the same state: a hover card, a linked roster, a
+  // filter that emphasises rather than hides, and a summary on every crowd.
+  const [rows, setRows] = useState<RosterRow[]>([]);
+  const [filter, setFilter] = useState<FilterState>(emptyFilter);
+  const [brush, setBrush] = useState<Brush>(NO_BRUSH);
+  const [candidates, setCandidates] = useState<PickCandidate[]>([]);
+  const [pointerAt, setPointerAt] = useState({ x: 0, y: 0 });
+  const [card, setCard] = useState<HoverCardData | null>(null);
+  const [rosterOpen, setRosterOpen] = useState(true);
+  const [chip, setChip] = useState<{ cluster: number; x: number; y: number } | null>(null);
+  const [chipSum, setChipSum] = useState<ReturnType<World3D['chipSummary']>>(null);
+  const filterRef = useRef(filter);
+  const rowsRef = useRef(rows);
+  const brushRef = useRef(brush);
+  const candRef = useRef(candidates);
+  const chipRef = useRef<number | null>(null);
+
   const analysis = usePolled(client, tab === 'analysis', 'analysis', 2500);
   const society = usePolled(client, tab === 'society', 'society', 3000);
   const culture = usePolled(client, tab === 'culture', 'culture', 3500);
@@ -270,13 +321,29 @@ export function App(): React.ReactElement {
   const canvasCb = useCallback(
     (el: HTMLCanvasElement | null) => {
       if (el) {
-        const world = new World3D(el, (id) => {
-          client.select(id);
-          if (id === null) {
-            setFollowing(false);
-            setTiesOn(false);
-          }
-        });
+        const world = new World3D(
+          el,
+          (id) => {
+            client.select(id);
+            if (id === null) {
+              setFollowing(false);
+              setTiesOn(false);
+            }
+          },
+          {
+            // The view reports EVERY being under the cursor and decides
+            // nothing. Which one the card describes — and which one the view
+            // then highlights — is one piece of state, held here, so the two
+            // can never disagree.
+            onHover: (cands, x, y) => {
+              setCandidates((prev) => (sameIds(prev, cands) ? prev : cands));
+              if (cands.length > 0) setPointerAt({ x, y });
+              setBrush((b) => brushReduce(b, { kind: 'world-hover', id: cands[0]?.id ?? null }));
+            },
+            onChip: (cluster, x, y) => setChip(cluster === null ? null : { cluster, x, y }),
+            onChipClick: (cluster) => world3dRef.current?.zoomToCluster(cluster),
+          },
+        );
         world3dRef.current = world;
         // A read-only handle for drivers and reviewers: what the view drew, so a
         // screenshot can be scored against the ground truth behind it.
@@ -314,6 +381,33 @@ export function App(): React.ReactElement {
           movingShownOf: (id) => world.movingShownOf(id),
           specimen: (on) => world.specimen(on),
           specimenIds: () => world.specimenIds(),
+          // ── Comprehension by interaction ──────────────────────────────────
+          hoverCardFor: (id) => world.hoverCardFor(id),
+          rosterRows: () => world.rosterRows(),
+          activeFilters: () => ({ ...filterRef.current }),
+          matchCount: () => countMatches(rowsRef.current, filterRef.current),
+          highlightedIds: () => world.highlightedIds(),
+          chipSummary: (cluster) => world.chipSummary(cluster),
+          chipsOnScreen: () => world.chipsOnScreen(),
+          hoverCandidates: () => candRef.current.map((c) => c.id),
+          hoveredId: () => world.hovered,
+          markAudit: () => world.markAudit(),
+          markGeometry: () => world.markGeometry(),
+          renderCount: () => world.renderCount(),
+          // One namespaced action set, so a driver can run a task the way a
+          // person would and nothing read-only is ever mistaken for a lever.
+          ui: {
+            setFilter: (next) => setFilter({ ...emptyFilter(), ...next }),
+            clearFilters: () => setFilter(emptyFilter()),
+            hover: (id) => setBrush(id === null ? NO_BRUSH : { id, source: 'roster' }),
+            select: (id) => {
+              client.select(id);
+              world.setSelected(id);
+              if (id !== null) world.centreOn(id);
+            },
+            roster: (open) => setRosterOpen(open),
+            zoomToCluster: (cluster) => world.zoomToCluster(cluster),
+          },
         };
         const payload = worldPayloadRef.current;
         if (payload) {
@@ -407,6 +501,101 @@ export function App(): React.ReactElement {
   }, [client, tiesOn, selected]);
 
   useEffect(() => { world3dRef.current?.setFollow(following); }, [following]);
+
+  // ── Comprehension wiring ───────────────────────────────────────────────────
+
+  useEffect(() => { filterRef.current = filter; }, [filter]);
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
+  useEffect(() => { brushRef.current = brush; }, [brush]);
+  useEffect(() => { candRef.current = candidates; }, [candidates]);
+
+  /**
+   * The table's own heartbeat. Four times a second, never per frame: a roster
+   * fed from the render loop would re-render three hundred rows sixty times a
+   * second to say the same words, and that is the long task this item must not
+   * introduce. The 3D view keeps drawing at sixty either way — the two rates
+   * are deliberately unrelated.
+   */
+  useEffect(() => {
+    if (tab !== 'world') return;
+    const tick = (): void => {
+      const world = world3dRef.current;
+      if (!world) return;
+      setRows(world.rosterRows());
+      const id = brushRef.current.id;
+      setCard(id === null ? null : world.hoverCardFor(id));
+      const at = chipRef.current;
+      setChipSum(at === null ? null : world.chipSummary(at));
+    };
+    tick();
+    const timer = setInterval(tick, 250);
+    return () => clearInterval(timer);
+  }, [tab]);
+
+  useEffect(() => {
+    chipRef.current = chip?.cluster ?? null;
+    const world = world3dRef.current;
+    setChipSum(chip === null || !world ? null : world.chipSummary(chip.cluster));
+  }, [chip]);
+
+  // Who the view highlights, and the card it is describing, follow the brush
+  // immediately — a card that waited for the next 250 ms tick would arrive
+  // after the pointer had moved on, and the promise is "within 100 ms".
+  useEffect(() => {
+    const world = world3dRef.current;
+    if (!world) return;
+    world.setHover(brush.id);
+    setCard(brush.id === null ? null : world.hoverCardFor(brush.id));
+  }, [brush]);
+
+  /**
+   * The filter's effect on the picture: emphasise the matches, dim the rest,
+   * remove nobody. Recomputed only when the question or the population
+   * changes, and handed to the view as a Set it reads per instance.
+   */
+  const matched = useMemo(() => {
+    if (isEmptyFilter(filter)) return null;
+    const set = new Set<number>();
+    for (const r of rows) if (matchesFilter(r, filter)) set.add(r.id);
+    return set;
+  }, [rows, filter]);
+  useEffect(() => { world3dRef.current?.setHighlight(matched); }, [matched]);
+
+  /**
+   * Stepping through the beings under the cursor.
+   *
+   * In a settlement the pointer is often over four people at once. The card
+   * describes one of them and says how many there are; the arrow keys walk the
+   * list, and the 3D view follows whichever the card is on. Bound while the
+   * pointer is over the canvas and there is actually something to choose
+   * between, so the roster's own arrow keys are never shadowed.
+   */
+  useEffect(() => {
+    if (candidates.length < 2) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.closest('.roster'))) return;
+      e.preventDefault();
+      const at = candidates.findIndex((c) => c.id === brushRef.current.id);
+      const next = candidates[cycleCandidate(candidates.length, at < 0 ? 0 : at, e.key === 'ArrowDown' ? 1 : -1)];
+      if (next) setBrush({ id: next.id, source: 'roster' });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [candidates]);
+
+  const hoverRow = useCallback((id: number) => setBrush((b) => brushReduce(b, { kind: 'roster-hover', id })), []);
+  const leaveRoster = useCallback(() => setBrush((b) => brushReduce(b, { kind: 'roster-leave' })), []);
+  const pickRow = useCallback(
+    (id: number) => {
+      const world = world3dRef.current;
+      client.select(id);
+      world?.setSelected(id);
+      world?.centreOn(id);
+    },
+    [client],
+  );
 
   const newWorld = useCallback(() => {
     setRunning(false);
@@ -568,8 +757,31 @@ export function App(): React.ReactElement {
       {/* Kept mounted across tabs: rebuilding terrain + 6000 trees on every tab
           switch is a ~100 ms hitch for nothing. Hidden, it draws nothing. */}
       <div className="body" style={{ display: tab === 'world' ? 'flex' : 'none' }}>
+        {/* The world and the table it is linked to are ONE column. The roster
+            is docked under the view it brushes, not folded into the right rail
+            beside the controls: a linked table belongs to the picture. */}
+        <div className="worldcol">
         <div className="stage">
           <canvas ref={canvasCb} className="world3d" />
+
+          {card && chip === null && (
+            <HoverCard
+              card={card}
+              others={candidates.map((c) => ({
+                id: c.id,
+                name: rows.find((r) => r.id === c.id)?.name ?? `#${c.id}`,
+                stage: rows.find((r) => r.id === c.id)?.stageWord ?? '',
+              }))}
+              at={pointerAt}
+              onPick={(id) => setBrush({ id, source: 'roster' })}
+            />
+          )}
+          {chip && chipSum && (
+            <ChipCard
+              summary={{ ...chipSum, filtering: matched !== null }}
+              at={{ x: chip.x, y: chip.y }}
+            />
+          )}
 
           <div className="selbar">
             {selected && selectedName ? (
@@ -590,6 +802,21 @@ export function App(): React.ReactElement {
 
           <Legend band={band} />
           <Inspector client={client} onClose={clearSelection} onWidth={setPanelWidth} />
+        </div>
+
+        <RosterDock
+          rows={rows}
+          filter={filter}
+          onFilter={setFilter}
+          brushId={brush.id}
+          brushFromWorld={shouldScrollToBrush(brush)}
+          onHoverRow={hoverRow}
+          onLeave={leaveRoster}
+          selectedId={selected?.id ?? null}
+          onPick={pickRow}
+          open={rosterOpen}
+          onOpen={setRosterOpen}
+        />
         </div>
 
         <aside className="panel">

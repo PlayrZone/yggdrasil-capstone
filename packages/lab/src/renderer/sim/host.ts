@@ -15,6 +15,7 @@ import {
   COND_SICK,
   COND_STARVING,
   frameBuffers,
+  GOAL_NONE,
   isDetached,
   KindCodec,
   resourceBuffers,
@@ -152,9 +153,33 @@ interface Track {
   act: number;
   cond: number;
   stage: number;
+  /** Need pressure in [0, 100], rounded for the wire. 0 is satisfied. */
+  hunger: number;
+  rest: number;
+  /** The current plan step's intent, by `GOAL_WORDS` code, or `GOAL_NONE`. */
+  goal: number;
+  /** 1-based step within the plan, and how long the plan is. 0 when there is none. */
+  planAt: number;
+  planOf: number;
   /** Tick until which violence still shows on this being. */
   hurtUntil: number;
   stamp: number;
+}
+
+/**
+ * Intent → the wire's goal code. The same translation as `ACT_BY_INTENT`, in the
+ * other axis: that one says what a being is doing, this says what it is for.
+ * Both are straight reads of the engine's plan step, never inferences.
+ */
+const GOAL_BY_INTENT: Record<IntentKind, number> = {
+  MoveTo: 0, Gather: 1, Dig: 2, Eat: 3, Drink: 4, Sleep: 5, Build: 6, Deposit: 7,
+  Withdraw: 8, Give: 9, Attack: 10, Craft: 11, Speak: 12, Follow: 13, Flee: 14, Idle: 15,
+};
+
+/** Need pressure onto the wire's byte lane, clamped — the engine's [0, 100]. */
+function need(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 /**
@@ -531,7 +556,10 @@ export class SimHost {
 
       let t = this.tracks.get(a.id);
       if (!t) {
-        t = { x: a.x, y: a.y, px: a.x, py: a.y, heading: 0, act: ACT_IDLE, cond: 0, stage, hurtUntil: 0, stamp };
+        t = {
+          x: a.x, y: a.y, px: a.x, py: a.y, heading: 0, act: ACT_IDLE, cond: 0, stage,
+          hunger: 0, rest: 0, goal: GOAL_NONE, planAt: 0, planOf: 0, hurtUntil: 0, stamp,
+        };
         this.tracks.set(a.id, t);
       } else {
         // Face the direction of travel; a being that barely moved keeps its heading.
@@ -548,6 +576,14 @@ export class SimHost {
       t.act = a.sleeping ? ACT_RESTING : intent ? ACT_BY_INTENT[intent.kind] ?? ACT_IDLE : ACT_IDLE;
       t.cond = cond;
       t.stage = stage;
+      t.hunger = need(body?.needs.hunger);
+      t.rest = need(body?.needs.rest);
+      // The goal is the plan step the engine is on — not the act. A being
+      // WALKING is walking somewhere, and which of those it is is the question
+      // "what is it doing?" was always standing in for.
+      t.goal = intent ? GOAL_BY_INTENT[intent.kind] ?? GOAL_NONE : GOAL_NONE;
+      t.planAt = body && body.plan.length > 0 ? Math.min(255, body.planStep + 1) : 0;
+      t.planOf = body ? Math.min(255, body.plan.length) : 0;
       t.stamp = stamp;
 
       if (body && this.sentNames.get(a.id) !== body.name) {
@@ -630,6 +666,11 @@ export class SimHost {
       arrays.act[i] = track.act;
       arrays.cond[i] = track.cond;
       arrays.stage[i] = track.stage;
+      arrays.hunger[i] = track.hunger;
+      arrays.rest[i] = track.rest;
+      arrays.goal[i] = track.goal;
+      arrays.planAt[i] = track.planAt;
+      arrays.planOf[i] = track.planOf;
       i++;
     }
     const wild = Math.min(this.wildCount, wildlifeCapacity(arrays));

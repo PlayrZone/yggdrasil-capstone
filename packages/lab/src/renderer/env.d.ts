@@ -1,6 +1,9 @@
 /// <reference types="vite/client" />
 import type { LabApi } from '../preload/index.js';
 import type { BandPromise, FrameCandidate, ZoomBand } from './beings.js';
+import type { MatchCount, FilterState } from './filters.js';
+import type { RosterRow } from './roster.js';
+import type { MixSegment } from './crowd.js';
 
 /**
  * A read-only handle on the 3D view, for automated drivers and for scoring a
@@ -141,6 +144,76 @@ export interface WorldProbe {
   specimen(on: boolean): { ids: number[]; count: number; centre: { x: number; y: number; z: number } } | null;
   /** The ids of the specimen beings, in layout order. */
   specimenIds(): number[];
+
+  // ── Comprehension by interaction (item L4) ─────────────────────────────────
+  //
+  // Per-being glyph reading is not a thing this view asks of anyone any more —
+  // it topped out at 38% for activity in a crowd, with nearly every miss a mark
+  // attributed to the wrong body. These probes are the ground truth behind the
+  // things that replaced it, so a driver can run a real task and score it.
+
+  /** Everything the hover card shows about one being, whether or not it is open. */
+  hoverCardFor(id: number): {
+    id: number; name: string; selfChosen: boolean;
+    stage: string; condition: string; activity: string;
+    heading: string; headingDeg: number;
+    /** The engine's own plan step — what this being is TRYING to do. */
+    goal: string | null; planAt: number; planOf: number;
+    hunger: number; rest: number;
+    distance: number; inFrame: boolean; visible: boolean; crowded: boolean;
+    /** True while this being's pictogram and arrow are withheld as unattributable. */
+    marksHeld: boolean; specimen: boolean;
+  } | null;
+  /** Every being the view holds, exactly as the roster lists it. */
+  rosterRows(): RosterRow[];
+  /** The question the chips are currently asking. */
+  activeFilters(): FilterState;
+  /** How many beings answer it, of how many, and how many of those are in frame. */
+  matchCount(): MatchCount;
+  /** Who the view is emphasising right now — empty while nothing is filtered. */
+  highlightedIds(): number[];
+  /** What one crowd chip is made of: how many, in what state, doing what. */
+  chipSummary(cluster: number): {
+    cluster: number; count: number; matched: number;
+    mix: MixSegment[]; activities: { word: string; count: number }[]; ids: number[];
+  } | null;
+  /** Where the crowd chips are on the canvas, so one can be pointed at. */
+  chipsOnScreen(): { cluster: number; x: number; y: number; count: number }[];
+  /** Every being under the cursor, in the order the disambiguation list offers them. */
+  hoverCandidates(): number[];
+  /** The one being the card is describing and the view is highlighting. */
+  hoveredId(): number | null;
+  /**
+   * Where every drawn mark is and how far it reaches, with whether it was
+   * allowed to keep its pictogram and arrow — so the suppression rule can be
+   * checked against the picture instead of taken on trust.
+   */
+  markGeometry(): { id: number; x: number; y: number; r: number; clear: boolean }[];
+  /**
+   * Frames this view has DRAWN. Sample it over a window for the real frame
+   * rate: counting rAF callbacks measures the display, not the limiter.
+   */
+  renderCount(): number;
+  /**
+   * How many beings kept a pictogram and a heading arrow, and how many had
+   * both withheld because a neighbour's mark was close enough that a reader
+   * could not tell whose was whose.
+   */
+  markAudit(): { drawn: number; held: number; clear: number };
+
+  /**
+   * The one namespaced set of ACTIONS, so a driver can run a task the way a
+   * person would. Everything above is read-only; everything here changes only
+   * what a mouse could change.
+   */
+  ui: {
+    setFilter(next: Partial<FilterState>): void;
+    clearFilters(): void;
+    hover(id: number | null): void;
+    select(id: number | null): void;
+    roster(open: boolean): void;
+    zoomToCluster(cluster: number): void;
+  };
 }
 
 declare global {

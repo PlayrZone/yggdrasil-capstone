@@ -120,15 +120,29 @@ function Item({ item }: { item: LegendItem }): React.ReactElement {
   }
 }
 
-function Row({ section }: { section: LegendSection }): React.ReactElement {
+function Row({ section, quiet }: { section: LegendSection; quiet: boolean }): React.ReactElement | null {
+  const items = section.items.filter((i) => (i.kind === 'note' && i.quiet === true) === quiet);
+  if (items.length === 0) return null;
   return (
     <>
-      {section.name !== '' && <span className="lname">{section.name}</span>}
-      {section.items.map((item, k) => <Item key={`${item.kind}-${item.label}-${k}`} item={item} />)}
+      {section.name !== '' && !quiet && <span className="lname">{section.name}</span>}
+      {items.map((item, k) => <Item key={`${item.kind}-${item.label}-${k}`} item={item} />)}
     </>
   );
 }
 
+/**
+ * Closed, the key is the MARKS: what each shape and colour means, and the one
+ * sentence a reader needs in order not to misread the frame — that a mark can
+ * be withheld. Open, it adds the prose.
+ *
+ * That split is a size decision and it is load-bearing. Five wrapped lines of
+ * explanation under the canvas cost two hundred pixels of world on a 900 px
+ * window, and the world is the instrument: the round that introduced those
+ * lines shrank the picture below the table that was supposed to support it.
+ * Nothing is removed — the live band chip over the canvas still prints how
+ * many marks are being withheld right now, measured, every frame.
+ */
 export function Legend({ band }: { band: ZoomBand }): React.ReactElement {
   const [open, setOpen] = useState(false);
   const sections = legendFor(band);
@@ -136,17 +150,19 @@ export function Legend({ band }: { band: ZoomBand }): React.ReactElement {
   return (
     <div className="legend">
       <div className="lrow">
-        {sections.slice(0, half).map((s, k) => <Row key={`${s.name}-${k}`} section={s} />)}
+        {sections.slice(0, half).map((s, k) => <Row key={`${s.name}-${k}`} section={s} quiet={false} />)}
       </div>
       <div className="lrow">
-        {sections.slice(half).map((s, k) => <Row key={`${s.name}-${k}`} section={s} />)}
+        {sections.slice(half).map((s, k) => <Row key={`${s.name}-${k}`} section={s} quiet={false} />)}
         <button className="lmore" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
           {open ? 'less' : 'more'}
         </button>
       </div>
       {open && (
-        <div className="lrow">
-          {LEGEND_EXTRA.map((s, k) => <Row key={`${s.name}-${k}`} section={s} />)}
+        <div className="lrow lprose">
+          {sections.map((s, k) => <Row key={`q-${s.name}-${k}`} section={s} quiet />)}
+          {LEGEND_EXTRA.map((s, k) => <Row key={`${s.name}-${k}`} section={s} quiet={false} />)}
+          {LEGEND_EXTRA.map((s, k) => <Row key={`qx-${s.name}-${k}`} section={s} quiet />)}
         </div>
       )}
     </div>

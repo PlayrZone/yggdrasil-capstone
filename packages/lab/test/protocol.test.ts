@@ -12,6 +12,8 @@ import {
   COND_SICK,
   COND_STARVING,
   frameBuffers,
+  GOAL_NONE,
+  goalWord,
   isDetached,
   KIND_UNKNOWN,
   KindCodec,
@@ -56,8 +58,21 @@ describe('frame arrays', () => {
     expect(a.act.length).toBe(10);
     expect(a.cond.length).toBe(10);
     expect(a.stage.length).toBe(10);
+    expect(a.hunger.length).toBe(10);
+    expect(a.rest.length).toBe(10);
+    expect(a.goal.length).toBe(10);
+    expect(a.planAt.length).toBe(10);
+    expect(a.planOf.length).toBe(10);
     expect(a.wildPos.length).toBe(8);
     expect(a.wildKind.length).toBe(4);
+  });
+
+  it('starts every being with NO goal rather than with the first one', () => {
+    // Zero is a real intent (`move to`). A lane left at zero would say every
+    // being in a fresh buffer is walking somewhere.
+    const a = allocFrameArrays(4, 1);
+    expect([...a.goal]).toEqual([GOAL_NONE, GOAL_NONE, GOAL_NONE, GOAL_NONE]);
+    expect(goalWord(a.goal[0]!)).toBeNull();
   });
 
   it('never allocates a zero-length lane (a detached array must be distinguishable)', () => {
@@ -70,8 +85,8 @@ describe('frame arrays', () => {
   it('lists exactly the buffers to transfer, each one distinct', () => {
     const a = allocFrameArrays(3, 3);
     const buffers = frameBuffers(a);
-    expect(buffers).toHaveLength(9);
-    expect(new Set(buffers).size).toBe(9);
+    expect(buffers).toHaveLength(14);
+    expect(new Set(buffers).size).toBe(14);
   });
 
   it('reports detachment once the buffers are gone', () => {
@@ -89,12 +104,19 @@ describe('frame arrays', () => {
     a.act[1] = ACT_RESTING;
     a.cond[1] = COND_SICK | COND_STARVING;
     a.stage[1] = STAGE_ELDER;
+    a.hunger[1] = 92;
+    a.goal[1] = 3;
+    a.planAt[1] = 2;
+    a.planOf[1] = 4;
     const there = structuredClone(a, { transfer: frameBuffers(a) });
     expect(there.ids[0]).toBe(42);
     expect(there.pos[0]).toBeCloseTo(1.5);
     expect(there.act[1]).toBe(ACT_RESTING);
     expect(there.cond[1]).toBe(COND_SICK | COND_STARVING);
     expect(there.stage[1]).toBe(STAGE_ELDER);
+    expect(there.hunger[1]).toBe(92);
+    expect(goalWord(there.goal[1]!)).toBe('eat');
+    expect([there.planAt[1], there.planOf[1]]).toEqual([2, 4]);
     const back = structuredClone(there, { transfer: frameBuffers(there) });
     expect(back.ids[0]).toBe(42);
     expect(isDetached(there)).toBe(true);
