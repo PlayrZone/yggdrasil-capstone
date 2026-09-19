@@ -27,6 +27,7 @@ import {
   yggHome,
 } from '@yggdrasil/home';
 import { evalBackend, hasLlmKey, llmModelId, makeLlmBackend } from './llm.js';
+import { registerEvalTools } from './evalTools.js';
 
 /**
  * Yggdrasil Lab MCP server. Lets an MCP client (Claude) run, watch, query,
@@ -620,6 +621,29 @@ server.registerTool(
     });
   },
 );
+
+// ── the evaluation instrument (W1-E) ───────────────────────────────────────────
+/**
+ * `run_ab`, `ignorance_probe`, `judge_traces`. Registered through a module of
+ * their own so decision D1's guard — allowPaid AND a named, persisted budget —
+ * lives in one file next to the store that holds the counter.
+ */
+registerEvalTools({
+  registerTool: (name, config, handler) =>
+    // The SDK's generic inference does not survive being passed through a
+    // registrar, so the shapes are re-asserted at this one call site rather
+    // than every tool losing its typed args inside `evalTools.ts`.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    server.registerTool(name, config as any, handler as any),
+  text,
+  json,
+  // A paid ATTEMPT is audited whether or not it is allowed: a refusal is the
+  // most interesting row in this table.
+  audit: (tool, detail) => db.recordAction('mcp', tool, detail, undefined, Date.now()),
+  announce: (kind, summary, opts) => announce(kind, summary, opts ?? {}),
+  makeLlmBackend,
+  llmModelId,
+});
 
 // ── reports (shared read/write channel between the human and the AI) ────────────
 server.registerTool(
