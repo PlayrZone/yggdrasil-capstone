@@ -3,7 +3,7 @@ import type { ThinkInput } from '../contract/types.js';
 import type { IMind } from './IMind.js';
 import type { IMindBackend } from './IMindBackend.js';
 import type { ThinkPrompt } from './prompt.js';
-import { ReflexMind } from './ReflexMind.js';
+import { policyFor } from './policy.js';
 
 interface MockMindBackendBase {
   /**
@@ -45,7 +45,7 @@ export class MockMindBackend implements IMindBackend {
   private failTimes: number;
 
   constructor(options: MockMindBackendOptions) {
-    this.policy = options.policy ?? new ReflexMind(options.world);
+    this.policy = options.policy ?? policyFor(options.world);
     this.failTimes = options.failTimes ?? 0;
   }
 

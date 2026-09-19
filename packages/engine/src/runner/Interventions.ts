@@ -11,6 +11,32 @@ function clampNeed(v: number): number {
 }
 
 /**
+ * THE ONE DOOR A NON-NUMBER COULD COME THROUGH (W1-B2 verifier §3, backlog 4).
+ *
+ * Every event the engine itself emits writes real numbers into its need-delta
+ * slots. An AUTHORED event is written by a host, and a slot holding `undefined`
+ * — or a string, or `NaN` — used to reach `importanceOf` and make a memory's
+ * importance `NaN`, which in turn made one being's eviction order depend on the
+ * JavaScript engine's sort. B3 makes `importanceOf` total; this closes the door
+ * as well, so the SCAFFOLD LEDGER and the bus agree on what was authored rather
+ * than the ledger keeping a value nothing could act on.
+ *
+ * Clamped to 0, in place, and only where the value is unusable: a deed nobody
+ * can measure the effect of moved nothing. Key order is untouched, so a
+ * well-formed authored event is byte-identical through here.
+ */
+function clampAuthoredDeltas(payload: Record<string, unknown>): void {
+  for (const slot of ['needDeltas', 'targetNeedDeltas']) {
+    const deltas = payload[slot];
+    if (typeof deltas !== 'object' || deltas === null) continue;
+    const row = deltas as Record<string, unknown>;
+    for (const [drive, value] of Object.entries(row)) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) row[drive] = 0;
+    }
+  }
+}
+
+/**
  * SANCTIONED SCAFFOLDING (recorded).
  *
  * Experiments legitimately intervene — freedom from want isolates the
@@ -103,6 +129,7 @@ export class Interventions {
    */
   authorEvent(event: SimEvent): number {
     const rt = this.rt;
+    clampAuthoredDeltas(event.payload);
     const witnesses = rt.perception.witnessesOf(rt.world, event);
     rt.scaffold.authoredEvent(event, witnesses);
     rt.bus.emit(event);

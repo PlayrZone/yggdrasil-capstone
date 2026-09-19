@@ -23,6 +23,7 @@
  */
 
 import type {
+  ActionId,
   ContextFeatureId,
   ContextRecord,
   DriveDeltas,
@@ -48,33 +49,18 @@ export interface Traits {
 // ─── Intents (closed vocabulary, body-validated) ─────────────────────────────
 
 /**
- * B3 REPLACES THIS with `{ core: CoreVerb, action: ActionId, args }` bound
- * through the adapter's `actions`. It stays in the contract rather than moving
- * to the forager world because it is the CORE verb set every world binds to,
- * not a table of this world's nouns — and because widening it now would cost
- * the body its exhaustive dispatch for no gain the next step does not deliver
- * properly. The arguments that DO name things are already opaque.
+ * ONE DECISION A MIND TAKES, in the world's own spelling (W1-B3). `kind` is an
+ * `ActionId` the adapter declared and BOUND to a core verb, not a union of this
+ * world's verbs: the literal set (`'MoveTo' | 'Gather' | …`) now lives in
+ * `worlds/forager/types.ts`, and the body — which enforces one world's physics
+ * — keeps its exhaustive dispatch over it.
+ *
+ * The arguments below are the ones the engine carries; which of them an action
+ * actually takes is `ActionBinding.params`, and `checkIntent` is where a plan
+ * is held to it (`contract/actions.ts`). B4 replaces `x`/`y` with a `PlaceRef`.
  */
-export type IntentKind =
-  | 'MoveTo'
-  | 'Gather'
-  | 'Dig'
-  | 'Eat'
-  | 'Drink'
-  | 'Sleep'
-  | 'Build'
-  | 'Deposit'
-  | 'Withdraw'
-  | 'Give'
-  | 'Attack'
-  | 'Craft' // try to combine the materials you hold into something new
-  | 'Speak'
-  | 'Follow'
-  | 'Flee'
-  | 'Idle';
-
 export interface Intent {
-  kind: IntentKind;
+  kind: ActionId;
   /** Target position for MoveTo / Flee-from / Build / Deposit-on-ground. */
   x?: number;
   y?: number;

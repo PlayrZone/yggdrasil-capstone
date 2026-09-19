@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildThinkPrompt } from '../src/consciousness/prompt.js';
+import { foragerAdapter } from '../src/worlds/forager/adapter.js';
 import {
   NEAR_DUPLICATE_COMPLETION_WEIGHT,
   NearDuplicateIndex,
@@ -299,7 +300,7 @@ interface Row {
 
 function realisticRows(scale: 'sparse' | 'populated', n: number): Row[] {
   return Array.from({ length: n }, (_, i) => ({
-    user: buildThinkPrompt(realisticInput(0x1234 + i * 977, scale)).user,
+    user: buildThinkPrompt(realisticInput(0x1234 + i * 977, scale), foragerAdapter).user,
     completion: realisticCompletion(0x1234 + i * 977),
   }));
 }
@@ -311,7 +312,7 @@ function realisticRows(scale: 'sparse' | 'populated', n: number): Row[] {
  * prompt tokens is measuring the boilerplate, not the act.
  */
 function sameSituationRows(scale: 'sparse' | 'populated', n: number): Row[] {
-  const user = buildThinkPrompt(realisticInput(0x9001, scale)).user;
+  const user = buildThinkPrompt(realisticInput(0x9001, scale), foragerAdapter).user;
   return Array.from({ length: n }, (_, i) => ({ user, completion: realisticCompletion(0x4400 + i * 131) }));
 }
 
@@ -330,7 +331,7 @@ function nearSituationRows(scale: 'sparse' | 'populated', n: number): Row[] {
       },
       worldView: { ...base.worldView, tick: base.worldView.tick + i * 7 },
     };
-    return { user: buildThinkPrompt(input).user, completion: realisticCompletion(0x4400 + i * 131) };
+    return { user: buildThinkPrompt(input, foragerAdapter).user, completion: realisticCompletion(0x4400 + i * 131) };
   });
 }
 

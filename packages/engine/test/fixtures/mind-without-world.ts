@@ -9,6 +9,12 @@
  *
  * It touches every mind directory, because the proof is about the whole brain,
  * not about `AgentMind`'s own imports.
+ *
+ * W1-B3 adds the three files that sat in NEITHER net (B2 verifier, backlog 1):
+ * `schema.ts`, `LlmMind.ts` and `MockMindBackend.ts`. The last two are exactly
+ * the files whose silent forager default B2 deleted, and a barrel or dynamic
+ * import of the world in either used to leave guard AND proof green. They are
+ * built here now, so the compiler has to resolve their imports too.
  */
 import { AgentMind } from '../../src/agent/AgentMind.js';
 import { WorldGate } from '../../src/contract/gate.js';
@@ -25,6 +31,11 @@ import { ruleKey } from '../../src/learning/ruleKey.js';
 import { KnowledgeStore } from '../../src/knowledge/KnowledgeStore.js';
 import { RelationshipStore } from '../../src/relationships/RelationshipStore.js';
 import { NarrativeStore } from '../../src/narrative/NarrativeStore.js';
+import { LlmMind } from '../../src/consciousness/LlmMind.js';
+import { MockMindBackend } from '../../src/consciousness/MockMindBackend.js';
+import { policyFor } from '../../src/consciousness/policy.js';
+import { parseMindOutput } from '../../src/consciousness/schema.js';
+import { buildThinkPrompt } from '../../src/consciousness/prompt.js';
 import { makeToyWorld } from './toyAdapter.js';
 
 const world = makeToyWorld('proof', 0.5);
@@ -59,11 +70,41 @@ export function inhabit(): number {
   const stored: MemoryRecord | undefined = memory ? stream.append(memory) : undefined;
   for (const learner of learners) if (stored) learner.observe(stored);
 
+  // The slow path, built for a world this compiler cannot see: the backend, the
+  // mind that drives it, the prompt it composes and the parser that reads the
+  // reply. Not CALLED — the proof is about resolution, not behaviour.
+  const backend = new MockMindBackend({ world });
+  const llm = new LlmMind(backend, { world, fallback: policyFor(world) });
+  const parsed = parseMindOutput('{"plan":[{"kind":"Dawdle"}]}', world);
+
   return (
     stores.length +
     learners.length +
     ruleKey(rule).length +
     importanceOf(world, 'AteFood', {}) +
-    mind.gate.counts.undeclaredEvent
+    mind.gate.counts.undeclaredEvent +
+    llm.modelId.length +
+    parsed.plan.length +
+    buildThinkPrompt(mind.buildThinkInput(snapshotOf(), viewOf(), 'periodic'), world).user.length
   );
+}
+
+function snapshotOf(): Parameters<AgentMind['buildThinkInput']>[0] {
+  return {
+    id: 7,
+    name: 'proof',
+    ageTicks: 0,
+    traits: { curiosity: 0, aggression: 0, compassion: 0, ambition: 0, loyalty: 0, riskTolerance: 0 },
+    needs: { hunger: 0, rest: 0 },
+    health: 100,
+    sick: false,
+    x: 0,
+    y: 0,
+    inventory: {},
+    context: {},
+  };
+}
+
+function viewOf(): Parameters<AgentMind['buildThinkInput']>[1] {
+  return { tick: 0, night: false, season: 'always', agents: [], resources: [], structures: [] };
 }

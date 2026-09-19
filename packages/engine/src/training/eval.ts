@@ -2,6 +2,7 @@ import type { ThinkInput } from '../contract/types.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import { buildThinkPrompt } from '../consciousness/prompt.js';
 import { MindOutputError, parseMindOutputDetailed, utteranceHasContent } from '../consciousness/schema.js';
+import { foragerAdapter } from '../worlds/forager/adapter.js';
 /**
  * Gate 1 of the eval suite a fine-tuned Yggdrasil model must clear before it
  * replaces the bootstrap model (config-only swap, so the gates are the only
@@ -10,6 +11,12 @@ import { MindOutputError, parseMindOutputDetailed, utteranceHasContent } from '.
  *
  * Gate 2 — knowledge fidelity — is a battery, a matcher and a judge seam, and
  * lives in `fidelity.ts`.
+ *
+ * THE WORLD IS THE FORAGER CONTINENT'S, and named rather than implied (W1-B3,
+ * item 8): a prompt now offers the ADAPTER's action vocabulary and the parser
+ * accepts the ADAPTER's kinds, so scoring a model needs to say which world it
+ * was being scored in. This gate's inputs are that world's, so its world is
+ * too; a later step moves the whole eval pack under `worlds/forager/`.
  */
 
 export interface ValidityResult {
@@ -49,7 +56,8 @@ export async function evalJsonValidity(backend: IMindBackend, inputs: ThinkInput
   const byReason: Record<string, number> = {};
   for (const input of inputs) {
     try {
-      const parsed = parseMindOutputDetailed(await backend.complete(buildThinkPrompt(input), input));
+      const prompt = buildThinkPrompt(input, foragerAdapter);
+      const parsed = parseMindOutputDetailed(await backend.complete(prompt, input), foragerAdapter);
       valid++;
       if (parsed.salvage === 'fenced') salvagedFenced++;
       const acts = parsed.output.plan.some((intent) => intent.kind !== 'Idle');

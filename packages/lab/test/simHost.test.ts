@@ -506,21 +506,22 @@ describe('SimHost — stats', () => {
 describe('ProxyMindBackend', () => {
   it('posts a think request and resolves with what comes back', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port);
+    const backend = new ProxyMindBackend('model-x', port, 'forager-continent');
     const prompt = { system: 'you are', user: 'hungry. what now?' };
     const promise = backend.complete(prompt as never, { situation: 'hungry' } as never);
     const request = port.last('llm-request')!;
     // Both halves travel: the exact messages the engine composed, and the
     // situation behind them. A transport bridge must never rebuild one from
     // the other.
-    expect(request).toMatchObject({ reqId: 1, prompt, input: { situation: 'hungry' } });
+    // …and the world it was composed FOR, so main can rebuild it to check.
+    expect(request).toMatchObject({ reqId: 1, prompt, input: { situation: 'hungry' }, worldId: 'forager-continent' });
     backend.settle(request.reqId, '{"plan":[]}');
     await expect(promise).resolves.toBe('{"plan":[]}');
   });
 
   it('rejects with the message main sent, so NO_LLM_KEY still reads as NO_LLM_KEY', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port);
+    const backend = new ProxyMindBackend('model-x', port, 'forager-continent');
     const promise = backend.complete({} as never, {} as never);
     backend.settle(1, undefined, 'NO_LLM_KEY');
     await expect(promise).rejects.toThrow('NO_LLM_KEY');
@@ -528,7 +529,7 @@ describe('ProxyMindBackend', () => {
 
   it('ignores a reply for a request it does not have, and fails the rest on abort', async () => {
     const port = new Recorder();
-    const backend = new ProxyMindBackend('model-x', port);
+    const backend = new ProxyMindBackend('model-x', port, 'forager-continent');
     expect(() => backend.settle(999, 'stray')).not.toThrow();
     const promise = backend.complete({} as never, {} as never);
     backend.abort();

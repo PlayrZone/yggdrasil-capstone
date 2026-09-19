@@ -1,5 +1,7 @@
-import type { Goal, Intent, IntentKind, MindOutput, SpeechAct, Utterance } from '../contract/types.js';
-import type { BuildKind, NeedKey, ObjectKind } from '../worlds/forager/types.js';
+import { kindsFor, planArguments } from '../contract/actions.js';
+import type { ParamSchema } from '../contract/actions.js';
+import type { WorldAdapter } from '../contract/adapter.js';
+import type { Goal, Intent, MindOutput, SpeechAct, Utterance } from '../contract/types.js';
 
 /**
  * Parse + validate raw LLM output into a MindOutput. The contract is strict
@@ -100,50 +102,73 @@ import type { BuildKind, NeedKey, ObjectKind } from '../worlds/forager/types.js'
  * output the gate cannot otherwise see.
  */
 
-const INTENT_KINDS = new Set<IntentKind>([
-  'MoveTo', 'Gather', 'Dig', 'Eat', 'Drink', 'Sleep', 'Build', 'Deposit', 'Withdraw',
-  'Give', 'Attack', 'Craft', 'Speak', 'Follow', 'Flee', 'Idle',
-]);
 const SPEECH_ACTS = new Set<SpeechAct>(['share-knowledge', 'share-episode', 'inform', 'request']);
 
 /**
- * THE CLOSED VOCABULARIES AN INTENT ARG MAY DRAW ON. `kind` was checked and its
- * ARGS were not: `{"kind":"Build","buildKind":"tower"}` parsed as a legal Build
- * with the field dropped, and the Body then built a shelter — the model asked
- * for one thing, a different thing happened, and `raw` and `parsedOutput`
- * disagreed about what had been decided. `objectKind` was worse: an unchecked
- * cast carried `"plutonium"` straight through into the world.
+ * THE CLOSED VOCABULARIES AN INTENT ARG MAY DRAW ON — READ OFF THE WORLD
+ * (W1-B3). `kind` was checked and its ARGS were not:
+ * `{"kind":"Build","buildKind":"tower"}` parsed as a legal Build with the field
+ * dropped, and the Body then built a shelter — the model asked for one thing, a
+ * different thing happened, and `raw` and `parsedOutput` disagreed about what
+ * had been decided. `objectKind` was worse: an unchecked cast carried
+ * `"plutonium"` straight through into the world.
  *
- * Both lists are exactly what the prompt advertises (`ObjectKind` is the
- * inventory the world is made of), and both are exhaustive over their union —
- * the assertions below stop compiling the moment either type grows.
+ * The lists that closed those holes used to be typed out here, against one
+ * world's unions. They are now the adapter's: which verbs exist is
+ * `world.actions`, what an arg may name is the tag its `ParamSchema` filters on,
+ * and which drives a goal may serve is `world.drives`. Same decisions, same
+ * reason codes, same bytes — and a second world gets its own vocabulary for
+ * free instead of being parsed against the forager continent's.
+ *
+ * DERIVED ONCE PER WORLD. A parse is on the hot path of every completion, and a
+ * world is frozen, so the derivation is cached against the adapter identity.
  */
-const BUILD_KIND_LIST = ['shelter', 'wall', 'container'] as const satisfies readonly BuildKind[];
+interface PlanArg {
+  readonly id: string;
+  /** Present for an enumerated arg; absent means it is read as a number. */
+  readonly allowed?: ReadonlySet<string>;
+  /** The clause a refusal ends with, after the action's own name. */
+  readonly hint?: string;
+}
 
-const OBJECT_KIND_LIST = [
-  'water', 'wood', 'stone', 'clay', 'fiber', 'berry', 'tuber', 'seed', 'mushroomRed', 'nightshade',
-  'meat', 'hide', 'charcoal', 'leather', 'rope', 'spear', 'club', 'handaxe', 'brick',
-  'copper', 'tin', 'iron', 'bronze', 'copperOre', 'tinOre', 'ironOre', 'coal', 'salt',
-  'silver', 'gold', 'gemstone', 'shelter', 'wall', 'container', 'corpse',
-] as const satisfies readonly ObjectKind[];
+interface Vocabulary {
+  readonly actions: ReadonlySet<string>;
+  /**
+   * ORDER IS OBSERVABLE. Two illegal args in one intent produce two possible
+   * refusals and the model is told about exactly one, so the order is the
+   * world's stated rule (`planArguments`), not this file's habit.
+   */
+  readonly args: readonly PlanArg[];
+  readonly needs: ReadonlySet<string>;
+  readonly needHint: string;
+}
 
-/** Compile-time exhaustiveness: a new kind in this world's vocabulary fails here. */
-type Missing<Union extends string, Listed extends string> = Exclude<Union, Listed>;
-const _ALL_BUILD_KINDS_LISTED: Missing<BuildKind, (typeof BUILD_KIND_LIST)[number]> extends never ? true : never = true;
-const _ALL_OBJECT_KINDS_LISTED: Missing<ObjectKind, (typeof OBJECT_KIND_LIST)[number]> extends never ? true : never = true;
-void _ALL_BUILD_KINDS_LISTED;
-void _ALL_OBJECT_KINDS_LISTED;
+const VOCABULARIES = new WeakMap<WorldAdapter, Vocabulary>();
 
-const BUILD_KINDS = new Set<string>(BUILD_KIND_LIST);
-const OBJECT_KINDS = new Set<string>(OBJECT_KIND_LIST);
+function vocabularyOf(world: WorldAdapter): Vocabulary {
+  const cached = VOCABULARIES.get(world);
+  if (cached) return cached;
+  const built: Vocabulary = {
+    actions: new Set(world.actions.map((action) => action.id)),
+    args: planArguments(world).map((param) => planArg(world, param)),
+    needs: new Set(world.drives.map((drive) => drive.id)),
+    needHint: `a goal serves one of ${world.drives.map((drive) => drive.id).join(', ')}`,
+  };
+  VOCABULARIES.set(world, built);
+  return built;
+}
 
-/** The needs a goal may name — the four the prompt renders, and nothing else. */
-// A goal's `need` is a `DriveId` now, so the list is pinned against the
-// forager world's own drives; B3 takes it from the adapter's `drives`.
-const GOAL_NEEDS = ['hunger', 'rest', 'safety', 'socialConnection'] as const satisfies readonly NeedKey[];
-const _ALL_GOAL_NEEDS_LISTED: Missing<NeedKey, (typeof GOAL_NEEDS)[number]> extends never ? true : never = true;
-void _ALL_GOAL_NEEDS_LISTED;
-const NEED_KINDS = new Set<string>(GOAL_NEEDS);
+function planArg(world: WorldAdapter, param: ParamSchema): PlanArg {
+  if (param.type === 'kind' || param.type === 'enum') {
+    const values = param.type === 'kind' ? kindsFor(world, param) : [...param.values];
+    return {
+      id: param.id,
+      allowed: new Set(values),
+      hint: param.hint ?? `takes one of ${values.join(', ')}`,
+    };
+  }
+  return { id: param.id };
+}
 
 /** What the engine executes from one decision. Past these the reply is refused. */
 const PLAN_LIMIT = 8;
@@ -190,13 +215,14 @@ export interface ParsedMindOutput {
 }
 
 /** Throws MindOutputError on any structural problem. */
-export function parseMindOutput(raw: string): MindOutput {
-  return parseMindOutputDetailed(raw).output;
+export function parseMindOutput(raw: string, world: WorldAdapter): MindOutput {
+  return parseMindOutputDetailed(raw, world).output;
 }
 
 /** As `parseMindOutput`, and says which acceptance path the text took. */
-export function parseMindOutputDetailed(raw: string): ParsedMindOutput {
-  const bare = attempt(raw);
+export function parseMindOutputDetailed(raw: string, world: WorldAdapter): ParsedMindOutput {
+  const vocab = vocabularyOf(world);
+  const bare = attempt(raw, vocab);
   if (bare.ok) return { output: bare.output, salvage: 'bare' };
 
   const bodies = fenceBodies(raw);
@@ -205,7 +231,7 @@ export function parseMindOutputDetailed(raw: string): ParsedMindOutput {
   const legal: MindOutput[] = [];
   const refused: MindOutputError[] = [];
   for (const body of bodies) {
-    const tried = attempt(body);
+    const tried = attempt(body, vocab);
     if (tried.ok) legal.push(tried.output);
     else refused.push(tried.error);
   }
@@ -228,16 +254,16 @@ export function utteranceHasContent(u: Utterance): boolean {
 
 type Attempt = { ok: true; output: MindOutput } | { ok: false; error: MindOutputError };
 
-function attempt(text: string): Attempt {
+function attempt(text: string, vocab: Vocabulary): Attempt {
   try {
-    return { ok: true, output: parseReply(text) };
+    return { ok: true, output: parseReply(text, vocab) };
   } catch (err) {
     if (err instanceof MindOutputError) return { ok: false, error: err };
     throw err;
   }
 }
 
-function parseReply(raw: string): MindOutput {
+function parseReply(raw: string, vocab: Vocabulary): MindOutput {
   const text = jsonSpan(raw.trim());
   let data: unknown;
   try {
@@ -257,8 +283,8 @@ function parseReply(raw: string): MindOutput {
   }
   const obj = data as Record<string, unknown>;
 
-  const goals = parseGoals(obj['goals']);
-  const plan = parsePlan(obj['plan']);
+  const goals = parseGoals(obj['goals'], vocab);
+  const plan = parsePlan(obj['plan'], vocab);
   const utterances = parseUtterances(obj['utterances']);
   if (plan.length === 0 && !utterances.some(utteranceHasContent)) {
     throw new MindOutputError(
@@ -390,7 +416,7 @@ function deepest(errors: MindOutputError[]): MindOutputError | null {
   return best;
 }
 
-function parseGoals(value: unknown): Goal[] {
+function parseGoals(value: unknown, vocab: Vocabulary): Goal[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw new MindOutputError('bad-goals', 'goals must be an array');
   const goals = value.map((g, i) => {
@@ -402,37 +428,33 @@ function parseGoals(value: unknown): Goal[] {
       description: String(description ?? 'goal').slice(0, 120),
       createdTick: 0,
     };
-    const need = readEnum(o, 'need', NEED_KINDS, `a goal serves one of ${GOAL_NEEDS.join(', ')}`);
-    if (need !== undefined) goal.need = need as Goal['need'];
+    const need = readEnum(o, 'need', vocab.needs, vocab.needHint);
+    if (need !== undefined) goal.need = need;
     return goal;
   });
   if (goals.length > GOAL_LIMIT) throw tooLong('goals-too-long', 'goals', goals.length, GOAL_LIMIT);
   return goals;
 }
 
-function parsePlan(value: unknown): Intent[] {
+function parsePlan(value: unknown, vocab: Vocabulary): Intent[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw new MindOutputError('bad-plan', 'plan must be an array');
   const plan: Intent[] = [];
   for (const item of value) {
     const o = asObject(item, 'bad-intent', 'intent');
     const kind = o['kind'];
-    if (typeof kind !== 'string' || !INTENT_KINDS.has(kind as IntentKind)) {
+    if (typeof kind !== 'string' || !vocab.actions.has(kind)) {
       throw new MindOutputError('bad-intent', `invalid intent kind: ${String(kind)}`);
     }
-    const intent: Intent = { kind: kind as IntentKind };
-    const x = readNumber(o, 'x');
-    if (x !== undefined) intent.x = x;
-    const y = readNumber(o, 'y');
-    if (y !== undefined) intent.y = y;
-    const targetId = readNumber(o, 'targetId');
-    if (targetId !== undefined) intent.targetId = targetId;
-    const objectKind = readEnum(o, 'objectKind', OBJECT_KINDS, `${kind} takes one of the kinds the world is made of`);
-    if (objectKind !== undefined) intent.objectKind = objectKind as ObjectKind;
-    const buildKind = readEnum(o, 'buildKind', BUILD_KINDS, `${kind} builds one of ${BUILD_KIND_LIST.join(', ')}`);
-    if (buildKind !== undefined) intent.buildKind = buildKind as BuildKind;
-    const durationTicks = readNumber(o, 'durationTicks');
-    if (durationTicks !== undefined) intent.durationTicks = durationTicks;
+    // Written key by key in the world's argument order, so a recorded plan
+    // keeps the field order it has always had on the wire.
+    const intent = { kind } as Intent & Record<string, unknown>;
+    for (const arg of vocab.args) {
+      const read = arg.allowed
+        ? readEnum(o, arg.id, arg.allowed, `${kind} ${arg.hint}`)
+        : readNumber(o, arg.id);
+      if (read !== undefined) intent[arg.id] = read;
+    }
     plan.push(intent);
   }
   if (plan.length > PLAN_LIMIT) throw tooLong('plan-too-long', 'plan', plan.length, PLAN_LIMIT);

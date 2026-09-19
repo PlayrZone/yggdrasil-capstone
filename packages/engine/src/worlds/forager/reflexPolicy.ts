@@ -1,4 +1,4 @@
-import type { DriveSchema, WorldAdapter } from '../contract/adapter.js';
+import type { DriveSchema, ReflexPolicy, ReflexPolicyFactory, WorldAdapter } from '../../contract/adapter.js';
 import type {
   Goal,
   Intent,
@@ -6,15 +6,23 @@ import type {
   MindOutput,
   ObservedResource,
   ThinkInput,
-} from '../contract/types.js';
-import type { DriveId, KindId } from '../contract/ids.js';
-import type { IMind } from './IMind.js';
+} from '../../contract/types.js';
+import type { DriveId, KindId } from '../../contract/ids.js';
 
-// W1-B2: this policy still SPELLS this world's nouns (B3 moves the file), but
-// it may not IMPORT the world — `AgentMind` constructs it, and the mind's type
-// graph must not reach one (`test/mind-type-graph.test.ts`). So the kinds and
-// drives below are opaque ids; B3 has their spelling checked again, against the
-// adapter's own `kinds` and `actions`.
+/**
+ * W1-B3 MOVED THIS FILE; IT DID NOT REWRITE IT. Every line below stood in
+ * `consciousness/ReflexMind.ts` the moment before, and the reflex goldens are
+ * bit-identical across the move. It is HERE because it is not a mind: it is one
+ * world's hand-written survival instinct, nouns and all, and the brief's
+ * principle 3 says so. The mind now receives a policy from the adapter
+ * (`WorldAdapter.reflexPolicy`) and a world without one is legal — its beings
+ * wait between slow thoughts rather than borrowing this world's instincts.
+ *
+ * W1-D replaces every hand-written policy of this sort with drive arbitration
+ * over LEARNED affordances and skills. Until then the kinds below are spelled
+ * out, and that is now legitimate: this is world code, and `kinds.ts` declares
+ * every name it uses (`test/world-tables-transcribed.test.ts` holds it to that).
+ */
 
 // Things an agent might TRY to eat (nutritious + poisonous). The reflex only
 // eats one if its held knowledge hasn't flagged it as sickening — discovery
@@ -35,12 +43,8 @@ const POISON_NODE_YIELD: Partial<Record<string, KindId>> = {
  * eat an objectKind its held knowledge says leads to sickness. That is the
  * Y2 "discovery without consciousness" demo in miniature.
  */
-export class ReflexMind implements IMind {
+export class ReflexMind implements ReflexPolicy {
   /**
-   * Principle 3 of the W1-B brief: this policy is already WORLD side — it is
-   * the forager continent's hand-written survival instinct, nouns and all, and
-   * B3 moves the whole file to `worlds/forager/reflexPolicy.ts`.
-   *
    * The world is REQUIRED (W1-B1 verifier, backlog 2). It used to default to
    * the forager continent, so `new ReflexMind()` in `LlmMind` and
    * `MockMindBackend` silently made another world's fallback policy read this
@@ -182,6 +186,9 @@ export class ReflexMind implements IMind {
     return { goals, plan, utterances };
   }
 }
+
+/** This world's instinct, as the adapter hands it to a mind. */
+export const foragerReflexPolicy: ReflexPolicyFactory = (world) => new ReflexMind(world);
 
 function goal(input: ThinkInput, description: string, need: DriveId | undefined): Goal {
   return { id: input.worldView.tick, description, need, createdTick: input.worldView.tick };

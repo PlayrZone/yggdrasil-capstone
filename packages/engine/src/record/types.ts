@@ -1,7 +1,6 @@
 import type {
   Goal,
   Intent,
-  IntentKind,
   KnowledgeRecord,
   KnowledgeStatus,
   MemoryRecord,
@@ -13,7 +12,7 @@ import type {
   ThinkTrigger,
   Utterance,
 } from '../contract/types.js';
-import type { EventId, KindId } from '../contract/ids.js';
+import type { ActionId, EventId, KindId } from '../contract/ids.js';
 import type { Needs, ObjectKind } from '../worlds/forager/types.js';
 import type { ProvenanceLevel } from '../learning/ILearner.js';
 
@@ -254,7 +253,8 @@ export type OutcomeCloseReason = 'planCompleted' | 'planReplaced' | 'windowElaps
 export interface IntentOutcome {
   /** Index into `resolvedOutput.plan`. */
   index: number;
-  kind: IntentKind;
+  /** The world's own name for the act (`ActionBinding.id`), as decided. */
+  kind: ActionId;
   objectKind?: KindId;
   buildKind?: KindId;
   targetId?: number;

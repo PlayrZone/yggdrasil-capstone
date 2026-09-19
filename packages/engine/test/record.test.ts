@@ -11,7 +11,7 @@ import {
   OutcomeTracker,
   ScaffoldLedger,
   attemptPrompt,
-  buildThinkPrompt,
+  buildThinkPrompt as buildThinkPromptIn,
   cognitionToExample,
   deserializeThinkInput,
   foragerAdapter,
@@ -40,6 +40,15 @@ import type {
 } from '../src/index.js';
 import { fingerprintOf } from './fingerprint.js';
 import { CTX, mem, resetIds } from './helpers.js';
+
+/**
+ * W1-B3 wiring. A prompt is built for a WORLD now — its verb list comes off the
+ * adapter — and every row in this file was recorded in the forager continent.
+ * The replay assertions are unchanged, which is the point: a stored row still
+ * rebuilds to the same bytes when the vocabulary comes from the world.
+ */
+const buildThinkPrompt = (input: ThinkInput): ReturnType<typeof buildThinkPromptIn> =>
+  buildThinkPromptIn(input, foragerAdapter);
 
 /**
  * W0-B. Three properties matter here and nothing else does:

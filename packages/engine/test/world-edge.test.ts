@@ -90,6 +90,8 @@ describe('an event the world does not declare forms no memory', () => {
       drives: [],
       context: [],
       events: [{ id: 'GaveItem', salience: 0.5, roles: { target: { recordsAs: 'ReceivedItem' } } }],
+      actions: [],
+      kinds: [],
       time: { ticksPerDay: 1, ticksPerSeason: 1, ticksPerYear: 1, adultAge: 1, seasonAt: () => 'one' },
       cognitionDefaults: {
         thinkInterval: { base: 1, scale: 1, weights: [] },
@@ -117,6 +119,8 @@ describe('an event the world does not declare forms no memory', () => {
       undeclaredMemory: 0,
       undeclaredDrive: 0,
       undeclaredTestimony: 0,
+      undeclaredAction: 0,
+      badParam: 0,
     });
   });
 });
@@ -172,18 +176,26 @@ describe('what a HOST offers a mind is checked too', () => {
       { kind: 'succession', causeType: 'BoughtLunch', effectType: 'AteFood' },
       { kind: 'outcome-association', actionType: 'AteFood', feature: null, need: 'money', direction: 'relieves' },
       { kind: 'outcome-association', actionType: 'AteFood', feature: 'indoors', need: 'hunger', direction: 'relieves' },
+      // W1-B3: kinds are declared now, so a recipe for a thing this world does
+      // not contain is refused rather than taken on trust — it could never be
+      // made, reinforced or contradicted.
+      { kind: 'craft-recipe', output: 'hovercraft', inputs: { wood: 2 } },
+      { kind: 'craft-recipe', output: 'spear', inputs: { unobtainium: 2 } },
+      { kind: 'succession', causeType: 'AteFood', causeObject: 'ambrosia', effectType: 'BecameSick' },
+      { kind: 'context-association', event: 'AteFood', objectKind: 'ambrosia', feature: 'night', direction: 'positive' },
     ];
     for (const rule of undeclared) expect(gate.admitTestimony(foragerAdapter, rule)).toBe(false);
     expect(gate.counts.undeclaredTestimony).toBe(undeclared.length);
 
     const declared: KnowledgeRule[] = [
       { kind: 'context-association', event: 'AteFood', feature: 'highland', direction: 'negative' },
-      { kind: 'succession', causeType: 'AteFood', effectType: 'BecameSick' },
+      { kind: 'context-association', event: 'AteFood', objectKind: 'berry', feature: 'night', direction: 'positive' },
+      { kind: 'succession', causeType: 'AteFood', causeObject: 'mushroomRed', effectType: 'BecameSick' },
       { kind: 'outcome-association', actionType: 'AteFood', feature: 'night', need: 'hunger', direction: 'relieves' },
       { kind: 'social-contingency', partnerId: 4, pattern: 'generous' },
-      // Kinds are B3's: no world declares what things exist yet, so a recipe
-      // is taken on trust rather than refused on a question nobody can answer.
-      { kind: 'craft-recipe', output: 'hovercraft', inputs: { unobtainium: 2 } },
+      // A recipe every part of which this world contains — the shape the
+      // engine's own `seedRecipe` produces out of `CRAFT_RECIPES`.
+      { kind: 'craft-recipe', output: 'spear', inputs: { wood: 1, stone: 1 } },
     ];
     for (const rule of declared) expect(gate.admitTestimony(foragerAdapter, rule)).toBe(true);
     expect(gate.counts.undeclaredTestimony).toBe(undeclared.length);
@@ -288,6 +300,8 @@ describe('an idea whispered in from outside comes from the HOST', () => {
         { id: 'wet', source: 'wet', kind: 'flag' },
       ],
       events: [],
+      actions: [],
+      kinds: [],
       time: { ticksPerDay: 1, ticksPerSeason: 1, ticksPerYear: 1, adultAge: 1, seasonAt: () => 'one' },
       cognitionDefaults: {
         thinkInterval: { base: 1, scale: 1, weights: [] },

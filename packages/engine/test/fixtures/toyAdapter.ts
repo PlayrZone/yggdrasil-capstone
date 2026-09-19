@@ -43,6 +43,29 @@ export function makeToyWorld(id: string, salience: number): WorldAdapter {
       // Eating: the only thing the one context feature can be mined against.
       { id: 'AteFood', salience: salience / 4 },
     ],
+    // FOUR VERBS, FOUR CORE VERBS, AND NOT ONE OF THEM IS A FORAGER VERB
+    // (W1-B3). A mind parsed against this world must accept `Snaffle` and
+    // refuse `Gather`; a prompt built for it must offer these and not those.
+    // `Snaffle` is the only REQUIRED param anywhere in the repo — this world
+    // has no body to refuse an aimless take, so its own edge does.
+    actions: [
+      { id: 'Shuffle', core: 'Move', params: [{ id: 'x', type: 'number' }, { id: 'y', type: 'number' }] },
+      { id: 'Snaffle', core: 'Take', params: [{ id: 'targetId', type: 'ref', required: true }] },
+      {
+        id: 'Nibble',
+        core: 'Use',
+        params: [{ id: 'objectKind', type: 'kind', tag: 'edible', hint: 'nibbles something edible' }],
+      },
+      // Bounded on purpose: a duration this world cannot sit through is a
+      // refusal at the edge, where the forager continent has no bounds at all.
+      { id: 'Dawdle', core: 'Wait', params: [{ id: 'durationTicks', type: 'duration', min: 0, max: 99 }] },
+    ],
+    // Two things, tagged differently — so a `kind` arg filtered by `edible`
+    // takes the crumb and refuses the lever.
+    kinds: [
+      { id: 'crumb', tags: ['object', 'edible', 'nourishing'] },
+      { id: 'lever', tags: ['object', 'tool'] },
+    ],
     time: {
       ticksPerDay: 10,
       ticksPerSeason: 40,

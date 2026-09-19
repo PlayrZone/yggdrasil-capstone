@@ -26,7 +26,7 @@ import type { RuleIntern } from '../knowledge/KnowledgeStore.js';
 import { RelationshipStore } from '../relationships/RelationshipStore.js';
 import { NarrativeStore } from '../narrative/NarrativeStore.js';
 import type { IMind } from '../consciousness/IMind.js';
-import { ReflexMind } from '../consciousness/ReflexMind.js';
+import { policyFor } from '../consciousness/policy.js';
 
 export interface AgentMindOptions {
   /** Consciousness cadence in ticks; staggered per agent id. */
@@ -115,7 +115,8 @@ export class AgentMind {
       new OutcomeMiner(world, provenance),
     ];
     if (options.craftLearning) this.learners.push(new CraftObservationMiner(world, provenance));
-    this.mind = options.mind ?? new ReflexMind(world);
+    // The world's own instinct, or waiting — never another world's (W1-B3).
+    this.mind = options.mind ?? policyFor(world);
     this.thinkInterval = options.thinkInterval ?? 120;
     this.consolidateInterval = options.consolidateInterval ?? 300;
     this.mythBehavior = options.mythBehavior ?? true;

@@ -298,7 +298,7 @@ export class SimClient {
         break;
       }
       case 'llm-request':
-        this.forwardThink(message.reqId, message.prompt, message.input);
+        this.forwardThink(message.reqId, message.prompt, message.input, message.worldId);
         break;
       case 'ready':
         if (message.version !== PROTOCOL_VERSION) {
@@ -323,9 +323,11 @@ export class SimClient {
    * rebuild one half from the other, because a prompt rebuilt here would differ
    * from the one the run record says was sent.
    */
-  private forwardThink(reqId: number, prompt: unknown, input: unknown): void {
+  private forwardThink(reqId: number, prompt: unknown, input: unknown, worldId: string): void {
     const lab = window.lab;
-    const call = lab ? lab.llmComplete(prompt, input) : Promise.reject(new Error('NO_BRIDGE'));
+    // The world travels with the pair: main rebuilds the prompt to check it,
+    // and since W1-B3 a prompt's verb list comes from the world's adapter.
+    const call = lab ? lab.llmComplete(prompt, input, worldId) : Promise.reject(new Error('NO_BRIDGE'));
     void call.then(
       (text) => this.post({ kind: 'llm-result', reqId, text }),
       (error: unknown) => this.post({ kind: 'llm-result', reqId, error: error instanceof Error ? error.message : String(error) }),

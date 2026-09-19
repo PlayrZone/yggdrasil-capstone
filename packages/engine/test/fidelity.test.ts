@@ -8,7 +8,7 @@ import {
   LlmLeakJudge,
   MockLeakJudge,
   MockMindBackend,
-  buildThinkPrompt,
+  buildThinkPrompt as buildThinkPromptIn,
   calibrateDetector,
   deserializeThinkInput,
   detectActLeak,
@@ -47,6 +47,10 @@ import type {
 } from '../src/index.js';
 import { DEV_SET, DEV_SUPPLIED, devOutput, devSplit } from './leakDevSet.js';
 import { cleanSentences } from './cleanCorpus.js';
+
+// W1-B3 wiring: the battery is the forager continent's eval pack, so the
+// prompts its probes render into are that world's.
+const buildThinkPrompt = (input: ThinkInput): ThinkPrompt => buildThinkPromptIn(input, foragerAdapter);
 
 /**
  * Gate 2 — knowledge fidelity, round 2. The reviewer failed round 1 on two

@@ -29,9 +29,17 @@ export type DriveId = string;
 export type ContextFeatureId = string;
 
 /**
+ * Names one thing a being can decide to do. Declared by `WorldAdapter.actions`,
+ * where it is also BOUND to a core verb — so a mind can reason about what an
+ * action IS (a taking, a giving, a contest) in a world whose word for it it has
+ * never seen. The id itself stays the world's own spelling, because that is what
+ * rides on the wire to a model and back.
+ */
+export type ActionId = string;
+
+/**
  * Names one kind of thing that exists — a material, a structure, a resource.
- * `WorldAdapter.kinds` declares these from B3; until then nothing validates
- * them, and the mind merely carries them.
+ * Declared by `WorldAdapter.kinds`, each with the tags that say what it affords.
  */
 export type KindId = string;
 

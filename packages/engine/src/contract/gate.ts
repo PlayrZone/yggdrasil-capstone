@@ -1,6 +1,7 @@
+import { checkIntent } from './actions.js';
 import type { WorldAdapter } from './adapter.js';
 import type { DriveLevels, EventId } from './ids.js';
-import type { KnowledgeRule, MemoryRecord } from './types.js';
+import type { Intent, KnowledgeRule, MemoryRecord } from './types.js';
 
 /**
  * THE EDGE BETWEEN A WORLD AND A MIND (W1-B2).
@@ -33,6 +34,10 @@ export interface WorldGateCounts {
   readonly undeclaredDrive: number;
   /** Beliefs offered as testimony that name something undeclared. Not taken in. */
   readonly undeclaredTestimony: number;
+  /** Intents naming an action this world does not declare. Not handed to the body. */
+  readonly undeclaredAction: number;
+  /** Intents carrying an argument the action cannot take, or a value it cannot mean. */
+  readonly badParam: number;
 }
 
 /**
@@ -45,6 +50,8 @@ export class WorldGate {
   private undeclaredMemory = 0;
   private undeclaredDrive = 0;
   private undeclaredTestimony = 0;
+  private undeclaredAction = 0;
+  private badParam = 0;
 
   get counts(): WorldGateCounts {
     return {
@@ -52,7 +59,30 @@ export class WorldGate {
       undeclaredMemory: this.undeclaredMemory,
       undeclaredDrive: this.undeclaredDrive,
       undeclaredTestimony: this.undeclaredTestimony,
+      undeclaredAction: this.undeclaredAction,
+      badParam: this.badParam,
     };
+  }
+
+  /**
+   * THE OUTBOUND EDGE (W1-B3): one step of a plan, on its way from a mind to
+   * the body. Until now a plan crossed on a single narrowing cast — the mind
+   * held opaque ids and the body executed this world's own narrow kinds, and
+   * nothing asked whether the two agreed. An intent this world cannot mean is
+   * refused HERE: past this point the body would either act on something the
+   * world does not contain or silently drop the part of the decision it could
+   * not read, which is the class of bug `bad-arg` exists to stop in the parser.
+   *
+   * The rest of the plan is unaffected — a being that asks for one impossible
+   * thing still does the others. Zero on every count in the forager world: its
+   * reflex policy and its parser both speak the adapter's own vocabulary.
+   */
+  admitIntent(world: WorldAdapter, intent: Intent): boolean {
+    const refusal = checkIntent(world, intent);
+    if (refusal === null) return true;
+    if (refusal === 'undeclared-action') this.undeclaredAction++;
+    else this.badParam++;
+    return false;
   }
 
   /** An event arriving from the body. Undefined = this world has no such event. */
@@ -83,9 +113,11 @@ export class WorldGate {
   }
 
   /**
-   * A belief heard from someone else. Kinds are NOT checked — `WorldAdapter.
-   * kinds` arrives at B3 and until then no world declares what things exist —
-   * so this asks only about the ids a world does declare today.
+   * A belief heard from someone else. Every id it names is asked about,
+   * KINDS INCLUDED from W1-B3: a recipe for a thing this world does not contain
+   * could never be made, reinforced or contradicted, so taking it in would fill
+   * the store with unfalsifiable hearsay. Zero in the forager world, whose
+   * recipes come out of `CRAFT_RECIPES` and whose objects the adapter declares.
    */
   admitTestimony(world: WorldAdapter, rule: KnowledgeRule): boolean {
     if (ruleIsDeclared(world, rule)) return true;
@@ -97,9 +129,16 @@ export class WorldGate {
 function ruleIsDeclared(world: WorldAdapter, rule: KnowledgeRule): boolean {
   switch (rule.kind) {
     case 'context-association':
-      return world.eventById.has(rule.event) && hasFeature(world, rule.feature);
+      return (
+        world.eventById.has(rule.event) && hasFeature(world, rule.feature) && hasKind(world, rule.objectKind)
+      );
     case 'succession':
-      return world.eventById.has(rule.causeType) && world.eventById.has(rule.effectType);
+      return (
+        world.eventById.has(rule.causeType) &&
+        world.eventById.has(rule.effectType) &&
+        hasKind(world, rule.causeObject) &&
+        hasKind(world, rule.effectObject)
+      );
     case 'outcome-association':
       return (
         world.eventById.has(rule.actionType) &&
@@ -107,13 +146,18 @@ function ruleIsDeclared(world: WorldAdapter, rule: KnowledgeRule): boolean {
         world.drives.some((drive) => drive.id === rule.need)
       );
     case 'social-contingency':
-    case 'craft-recipe':
-      // Neither names anything the adapter declares yet: a partner is a being,
-      // and a recipe is made of kinds (B3).
+      // Names nothing the adapter declares: a partner is a being.
       return true;
+    case 'craft-recipe':
+      return hasKind(world, rule.output) && Object.keys(rule.inputs).every((id) => hasKind(world, id));
   }
 }
 
 function hasFeature(world: WorldAdapter, id: string): boolean {
   return world.context.some((feature) => feature.id === id);
+}
+
+/** Absent is fine — a rule that names no thing names no undeclared thing. */
+function hasKind(world: WorldAdapter, id: string | undefined): boolean {
+  return id === undefined || world.kindById.has(id);
 }

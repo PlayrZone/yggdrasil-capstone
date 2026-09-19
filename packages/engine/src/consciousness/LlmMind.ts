@@ -2,7 +2,7 @@ import type { WorldAdapter } from '../contract/adapter.js';
 import type { MindOutput, ThinkInput } from '../contract/types.js';
 import type { IMind } from './IMind.js';
 import type { IMindBackend } from './IMindBackend.js';
-import { ReflexMind } from './ReflexMind.js';
+import { policyFor } from './policy.js';
 import { buildThinkPrompt, retryPrompt } from './prompt.js';
 import type { ThinkPrompt } from './prompt.js';
 import { MindOutputError, parseMindOutput } from './schema.js';
@@ -56,22 +56,19 @@ interface LlmMindOptionsBase {
 }
 
 /**
- * WHAT CARRIES THE BEING WHEN THE MODEL FAILS, said out loud. The fallback used
- * to default to `new ReflexMind()` — the forager continent's policy, whatever
- * world the run was in (W1-B1 verifier, backlog 2). A caller now either hands a
- * fallback or names the world whose reflex policy is to be it.
+ * THE WORLD IS NOT OPTIONAL (W1-B3). It was, while the world only decided what
+ * carried a being when the model failed; now it also decides what the prompt
+ * OFFERS (the adapter's action vocabulary) and what the parser will ACCEPT, so
+ * a mind cannot be built without naming the place it lives in. `fallback`
+ * remains an override for a caller that wants a particular policy; absent, the
+ * world's own is used — never, as it once was, the forager continent's
+ * whatever world the run was in (W1-B1 verifier, backlog 2).
  */
-export type LlmMindOptions =
-  | (LlmMindOptionsBase & {
-      /** Permanent fallback when the model errors or returns invalid JSON. */
-      readonly fallback: IMind;
-      readonly world?: never;
-    })
-  | (LlmMindOptionsBase & {
-      /** The world whose reflex policy carries the being when the model fails. */
-      readonly world: WorldAdapter;
-      readonly fallback?: never;
-    });
+export type LlmMindOptions = LlmMindOptionsBase & {
+  readonly world: WorldAdapter;
+  /** Permanent fallback when the model errors or returns invalid JSON. */
+  readonly fallback?: IMind;
+};
 
 /**
  * Consciousness backed by an LLM. Builds the prompt, calls the backend,
@@ -84,6 +81,7 @@ export type LlmMindOptions =
  * sim's fixed-timestep loop from ever awaiting it.
  */
 export class LlmMind {
+  private readonly world: WorldAdapter;
   private readonly fallback: IMind;
   private readonly onCognition: ((record: CognitionRecord) => void) | undefined;
   private readonly onPromptBuilt: ((input: ThinkInput, prompt: ThinkPrompt) => void) | undefined;
@@ -93,7 +91,8 @@ export class LlmMind {
     private readonly backend: IMindBackend,
     options: LlmMindOptions,
   ) {
-    this.fallback = options.fallback ?? new ReflexMind(options.world);
+    this.world = options.world;
+    this.fallback = options.fallback ?? policyFor(options.world);
     this.onCognition = options.onCognition;
     this.onPromptBuilt = options.onPromptBuilt;
     this.now = options.now ?? wallClock;
@@ -104,7 +103,7 @@ export class LlmMind {
   }
 
   async complete(input: ThinkInput): Promise<MindOutput> {
-    const prompt = buildThinkPrompt(input);
+    const prompt = buildThinkPrompt(input, this.world);
     this.onPromptBuilt?.(input, prompt);
     const started = this.now();
 
@@ -130,7 +129,7 @@ export class LlmMind {
         continue;
       }
       try {
-        const output = parseMindOutput(raw);
+        const output = parseMindOutput(raw, this.world);
         attempts.push({ prompt: sent, raw });
         this.log(input, prompt, raw, started, attempts, { valid: true, retried, fellBack: false });
         return output;

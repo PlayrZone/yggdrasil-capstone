@@ -1,4 +1,4 @@
-import { Experiment, TICKS_PER_DAY, TICKS_PER_SEASON, TICKS_PER_YEAR } from '@yggdrasil/engine';
+import { Experiment, TICKS_PER_DAY, TICKS_PER_SEASON, TICKS_PER_YEAR, foragerAdapter } from '@yggdrasil/engine';
 import type { IMindBackend, IntentKind, SimEvent, ThinkInput, ThinkPrompt } from '@yggdrasil/engine';
 import {
   ACT_DANGER,
@@ -196,6 +196,8 @@ export class ProxyMindBackend implements IMindBackend {
   constructor(
     readonly modelId: string,
     private readonly port: HostPort,
+    /** The world the engine composed the prompt from — main checks against it. */
+    private readonly worldId: string,
   ) {}
 
   /**
@@ -208,7 +210,7 @@ export class ProxyMindBackend implements IMindBackend {
     const reqId = ++this.seq;
     return new Promise<string>((resolve, reject) => {
       this.pending.set(reqId, { resolve, reject });
-      this.port.post({ kind: 'llm-request', reqId, prompt, input });
+      this.port.post({ kind: 'llm-request', reqId, prompt, input, worldId: this.worldId });
     });
   }
 
@@ -468,7 +470,10 @@ export class SimHost {
 
   private create(seed: string, population: number, llm: { model: string } | null): void {
     this.dispose();
-    this.backend = llm ? new ProxyMindBackend(llm.model, this.port) : null;
+    // Both lab scenarios — classic and continent — are the forager continent,
+    // so its adapter is the one the engine will compose prompts from. When the
+    // lab offers a second world this must come from that run's own scenario.
+    this.backend = llm ? new ProxyMindBackend(llm.model, this.port, foragerAdapter.id) : null;
     const exp = new Experiment({ seed, agentCount: population, ...(this.backend ? { mindBackend: this.backend } : {}) });
     this.exp = exp;
     this.animalKinds = new KindCodec(); // a new world names its own wildlife

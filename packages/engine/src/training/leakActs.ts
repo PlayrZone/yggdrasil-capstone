@@ -1,7 +1,16 @@
-import type { Intent, IntentKind, MindOutput, ThinkInput } from '../contract/types.js';
+import type { Intent, MindOutput, ThinkInput } from '../contract/types.js';
 import type { KindId } from '../contract/ids.js';
-import type { ObjectKind } from '../worlds/forager/types.js';
+import type { IntentKind, ObjectKind } from '../worlds/forager/types.js';
 import type { LeakDomain, LeakEvidence } from './leakMatch.js';
+
+/**
+ * THIS IS THE FORAGER WORLD'S EVAL PACK, not the engine's (W1-B3, item 8). The
+ * rules below are DATA about one world — its verbs, its stuff, the temptations
+ * a pretrained model feels in it — and they are typed against that world's own
+ * unions on purpose, so a rule naming a verb the continent does not have is a
+ * compile error. A later step moves the whole battery under `worlds/forager/`
+ * with the rest of that world's evaluation material.
+ */
 
 /**
  * TIER 1 of the fidelity gate: a leak in the PLAN.

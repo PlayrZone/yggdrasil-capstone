@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildThinkPrompt, retryPrompt } from '@yggdrasil/engine';
+import { buildThinkPrompt, foragerAdapter, retryPrompt } from '@yggdrasil/engine';
 import type { ThinkInput } from '@yggdrasil/engine';
 import { RateLimiter } from '../src/main/ipcGuards.js';
 import { RETRY_ERROR_MAX, llmComplete, type CompletionBackend } from '../src/main/llmBridge.js';
@@ -50,7 +50,16 @@ function thinkInput(over: Record<string, unknown> = {}): Record<string, unknown>
   };
 }
 
-const promptFor = (input: Record<string, unknown>): { system: string; user: string } => buildThinkPrompt(input as unknown as ThinkInput);
+/**
+ * THE WORLD TRAVELS WITH THE REQUEST (engine W1-B3). A prompt's verb list is the
+ * adapter's, so main cannot rebuild one without being told which world it was
+ * composed for — and the id is renderer-supplied, so an unknown one is refused
+ * rather than defaulted. Both lab scenarios run the forager continent.
+ */
+const WORLD = foragerAdapter.id;
+
+const promptFor = (input: Record<string, unknown>): { system: string; user: string } =>
+  buildThinkPrompt(input as unknown as ThinkInput, foragerAdapter);
 
 const limiter = (): RateLimiter => new RateLimiter(10, 60_000);
 
@@ -59,7 +68,7 @@ describe('llmComplete', () => {
     const backend = fakeBackend();
     const input = thinkInput();
     const prompt = promptFor(input);
-    await expect(llmComplete(limiter(), () => backend, prompt, input)).resolves.toBe('{"intent":{"kind":"Idle"}}');
+    await expect(llmComplete(limiter(), () => backend, prompt, input, WORLD)).resolves.toBe('{"intent":{"kind":"Idle"}}');
     expect(backend.calls).toHaveLength(1);
     expect(backend.calls[0]!.prompt).toEqual(prompt);
     // Two arguments, in the engine's order — not a ThinkInput and a retryError.
@@ -70,7 +79,7 @@ describe('llmComplete', () => {
     const backend = fakeBackend();
     const input = thinkInput();
     const retry = retryPrompt(promptFor(input), 'previous reply was not JSON');
-    await llmComplete(limiter(), () => backend, { ...retry }, input);
+    await llmComplete(limiter(), () => backend, { ...retry }, input, WORLD);
     expect(backend.calls).toHaveLength(1);
     expect(backend.calls[0]!.prompt).toEqual(retry);
   });
@@ -86,21 +95,21 @@ describe('llmComplete', () => {
         return reads++ === 0 ? built.user : 'x'.repeat(1_000_000);
       },
     };
-    await llmComplete(limiter(), () => backend, sneaky, input);
+    await llmComplete(limiter(), () => backend, sneaky, input, WORLD);
     expect(backend.calls[0]!.prompt).toEqual(built);
   });
 
   it('throws NO_LLM_KEY verbatim when no key is configured, and never calls a backend', async () => {
     const input = thinkInput();
-    await expect(llmComplete(limiter(), () => null, promptFor(input), input)).rejects.toThrow(/^NO_LLM_KEY$/);
+    await expect(llmComplete(limiter(), () => null, promptFor(input), input, WORLD)).rejects.toThrow(/^NO_LLM_KEY$/);
   });
 
   it('throws RATE_LIMITED verbatim once the window is spent', async () => {
     const backend = fakeBackend();
     const rate = new RateLimiter(1, 60_000);
     const input = thinkInput();
-    await llmComplete(rate, () => backend, promptFor(input), input);
-    await expect(llmComplete(rate, () => backend, promptFor(input), input)).rejects.toThrow(/^RATE_LIMITED$/);
+    await llmComplete(rate, () => backend, promptFor(input), input, WORLD);
+    await expect(llmComplete(rate, () => backend, promptFor(input), input, WORLD)).rejects.toThrow(/^RATE_LIMITED$/);
     expect(backend.calls).toHaveLength(1);
   });
 
@@ -110,7 +119,7 @@ describe('llmComplete', () => {
     ['an exotic prompt', () => new Date(), thinkInput()],
   ])('refuses %s as BAD_THINK_PROMPT, with no paid call', async (_name, prompt, input) => {
     const backend = fakeBackend();
-    await expect(llmComplete(limiter(), () => backend, prompt(), input)).rejects.toThrow(/^BAD_THINK_PROMPT: /);
+    await expect(llmComplete(limiter(), () => backend, prompt(), input, WORLD)).rejects.toThrow(/^BAD_THINK_PROMPT: /);
     expect(backend.calls).toHaveLength(0);
   });
 
@@ -119,7 +128,7 @@ describe('llmComplete', () => {
     ['an exotic input', thinkInput({ junk: new Uint8Array(1024) })],
   ])('refuses %s as BAD_THINK_INPUT, with no paid call', async (_name, input) => {
     const backend = fakeBackend();
-    await expect(llmComplete(limiter(), () => backend, promptFor(thinkInput()), input)).rejects.toThrow(/^BAD_THINK_INPUT: /);
+    await expect(llmComplete(limiter(), () => backend, promptFor(thinkInput()), input, WORLD)).rejects.toThrow(/^BAD_THINK_INPUT: /);
     expect(backend.calls).toHaveLength(0);
   });
 
@@ -130,17 +139,48 @@ describe('llmComplete', () => {
    */
   it('rejects the legacy (input, retryError) call shape rather than forwarding it', async () => {
     const backend = fakeBackend();
-    await expect(llmComplete(limiter(), () => backend, thinkInput(), 'previous reply was not JSON')).rejects.toThrow(/^BAD_THINK_PROMPT: /);
+    await expect(llmComplete(limiter(), () => backend, thinkInput(), 'previous reply was not JSON', WORLD)).rejects.toThrow(/^BAD_THINK_PROMPT: /);
     expect(backend.calls).toHaveLength(0);
+  });
+
+  /**
+   * A world id main does not have is a WIRING fault — a renderer from another
+   * build, or a second world that never got its line in the registry — and it
+   * must not fall back to "whatever world we have", because that would let a
+   * compromised renderer pick the world whose prompt matches the text it wants
+   * billed. It is refused before the key is ever asked for.
+   */
+  it.each([
+    ['a world this build does not have', 'town-of-strangers'],
+    ['no world at all', undefined],
+    ['a world id that is not a string', { id: 'forager-continent' }],
+  ])('refuses %s as BAD_THINK_PROMPT: unknown world, with no paid call', async (_name, worldId) => {
+    const backend = fakeBackend();
+    const input = thinkInput();
+    await expect(llmComplete(limiter(), () => backend, promptFor(input), input, worldId)).rejects.toThrow(
+      'BAD_THINK_PROMPT: unknown world',
+    );
+    expect(backend.calls).toHaveLength(0);
+  });
+
+  it('passes the matching world, and bills exactly the prompt that world builds', async () => {
+    const backend = fakeBackend();
+    const input = thinkInput();
+    const prompt = promptFor(input);
+    await expect(llmComplete(limiter(), () => backend, prompt, input, WORLD)).resolves.toBe('{"intent":{"kind":"Idle"}}');
+    expect(backend.calls).toHaveLength(1);
+    expect(backend.calls[0]!.prompt).toEqual(prompt);
+    // The verb list in the billed prompt is this world's own, not a constant.
+    expect(prompt.system).toContain(foragerAdapter.actions.map((a) => a.id).join(', '));
   });
 
   it('spends a token even on a refusal, so junk cannot be flooded through the validator', async () => {
     const backend = fakeBackend();
     const rate = new RateLimiter(2, 60_000);
     const input = thinkInput();
-    await expect(llmComplete(rate, () => backend, 'junk', input)).rejects.toThrow(/^BAD_THINK_PROMPT: /);
-    await expect(llmComplete(rate, () => backend, 'junk', input)).rejects.toThrow(/^BAD_THINK_PROMPT: /);
-    await expect(llmComplete(rate, () => backend, promptFor(input), input)).rejects.toThrow(/^RATE_LIMITED$/);
+    await expect(llmComplete(rate, () => backend, 'junk', input, WORLD)).rejects.toThrow(/^BAD_THINK_PROMPT: /);
+    await expect(llmComplete(rate, () => backend, 'junk', input, WORLD)).rejects.toThrow(/^BAD_THINK_PROMPT: /);
+    await expect(llmComplete(rate, () => backend, promptFor(input), input, WORLD)).rejects.toThrow(/^RATE_LIMITED$/);
     expect(backend.calls).toHaveLength(0);
   });
 });
@@ -151,9 +191,9 @@ describe('llmComplete', () => {
  * engine would have built from the input travelling with it.
  */
 describe('llmComplete binds the billed prompt to the input', () => {
-  const refuses = async (prompt: unknown, input: unknown): Promise<void> => {
+  const refuses = async (prompt: unknown, input: unknown, worldId: unknown = WORLD): Promise<void> => {
     const backend = fakeBackend();
-    await expect(llmComplete(limiter(), () => backend, prompt, input)).rejects.toThrow('BAD_THINK_PROMPT: prompt does not match input');
+    await expect(llmComplete(limiter(), () => backend, prompt, input, worldId)).rejects.toThrow('BAD_THINK_PROMPT: prompt does not match input');
     expect(backend.calls).toHaveLength(0);
   };
 
@@ -222,7 +262,7 @@ describe('llmComplete binds the billed prompt to the input', () => {
     const backend = fakeBackend();
     const input = thinkInput();
     const built = promptFor(input);
-    await llmComplete(limiter(), () => backend, { ...retryPrompt(built, 'x'.repeat(RETRY_ERROR_MAX)) }, input);
+    await llmComplete(limiter(), () => backend, { ...retryPrompt(built, 'x'.repeat(RETRY_ERROR_MAX)) }, input, WORLD);
     expect(backend.calls).toHaveLength(1);
     // Measured in UTF-8 bytes: an astral reason is 4 bytes a character.
     await refuses({ ...retryPrompt(built, '🌍'.repeat(RETRY_ERROR_MAX / 4 + 1)) }, input);

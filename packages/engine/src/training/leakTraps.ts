@@ -27,6 +27,12 @@ import {
 import type { LeakDomain } from './leakMatch.js';
 
 /**
+ * THE FORAGER CONTINENT'S EVAL PACK (W1-B3, item 8). The traps below are DATA
+ * about one world — its seasons, its stuff, the beliefs a pretrained model
+ * helps itself to there — so they are typed against that world's own unions and
+ * scored against that world's adapter (`fidelity.ts`). Nothing here is engine
+ * mechanism; a later step moves the whole battery under `worlds/forager/`.
+ *
  * The knowledge-fidelity battery: 24 probes across 8 domains, each with a
  * matched control — GENERATED, not hand-written, because round 1's hand-written
  * pair was trivially separable and three policies with zero comprehension

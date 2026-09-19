@@ -6,13 +6,18 @@ import {
   MindOutputError,
   MockMindBackend,
   ReflexMind,
-  buildThinkPrompt,
+  buildThinkPrompt as buildThinkPromptIn,
   foragerAdapter,
-  parseMindOutput,
+  parseMindOutput as parseMindOutputIn,
 } from '../src/index.js';
-import type { CognitionRecord, KnowledgeRecord, MindOutput, ThinkInput } from '../src/index.js';
+import type { CognitionRecord, KnowledgeRecord, MindOutput, ThinkInput, ThinkPrompt } from '../src/index.js';
 import { ruleKey, renderStatement } from '../src/index.js';
 import { CTX } from './helpers.js';
+
+// W1-B3 wiring: the prompt's verbs and the parser's vocabularies come from the
+// world now, and these cases were always about the forager continent.
+const buildThinkPrompt = (i: ThinkInput): ThinkPrompt => buildThinkPromptIn(i, foragerAdapter);
+const parseMindOutput = (raw: string): MindOutput => parseMindOutputIn(raw, foragerAdapter);
 
 function input(overrides: Partial<ThinkInput['snapshot']> = {}, knowledge: KnowledgeRecord[] = []): ThinkInput {
   return {
@@ -143,7 +148,7 @@ describe('LlmMind', () => {
   it('retries once then falls back to reflex on persistent bad output', async () => {
     const log: CognitionRecord[] = [];
     const backend = new MockMindBackend({ world: foragerAdapter, failTimes: 5 }); // always junk
-    const mind = new LlmMind(backend, { fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
+    const mind = new LlmMind(backend, { world: foragerAdapter, fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
     const out = await mind.complete(input());
     expect(out).toBeDefined(); // reflex carried it
     expect(log[0]!.valid).toBe(false);

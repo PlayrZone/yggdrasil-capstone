@@ -7,12 +7,14 @@
  * this world's, and only this world's.
  *
  * WHO MAY STILL READ THEM: the body and the world systems (they enforce
- * physics, and physics is world-specific), `ReflexMind` (this world's
- * hand-written survival policy — B3 moves the file here), `consciousness/
- * prompt.ts` + `schema.ts` (B3/B5), `training/**`, `record/**` and the
- * instrument (B6). No file under `agent/ memory/ learning/ knowledge/
- * relationships/ narrative/` may name any of them, and
- * `test/world-tables-out.test.ts` fails the build if one starts to.
+ * physics, and physics is world-specific), this world's own files —
+ * `reflexPolicy.ts`, `actions.ts`, `kinds.ts`, `define.ts` — `training/**`
+ * (the forager eval pack), `record/**` and the instrument (B6). B3 took
+ * `consciousness/schema.ts` off this list; `prompt.ts` is B5's, and reads none
+ * of these types, only this world's prose. No file under `agent/ memory/
+ * learning/ knowledge/ relationships/ narrative/ consciousness/` may name any
+ * of them, and `test/world-tables-out.test.ts` fails the build if one starts
+ * to.
  *
  * NOTHING HERE CHANGED IN THE MOVE. Same members, same order, same values.
  */
@@ -105,6 +107,39 @@ export type ResourceNodeKind =
   | 'game'; // a wild animal — moves; hunting (gathering) it yields meat
 
 export type BuildKind = 'shelter' | 'wall' | 'container';
+
+/** Every kind of thing this continent contains — stuff, and the sources it is
+ *  won from. The adapter's `kinds` declares exactly these, in this order. */
+export type ForagerKind = ObjectKind | ResourceNodeKind;
+
+// ─── Verbs ───────────────────────────────────────────────────────────────────
+
+/**
+ * What a being can decide to do HERE. Moved out of `contract/types.ts` by
+ * W1-B3: the mind carries `ActionId`, the adapter binds each of these to a core
+ * verb, and the BODY keeps its exhaustive switch over this union because it
+ * enforces this world's physics and physics is world-specific.
+ *
+ * NOTHING CHANGED IN THE MOVE: same members, same order, same spelling — and
+ * the order is load bearing, because a prompt lists the vocabulary in it.
+ */
+export type IntentKind =
+  | 'MoveTo'
+  | 'Gather'
+  | 'Dig'
+  | 'Eat'
+  | 'Drink'
+  | 'Sleep'
+  | 'Build'
+  | 'Deposit'
+  | 'Withdraw'
+  | 'Give'
+  | 'Attack'
+  | 'Craft' // try to combine the materials you hold into something new
+  | 'Speak'
+  | 'Follow'
+  | 'Flee'
+  | 'Idle';
 
 /**
  * Context features captured AT THE MOMENT a memory forms — the learning

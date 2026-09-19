@@ -19,6 +19,7 @@ import { LlmMind } from '../consciousness/LlmMind.js';
 import { RuleIntern } from '../knowledge/KnowledgeStore.js';
 import type { CognitionRecorder } from '../record/CognitionRecorder.js';
 import { ScaffoldLedger } from '../record/ScaffoldLedger.js';
+import { actionForCore } from '../contract/actions.js';
 import { traitCurveValue } from '../contract/adapter.js';
 import type { CognitionDefaults, WorldAdapter } from '../contract/adapter.js';
 import type { Intent, MindOutput, SimEvent, Traits } from '../contract/types.js';
@@ -111,11 +112,18 @@ export class SimRuntime implements RuntimeView, SocietyHost {
   private readonly recorder: CognitionRecorder | null;
   /** Set by `endRecording`: the run is closed and nothing more may act. */
   private recordingEnded = false;
+  /**
+   * The act this world uses to carry something SAID. A decision's utterances
+   * become plan steps, and which step that is is the world's to say, not the
+   * runner's — a world with no speech in it simply carries none.
+   */
+  private readonly speakAction: string | undefined;
 
   constructor(options: ExperimentOptions, scenario: Scenario) {
     const { seed, agentCount = 100, mindBackend } = options;
     this.seed = seed;
     this.adapter = scenario.adapter;
+    this.speakAction = actionForCore(this.adapter, 'Say')?.id;
     this.geography = scenario.geography;
     this.scale = scenario.scale;
     this.flags = runFlagsFrom(options);
@@ -289,16 +297,20 @@ export class SimRuntime implements RuntimeView, SocietyHost {
   private applyPlan(agentId: number, output: MindOutput): Intent[] | null {
     const body = this.agentBody(agentId);
     if (!body) return null;
-    const plan: Intent[] = [
-      ...output.utterances.map((utterance) => ({ kind: 'Speak' as const, utterance })),
+    const speak = this.speakAction;
+    const composed: Intent[] = [
+      ...(speak === undefined ? [] : output.utterances.map((utterance) => ({ kind: speak, utterance }))),
       ...output.plan,
     ];
-    // THE OUTBOUND EDGE, named in one place. A plan leaves a mind carrying
-    // opaque kind ids; the body executes this world's own narrow kinds and
-    // validates every intent against physics regardless. Nothing checks the
-    // crossing yet — B3 binds a plan's actions through the adapter and this
-    // cast becomes a real gate — so it is one documented narrowing here rather
-    // than a body that has to widen to meet it.
+    // THE OUTBOUND EDGE, named in one place (W1-B3). A plan leaves a mind
+    // carrying opaque ids; the body executes this world's own narrow kinds. The
+    // adapter is what says the two agree, so every step is held to it here —
+    // an action this world does not declare, an argument it cannot take, a kind
+    // it has never heard of — and a step that fails is dropped and counted on
+    // the being's own gate. The rest of the plan is handed over exactly as
+    // before, and the body still validates each step against physics.
+    const gate = this.minds.get(agentId)?.gate;
+    const plan = gate ? composed.filter((intent) => gate.admitIntent(this.adapter, intent)) : composed;
     this.body.setPlan(body, plan as BodyIntent[]);
     return plan;
   }

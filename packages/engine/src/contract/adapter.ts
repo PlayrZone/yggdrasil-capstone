@@ -1,5 +1,6 @@
-import type { ContextFeatureId, ContextRecord, DriveId, EventId } from './ids.js';
-import type { RelationshipRecord, Traits } from './types.js';
+import type { ActionBinding, KindSchema } from './actions.js';
+import type { ActionId, ContextFeatureId, ContextRecord, DriveId, EventId, KindId } from './ids.js';
+import type { MindOutput, RelationshipRecord, ThinkInput, Traits } from './types.js';
 
 /**
  * THE SEAM (docs/rework/W1-B-worldadapter.md). One object of DATA, supplied by
@@ -35,11 +36,30 @@ export interface DriveSchema {
   /**
    * Pressure at or above which this world's reflex policy acts on the drive.
    * Distinct from `pressingAt` on purpose — a policy may be hungrier than the
-   * world's own notion of pressing. Moves onto `reflexPolicy` at B3, when
-   * `ReflexMind` becomes the forager world's policy.
+   * world's own notion of pressing. It stays on the drive rather than moving
+   * onto `reflexPolicy` with the policy itself (B3): the scan ORDER is the
+   * drive table's, and splitting the threshold from the order it is read in
+   * would put one half of a tie-break in each file.
    */
   readonly actsAt: number;
 }
+
+/**
+ * A WORLD'S HAND-WRITTEN SURVIVAL INSTINCT (principle 3 of the W1-B brief).
+ * Structurally an `IMind`, declared here so that the mind can be handed one
+ * without importing a world's module: a world supplies the factory, the mind
+ * calls it, and W1-D replaces every one of these with drive arbitration over
+ * LEARNED affordances.
+ *
+ * Optional, and a world without one is legal — its beings then wait (the
+ * action bound to `Wait`) between slow thoughts rather than borrowing another
+ * world's instincts.
+ */
+export interface ReflexPolicy {
+  think(input: ThinkInput): MindOutput;
+}
+
+export type ReflexPolicyFactory = (world: WorldAdapter) => ReflexPolicy;
 
 export interface ContextSchema {
   readonly id: ContextFeatureId;
@@ -192,30 +212,34 @@ export interface WorldAdapter {
   readonly events: readonly EventSchema[];
   /** The same schemas, by id. Built by `defineWorld`, so it cannot disagree. */
   readonly eventById: ReadonlyMap<EventId, EventSchema>;
+  /** This world's verbs, each bound to a core verb. Order is the order a
+   *  prompt lists them in, so it is part of what a model was shown. */
+  readonly actions: readonly ActionBinding[];
+  readonly actionById: ReadonlyMap<ActionId, ActionBinding>;
+  /** The kinds of thing that exist here, and what each affords. Order decides
+   *  the order a closed-vocabulary refusal lists them in. */
+  readonly kinds: readonly KindSchema[];
+  readonly kindById: ReadonlyMap<KindId, KindSchema>;
   readonly time: TimeOps;
   readonly cognitionDefaults: CognitionDefaults;
+  /** The world's own survival instinct, until W1-D. Absent is legal. */
+  readonly reflexPolicy?: ReflexPolicyFactory;
 
   /**
    * DECLARED, NOT YET BUILT. Each is typed `unknown` on purpose: giving them a
    * shape now would pre-empt the step that owns them, and `unknown` cannot be
    * read by accident. See docs/rework/W1-B-worldadapter.md for each step.
    */
-  /** B3 — this world's verbs, bound to the closed core action vocabulary. */
-  readonly actions?: unknown;
-  /** B3 — the kinds of thing that exist, and what they afford. */
-  readonly kinds?: unknown;
   /** B4 — distance, direction and place refs, replacing every x/y in the mind. */
   readonly space?: unknown;
   /** B5 — every word a being could say or read. */
   readonly lexicon?: unknown;
-  /** B3 — the world's hand-written survival policy, until W1-D replaces it. */
-  readonly reflexPolicy?: unknown;
   /** B6 — declared regularities. INSTRUMENT ONLY; no mind may read it. */
   readonly mechanics?: unknown;
 }
 
 /** A world as its author writes it; `defineWorld` derives the rest. */
-export type WorldSpec = Omit<WorldAdapter, 'eventById'>;
+export type WorldSpec = Omit<WorldAdapter, 'eventById' | 'actionById' | 'kindById'>;
 
 /**
  * Seal a world. The result is deeply frozen, so a mind cannot write back into
@@ -224,9 +248,18 @@ export type WorldSpec = Omit<WorldAdapter, 'eventById'>;
  */
 export function defineWorld(spec: WorldSpec): WorldAdapter {
   deepFreeze(spec);
-  const index = new Map<EventId, EventSchema>();
-  for (const event of spec.events) index.set(event.id, event);
-  return Object.freeze({ ...spec, eventById: new SealedMap(index) });
+  return Object.freeze({
+    ...spec,
+    eventById: indexById(spec.events),
+    actionById: indexById(spec.actions),
+    kindById: indexById(spec.kinds),
+  });
+}
+
+function indexById<T extends { readonly id: string }>(rows: readonly T[]): ReadonlyMap<string, T> {
+  const index = new Map<string, T>();
+  for (const row of rows) index.set(row.id, row);
+  return new SealedMap(index);
 }
 
 function deepFreeze(value: unknown): void {
@@ -273,13 +306,13 @@ class SealedMap<K, V> implements ReadonlyMap<K, V> {
   }
 
   set(): never {
-    throw new TypeError('a world is read-only: its event table cannot be written to');
+    throw new TypeError('a world is read-only: its tables cannot be written to');
   }
   delete(): never {
-    throw new TypeError('a world is read-only: its event table cannot be written to');
+    throw new TypeError('a world is read-only: its tables cannot be written to');
   }
   clear(): never {
-    throw new TypeError('a world is read-only: its event table cannot be written to');
+    throw new TypeError('a world is read-only: its tables cannot be written to');
   }
 }
 

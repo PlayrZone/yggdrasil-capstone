@@ -14,17 +14,19 @@
  * `rule?: unknown` and keeps its own `Intent` around it, with this world's
  * narrow kinds where the mind's carries opaque ids.
  *
+ * W1-B3: `IntentKind` is one of those narrow kinds now. The mind's `Intent.kind`
+ * is an `ActionId` the adapter declared; the Body's stays the closed union,
+ * because it dispatches exhaustively over this world's physics.
+ *
  * Doctrine (yggdrasil_civilization_design V2): nothing here may ever gain
  * a role/job/class/faction/rank field, and the Body only describes
  * physical reality — no social meaning, no knowledge.
  */
 
-import type { IntentKind } from '../contract/types.js';
-import type { BuildKind, ObjectKind } from '../worlds/forager/types.js';
+import type { BuildKind, IntentKind, ObjectKind } from '../worlds/forager/types.js';
 
 export type {
   Traits,
-  IntentKind,
   SimEvent,
   AgentSnapshot,
   ObservedAgent,
@@ -38,6 +40,7 @@ export type {
   ObjectKind,
   ResourceNodeKind,
   BuildKind,
+  IntentKind,
   ContextFeatures,
   SimEventType,
   Season,

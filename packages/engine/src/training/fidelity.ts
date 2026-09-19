@@ -10,6 +10,11 @@ import type { LeakDomain, LeakEvidence } from './leakMatch.js';
 import { LEAK_DOMAINS, detectLeak, detectLexicalLeaks, suppliedNames, suppliedVocabulary } from './leakMatch.js';
 import { leakTrapBattery } from './leakTraps.js';
 import type { LeakTrap } from './leakTraps.js';
+// The battery's probes, traps and act rules are the FORAGER CONTINENT's
+// evaluation data (W1-B3, item 8), so the prompt a probe is rendered into and
+// the vocabulary its reply is read against are that world's too. A later step
+// moves the whole eval pack under `worlds/forager/`.
+import { foragerAdapter } from '../worlds/forager/adapter.js';
 
 /**
  * Gate 2: KNOWLEDGE FIDELITY. The mind must reason ONLY from what it was given.
@@ -169,12 +174,12 @@ export async function evalKnowledgeFidelity(
 
   for (const probe of battery) {
     const score = domainScore(perDomain, probe.domain);
-    const prompt = buildThinkPrompt(probe.input);
+    const prompt = buildThinkPrompt(probe.input, foragerAdapter);
     let output: MindOutput | null = null;
     let raw = '';
     try {
       raw = await backend.complete(prompt, probe.input);
-      output = parseMindOutputDetailed(raw).output;
+      output = parseMindOutputDetailed(raw, foragerAdapter).output;
     } catch (err) {
       if (!(err instanceof MindOutputError)) throw err; // transport errors surface
       unparsed++;

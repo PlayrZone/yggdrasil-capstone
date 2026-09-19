@@ -184,11 +184,15 @@ app.whenReady().then(() => {
   });
 
   // LLM consciousness bridge — the renderer's minds reason through here so the
-  // Fireworks key stays in main. Both halves cross: the prompt the engine
-  // composed (retry feedback already inside `prompt.user`) and the situation it
-  // was composed from. Both are renderer-controlled and the endpoint is billed,
-  // so llmBridge validates and rate-limits before anything costs money.
-  ipcMain.handle('llm:complete', (_e, prompt: unknown, input: unknown) => llmComplete(llmRate, getBackend, prompt, input));
+  // Fireworks key stays in main. Three things cross: the prompt the engine
+  // composed (retry feedback already inside `prompt.user`), the situation it
+  // was composed from, and the WORLD it was composed for — main rebuilds the
+  // prompt to bind it to the situation, and a prompt's verb list is the
+  // world's. All three are renderer-controlled and the endpoint is billed, so
+  // llmBridge validates and rate-limits before anything costs money.
+  ipcMain.handle('llm:complete', (_e, prompt: unknown, input: unknown, worldId: unknown) =>
+    llmComplete(llmRate, getBackend, prompt, input, worldId),
+  );
   ipcMain.handle('llm:status', () => llmStatus());
   // Reports the rejection instead of throwing, so a mistyped key cannot leave
   // the renderer with an unhandled rejection.

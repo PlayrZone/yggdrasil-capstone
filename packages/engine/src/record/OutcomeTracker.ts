@@ -1,13 +1,12 @@
 import type {
   Goal,
   Intent,
-  IntentKind,
   KnowledgeStatus,
   SimEvent,
   Utterance,
 } from '../contract/types.js';
-import type { EventId } from '../contract/ids.js';
-import type { Needs, SimEventType } from '../worlds/forager/types.js';
+import type { ActionId, EventId } from '../contract/ids.js';
+import type { IntentKind, Needs, SimEventType } from '../worlds/forager/types.js';
 import { ruleKey } from '../learning/ruleKey.js';
 import { snapshotJson } from './serialize.js';
 import type {
@@ -26,10 +25,12 @@ import { COGNITION_SCHEMA_VERSION } from './types.js';
  * could have caused it — so an exposure or a sickness that lands mid-plan is
  * never credited to a MoveTo.
  */
-// The read type is widened to opaque ids (an event's type is a `EventId` now);
-// the literal is still checked against this world's own vocabulary, so a typo
-// in it is still a compile error.
-const INTENT_YIELDS: Partial<Record<IntentKind, readonly EventId[]>> = {
+// The read type is widened to opaque ids (an act's name is an `ActionId` and an
+// event's type an `EventId` now); both literals are still checked against this
+// world's own vocabulary by the `satisfies` below, so a typo in either is still
+// a compile error. This table is the forager world's — B6 moves the recorder's
+// world-specific parts out with the rest of the instrument.
+const INTENT_YIELDS: Partial<Record<ActionId, readonly EventId[]>> = {
   Gather: ['GatherSucceeded', 'GatherFailed'],
   Dig: ['GatherSucceeded'],
   Eat: ['AteFood', 'BecameSick'],

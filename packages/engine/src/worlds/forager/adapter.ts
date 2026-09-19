@@ -1,5 +1,8 @@
-import { defineWorld } from '../../contract/adapter.js';
 import type { WorldAdapter } from '../../contract/adapter.js';
+import { defineForagerWorld } from './define.js';
+import { FORAGER_ACTIONS } from './actions.js';
+import { FORAGER_KINDS } from './kinds.js';
+import { foragerReflexPolicy } from './reflexPolicy.js';
 import { NEED_CRITICAL, NEED_PRESSING } from './types.js';
 import { seasonAt } from '../../body/index.js';
 
@@ -19,9 +22,22 @@ import { seasonAt } from '../../body/index.js';
  *  - `SawAgent` and `FoundResource` are never emitted by any system, yet carry
  *    salience. Kept for the same reason.
  */
-export const foragerAdapter: WorldAdapter = defineWorld({
+export const foragerAdapter: WorldAdapter = defineForagerWorld({
   id: 'forager-continent',
   version: '1',
+
+  // contract/types.ts IntentKind, with the argument shapes YggdrasilSystem's
+  // switch reads. See actions.ts — order is the prompt's vocabulary order.
+  actions: FORAGER_ACTIONS,
+
+  // ObjectKind + ResourceNodeKind, tagged from the sets the engine already
+  // keeps (NUTRITIOUS_FOODS, CRAFT_RECIPES, BuildKind, the reflex policy's own
+  // EDIBLE / DIGGABLE / FOOD_NODES). See kinds.ts.
+  kinds: FORAGER_KINDS,
+
+  // consciousness/ReflexMind.ts, moved to reflexPolicy.ts verbatim. Principle 3
+  // of the brief: this is not a mind, it is this world's survival instinct.
+  reflexPolicy: foragerReflexPolicy,
 
   // contract/types.ts NEED_PRESSING/NEED_CRITICAL (shared with the body and the
   // prompt, so referenced rather than copied) + ReflexMind's NEED_THRESHOLD.

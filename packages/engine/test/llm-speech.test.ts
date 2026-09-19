@@ -195,7 +195,7 @@ describe('LLM speech resolution', () => {
 
   it('shows the references it asks for in the prompt', () => {
     const speaker = speakerMind();
-    const prompt = buildThinkPrompt(thinkInput(speaker));
+    const prompt = buildThinkPrompt(thinkInput(speaker), foragerAdapter);
     expect(prompt.user).toContain('[1]'); // the knowledge id a ruleRef names
     expect(prompt.user).toContain(`(ref ${STORY_REF})`);
     expect(prompt.system).toContain('"ruleRef"');
@@ -204,7 +204,7 @@ describe('LLM speech resolution', () => {
 
   it('never shows a mind a narrative id — no analysis label, no "seeded" tell', () => {
     const speaker = speakerMind();
-    const prompt = buildThinkPrompt(thinkInput(speaker));
+    const prompt = buildThinkPrompt(thinkInput(speaker), foragerAdapter);
     const whole = `${prompt.system}\n${prompt.user}`;
     expect(whole).not.toContain('seed:'); // a seeded myth must not read as seeded
     for (const n of speaker.narratives.all()) {

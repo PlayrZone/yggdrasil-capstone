@@ -138,7 +138,6 @@ export { OutcomeTracker } from './record/OutcomeTracker.js';
 
 export type {
   Traits,
-  IntentKind,
   Intent,
   SpeechAct,
   Utterance,
@@ -163,6 +162,7 @@ export type {
 
 // ── The WorldAdapter seam (W1-B) — one brain, any world ──────────────────────
 export type {
+  ActionId,
   EventId,
   DriveId,
   ContextFeatureId,
@@ -187,8 +187,28 @@ export type {
   TimeOps,
   TraitCurve,
   CognitionDefaults,
+  ReflexPolicy,
+  ReflexPolicyFactory,
 } from './contract/adapter.js';
 export { defineWorld, featureActive, traitCurveValue, emptyContext, heardEvent } from './contract/adapter.js';
+export type {
+  CoreVerb,
+  AffordanceTag,
+  KindSchema,
+  ParamType,
+  ParamSchema,
+  ActionBinding,
+  IntentRefusal,
+} from './contract/actions.js';
+export {
+  PARAM_TYPE_ORDER,
+  actionVocabulary,
+  actionForCore,
+  kindsWithTag,
+  kindsFor,
+  planArguments,
+  checkIntent,
+} from './contract/actions.js';
 export { WorldGate } from './contract/gate.js';
 export type { WorldGateCounts } from './contract/gate.js';
 
@@ -199,6 +219,8 @@ export type {
   ObjectKind,
   ResourceNodeKind,
   BuildKind,
+  ForagerKind,
+  IntentKind,
   ContextFeatures,
   ContextFeatureKey,
   SimEventType,
@@ -206,6 +228,10 @@ export type {
 } from './worlds/forager/types.js';
 export { NEED_PRESSING, NEED_CRITICAL } from './worlds/forager/types.js';
 export { foragerAdapter } from './worlds/forager/adapter.js';
+export { FORAGER_ACTIONS } from './worlds/forager/actions.js';
+export { FORAGER_KINDS } from './worlds/forager/kinds.js';
+export { defineForagerWorld } from './worlds/forager/define.js';
+export type { ForagerWorldSpec } from './worlds/forager/define.js';
 
 export type { MaterialProps, MaterialTier } from './world/materials.js';
 export { MATERIAL_PROPERTIES, isEdible, isPoisonous } from './world/materials.js';
@@ -232,7 +258,8 @@ export { RelationshipStore } from './relationships/RelationshipStore.js';
 
 export type { IMind } from './consciousness/IMind.js';
 export type { IMindBackend } from './consciousness/IMindBackend.js';
-export { ReflexMind } from './consciousness/ReflexMind.js';
+export { WaitingMind, policyFor } from './consciousness/policy.js';
+export { ReflexMind, foragerReflexPolicy } from './worlds/forager/reflexPolicy.js';
 export { LlmMind } from './consciousness/LlmMind.js';
 export type { CognitionRecord, CognitionAttempt, LlmMindOptions } from './consciousness/LlmMind.js';
 export { FireworksMindBackend } from './consciousness/FireworksMindBackend.js';

@@ -132,6 +132,8 @@ describe('a world is sealed when it is defined', () => {
       drives: [{ id: 'hunger', pressingAt: 1, criticalAt: 2, actsAt: 0 }],
       context: [],
       events: [{ id: 'AteFood', salience: 0.5 }],
+      actions: [{ id: 'Chew', core: 'Use', params: [{ id: 'objectKind', type: 'kind' }] }],
+      kinds: [{ id: 'pebble', tags: ['object'] }],
       time: { ticksPerDay: 1, ticksPerSeason: 1, ticksPerYear: 1, adultAge: 1, seasonAt: () => 'one' },
       cognitionDefaults: {
         thinkInterval: { base: 1, scale: 1, weights: [] },
@@ -143,5 +145,14 @@ describe('a world is sealed when it is defined', () => {
     expect(() => {
       (world.events[0] as { salience: number }).salience = 9;
     }).toThrow();
+    // Actions and kinds are sealed the same way, and indexed the same way.
+    expect(Object.isFrozen(world.actions[0]!.params[0])).toBe(true);
+    expect(() => {
+      (world.kinds[0] as { id: string }).id = 'boulder';
+    }).toThrow();
+    expect(world.actionById.get('Chew')).toBe(world.actions[0]);
+    expect(world.kindById.get('pebble')).toBe(world.kinds[0]);
+    expect(() => (world.actionById as Map<string, unknown>).set('Hex', {})).toThrow(TypeError);
+    expect(() => (world.kindById as Map<string, unknown>).clear()).toThrow(TypeError);
   });
 });

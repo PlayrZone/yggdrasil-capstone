@@ -1,6 +1,7 @@
+import { actionVocabulary } from '../contract/actions.js';
+import type { WorldAdapter } from '../contract/adapter.js';
+import type { DriveLevels } from '../contract/ids.js';
 import type { KnowledgeRecord, ThinkInput } from '../contract/types.js';
-import type { Needs } from '../worlds/forager/types.js';
-import { NEED_CRITICAL, NEED_PRESSING } from '../worlds/forager/types.js';
 import { narrativeRefOf } from '../narrative/NarrativeStore.js';
 
 /**
@@ -18,9 +19,6 @@ export interface ThinkPrompt {
   user: string;
 }
 
-const INTENT_VOCAB =
-  'MoveTo, Gather, Dig, Eat, Drink, Sleep, Build, Deposit, Withdraw, Give, Attack, Craft, Speak, Follow, Flee, Idle';
-
 /**
  * The prompt for a RETRY — the base prompt plus the reason the last reply was
  * rejected. It lives here, not in a backend, because a record must be able to
@@ -36,13 +34,24 @@ export function retryPrompt(base: ThinkPrompt, retryError: string | undefined): 
   };
 }
 
-export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
+/**
+ * `world` says what can be DONE here: the verb list below is the adapter's own
+ * `actions`, in its own order, so a second world offers its own verbs and this
+ * file holds none (W1-B3). What remains of this world in here is PROSE — the
+ * needs paragraph, the argument shapes, "it is night" — and that is B5's, which
+ * renders it from the lexicon. Both steps are byte-for-byte: `record.test.ts`
+ * replays stored inputs through this function and compares the bytes.
+ */
+export function buildThinkPrompt(input: ThinkInput, world: WorldAdapter): ThinkPrompt {
   const { snapshot, knowledge, recalledMemories, worldView, goals, trigger } = input;
   const t = snapshot.traits;
-  // A snapshot carries one pressure per drive the WORLD declares; this prompt
-  // still names the forager continent's four. B5 renders needs (and every
-  // other world noun here) from the adapter, and this narrowing goes with it.
-  const needs = snapshot.needs as Needs;
+  const needs = snapshot.needs;
+  const intentVocab = actionVocabulary(world);
+  // The header quotes one pair of thresholds for all four drives, which is what
+  // this world's four share. B5 renders the paragraph per drive from the
+  // lexicon; until then the first drive's numbers are the ones it always was.
+  const pressing = world.drives[0]?.pressingAt ?? 0;
+  const critical = world.drives[0]?.criticalAt ?? 0;
 
   const unnamed = !snapshot.name || snapshot.name.length === 0;
   const system = [
@@ -69,7 +78,7 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
     ` "utterances":[{"targetId":number|null,"speechAct":"share-knowledge"|"share-episode"|"inform"|"request","text"?:string,"ruleRef"?:number,"narrativeRef"?:string}]}`,
     `"thought" is a short first-person sentence: what you are thinking and WHY you choose this —`,
     `including what you make of any story or person that matters to you now. Speak as yourself.`,
-    `INTENT kind is one of: ${INTENT_VOCAB}.`,
+    `INTENT kind is one of: ${intentVocab}.`,
     `Intent args: MoveTo{x,y|targetId}, Gather{targetId}, Eat{objectKind}, Build{buildKind,x,y},`,
     `Dig{} (dig the ground where you stand), Give{targetId,objectKind}, Deposit{objectKind,targetId?}, Sleep{durationTicks}, Idle{durationTicks},`,
     `Craft{} (try combining the raw materials you carry — whether anything useful results, and what, is for you to DISCOVER through trying),`,
@@ -84,8 +93,8 @@ export function buildThinkPrompt(input: ThinkInput): ThinkPrompt {
   const user = [
     `Why you are thinking now: ${trigger}.`,
     ``,
-    `NEEDS (0 satisfied, 100 desperate — ${NEED_PRESSING}+ pressing, ${NEED_CRITICAL}+ critical):`,
-    `  hunger ${fmt(needs.hunger)}, rest ${fmt(needs.rest)}, safety ${fmt(needs.safety)}, social ${fmt(needs.socialConnection)}`,
+    `NEEDS (0 satisfied, 100 desperate — ${pressing}+ pressing, ${critical}+ critical):`,
+    `  hunger ${fmt(pressure(needs, 'hunger'))}, rest ${fmt(pressure(needs, 'rest'))}, safety ${fmt(pressure(needs, 'safety'))}, social ${fmt(pressure(needs, 'socialConnection'))}`,
     `HEALTH ${fmt(snapshot.health)}${snapshot.sick ? ' (SICK)' : ''}. It is ${worldView.season}, ${worldView.night ? 'night' : 'day'}.`,
     `INVENTORY: ${inventoryText(snapshot.inventory)}`,
     ``,
@@ -175,6 +184,16 @@ function compass(dx: number, dy: number): string {
 
 function fmt(n: number): string {
   return n.toFixed(0);
+}
+
+/**
+ * One drive's pressure out of a snapshot. The four this paragraph names are the
+ * four this world declares, so the slot is always there; the narrowing is here
+ * rather than over the whole record so that it disappears with the paragraph at
+ * B5 rather than hiding in a cast at the top of the function.
+ */
+function pressure(needs: DriveLevels, drive: string): number {
+  return needs[drive] as number;
 }
 
 function inventoryText(inv: ThinkInput['snapshot']['inventory']): string {

@@ -20,12 +20,18 @@ import { foragerAdapter } from '../src/worlds/forager/adapter.js';
  *    `{ GatherSucceeded: 0.25 }` names the world without quoting it.
  *  · Strings a compiler would CONSTANT-FOLD — `'Gather' + 'Succeeded'`, a
  *    template's literal parts — because a name assembled in pieces is still
- *    the name (W1-B1 verifier, backlog 3).
- *  · One level through each mind file's own imports, into modules OUTSIDE the
- *    mind: a table re-exported from `contract/` and imported back is a table
- *    the mind reads, however it got there (same backlog item). Mind files are
+ *    the name (W1-B1 verifier, backlog 3). W1-B3 folds three more ways of
+ *    spelling one without typing it: `String.fromCharCode(…)`, an array
+ *    literal's `.join('')`, and a regular expression's own text (B2 verifier,
+ *    backlog 2).
+ *  · TRANSITIVELY through each mind file's own imports, into modules OUTSIDE
+ *    the mind: a table re-exported from `contract/` and imported back is a
+ *    table the mind reads, however many hops away it was written (B2 verifier
+ *    closed one hop; this closes the chain, with a seen-set). Mind files are
  *    not followed into, because each is scanned and pinned in its own right.
- *  · Module specifiers: a mind file may not import from `worlds/` at all.
+ *  · Module specifiers, INCLUDING dynamic `import(…)` and `import type`: a mind
+ *    file may not import from `worlds/` at all, and may not reach it through
+ *    the package barrel `src/index.ts`, which re-exports `foragerAdapter`.
  *
  * WHAT IT DOES NOT. Comments — an explanation of why something is the way it
  * is may name the example it came from.
@@ -64,13 +70,13 @@ const EMPTIED = [
  * Pinned rather than merely excused: a new leak in any other mind file fails
  * this test, and a step that cleans one of these has to come here and say so.
  *
- * B2 removed three entries from this list. What is left is exactly what B3 and
- * B5 own, and nothing here is a table any more — it is prose, a policy, and a
- * vocabulary the prompt advertises.
+ * B2 removed three entries and B3 the last two that were code rather than
+ * prose: `ReflexMind` left the mind for `worlds/forager/reflexPolicy.ts`, and
+ * `schema.ts` now reads its closed vocabularies off the adapter. What is left
+ * is B5's, and all of it is ENGLISH — the prompt's world paragraphs and the
+ * sentence templates a belief is rendered into.
  */
 const STILL_LEAKING: Record<string, string> = {
-  'consciousness/ReflexMind.ts': 'B3 — moves to worlds/forager/reflexPolicy.ts, verbatim',
-  'consciousness/schema.ts': 'B3 — the arg allowlists become the adapter’s actions + kinds',
   'consciousness/prompt.ts': 'B5 — the prompt skeleton keeps no world prose',
   'learning/templates.ts': 'B5 — English per event, → lexicon',
 };
@@ -100,6 +106,25 @@ for (const c of foragerAdapter.context) BANNED.set(c.id, 'context feature');
 // a feature id, so `night` (both) reads as the feature it is.
 for (const c of foragerAdapter.context) if (!BANNED.has(c.source)) BANNED.set(c.source, 'context field');
 for (const d of foragerAdapter.drives) BANNED.set(d.id, 'drive');
+/**
+ * W1-B3 declared two more vocabularies — this world's VERBS and its KINDS — and
+ * neither is policed by NAME here, on purpose, because neither can be.
+ *
+ *  · Kinds are ordinary English: `seed`, `game`, `water`, `wall`, `container`.
+ *    `NarrativeStore.seed` is a method the mind legitimately has, and half a
+ *    dozen more would go the same way.
+ *  · Verbs collide with the CONTRACT's own core vocabulary: `Give`, `Build` and
+ *    `Flee` are both forager action ids and `CoreVerb` members, so a name match
+ *    cannot tell "this world's verb" from "the closed verb set every world
+ *    binds to" — and banning them reddens `contract/actions.ts` itself.
+ *
+ * A guard whose false alarms have to be excused one by one is worse than one
+ * with a stated gap. What holds these instead is stronger than a grep:
+ * `mind-type-graph.test.ts` compiles the whole mind against a repository with
+ * no `worlds/` in it, so a mind file cannot reach either table at all, and
+ * `schema.ts` reads its closed vocabularies out of the adapter rather than
+ * holding a list of its own.
+ */
 
 /**
  * The value an expression has if a compiler could work it out: a literal, a
@@ -117,6 +142,42 @@ function constantString(node: ts.Node): string | undefined {
     const left = constantString(node.left);
     const right = constantString(node.right);
     return left !== undefined && right !== undefined ? left + right : undefined;
+  }
+  // `/AteFood/.source` — and the literal itself, because a pattern is the name
+  // written out whether or not anyone reads `.source` off it.
+  // Delimiters, flags and the two anchors are punctuation, not the name: a
+  // guard over-approximates on purpose, and `/^AteFood$/` is the name written
+  // out however it is fenced.
+  if (ts.isRegularExpressionLiteral(node)) {
+    return node.text.replace(/^\/|\/[a-z]*$/g, '').replace(/^\^/, '').replace(/\$$/, '');
+  }
+  if (ts.isCallExpression(node)) return constantCall(node);
+  return undefined;
+}
+
+/** `String.fromCharCode(65, 66)` and `['Ate','Food'].join('')`. */
+function constantCall(node: ts.CallExpression): string | undefined {
+  if (!ts.isPropertyAccessExpression(node.expression)) return undefined;
+  const target = node.expression.expression;
+  const member = node.expression.name.text;
+  if (member === 'fromCharCode' && ts.isIdentifier(target) && target.text === 'String') {
+    const codes: number[] = [];
+    for (const arg of node.arguments) {
+      if (!ts.isNumericLiteral(arg)) return undefined;
+      codes.push(Number(arg.text));
+    }
+    return String.fromCharCode(...codes);
+  }
+  if (member === 'join' && ts.isArrayLiteralExpression(target)) {
+    const separator = node.arguments.length === 0 ? ',' : constantString(node.arguments[0]!);
+    if (separator === undefined) return undefined;
+    const parts: string[] = [];
+    for (const element of target.elements) {
+      const part = constantString(element);
+      if (part === undefined) return undefined;
+      parts.push(part);
+    }
+    return parts.join(separator);
   }
   return undefined;
 }
@@ -136,18 +197,31 @@ export function spelledNames(source: string): Set<string> {
   return out;
 }
 
-/** The modules a file imports, as paths relative to `src/` (local ones only). */
+/**
+ * The modules a file imports, as paths relative to `src/` (local ones only).
+ * Every FORM of import counts, not only a top-level `import … from`: a dynamic
+ * `import('../worlds/forager/adapter.js')` and an `import('…').Type` are both
+ * ways the world was reachable while this collector read statements only
+ * (W1-B2 verifier, backlog 2).
+ */
 export function importedModules(rel: string, source: string): string[] {
   const file = ts.createSourceFile('probe.ts', source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
   const here = path.posix.dirname(rel.split(path.sep).join('/'));
   const out: string[] = [];
-  for (const statement of file.statements) {
-    const specifier =
-      (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) && statement.moduleSpecifier;
-    if (!specifier || !ts.isStringLiteral(specifier)) continue;
-    if (!specifier.text.startsWith('.')) continue;
+  const add = (specifier: ts.Node | undefined): void => {
+    if (!specifier || !ts.isStringLiteralLike(specifier)) return;
+    if (!specifier.text.startsWith('.')) return;
     out.push(path.posix.normalize(path.posix.join(here, specifier.text)).replace(/\.js$/, '.ts'));
-  }
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) add(node.moduleSpecifier);
+    else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) add(node.argument.literal);
+    else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      add(node.arguments[0]);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(file, visit);
   return out;
 }
 
@@ -164,11 +238,25 @@ const fromDisk: Reader = (rel) => {
 };
 
 /**
+ * A module a mind file may not reach, however it spells the reach. `index.ts`
+ * is the package barrel: it re-exports `foragerAdapter`, so importing the
+ * world through it is importing the world (W1-B2 verifier, backlog 3).
+ */
+function bannedModule(rel: string): string | undefined {
+  if (rel.startsWith('worlds/')) return 'world module';
+  if (rel === 'index.ts') return 'package barrel — it re-exports the world';
+  return undefined;
+}
+
+/**
  * Every forager name a file reaches: the ones it spells, plus — for a file
- * inside the MIND — the ones spelled by the non-mind modules it imports (one
- * level). Imports are not followed out of a HOST file: `runner/EventPipeline`
- * is on the emptied list and legitimately imports the body, which is full of
- * this world's names. What it may not do is spell one itself.
+ * inside the MIND — the ones spelled by the non-mind modules it imports, FOLLOWED
+ * ALL THE WAY DOWN. One hop caught a table re-exported from `contract/`; two
+ * hops (`contract/_a` re-exporting `contract/_b`) walked straight past it, so
+ * the walk now carries a seen-set and keeps going. Imports are not followed out
+ * of a HOST file: `runner/EventPipeline` is on the emptied list and legitimately
+ * imports the body, which is full of this world's names. What it may not do is
+ * spell one itself.
  */
 export function worldNamesIn(rel: string, read: Reader = fromDisk): string[] {
   const source = read(rel);
@@ -178,18 +266,29 @@ export function worldNamesIn(rel: string, read: Reader = fromDisk): string[] {
     if (BANNED.has(name)) named.push(`${name} (${BANNED.get(name)})`);
   }
   if (!isMindModule(rel)) return [...new Set(named)].sort();
-  for (const imported of importedModules(rel, source)) {
-    if (imported.startsWith('worlds/')) {
-      named.push(`${imported} (world module)`);
+
+  const seen = new Set<string>([rel]);
+  const queue: { module: string; via: string }[] = importedModules(rel, source).map((module) => ({
+    module,
+    via: module,
+  }));
+  while (queue.length > 0) {
+    const { module, via } = queue.shift()!;
+    const banned = bannedModule(module);
+    if (banned) {
+      named.push(`${module} (${banned})`);
       continue;
     }
-    if (isMindModule(imported)) continue; // scanned and pinned on its own
-    if (imported in IMPORTED_STILL_LEAKING) continue; // pinned, with its step
-    const body = read(imported);
+    if (seen.has(module)) continue;
+    seen.add(module);
+    if (isMindModule(module)) continue; // scanned and pinned on its own
+    if (module in IMPORTED_STILL_LEAKING) continue; // pinned, with its step
+    const body = read(module);
     if (body === undefined) continue;
     for (const name of spelledNames(body)) {
-      if (BANNED.has(name)) named.push(`${name} (${BANNED.get(name)}, via ${imported})`);
+      if (BANNED.has(name)) named.push(`${name} (${BANNED.get(name)}, via ${via})`);
     }
+    for (const next of importedModules(module, body)) queue.push({ module: next, via });
   }
   return [...new Set(named)].sort();
 }
@@ -210,6 +309,17 @@ describe('the world tables left the mind (W1-B)', () => {
     expect(foragerAdapter.context.length).toBe(4);
     expect(foragerAdapter.drives.length).toBe(4);
     expect(BANNED.size).toBe(29 + 4 + 4 + 1); // `elevationBand` is a field, not a feature id
+    // …and the two vocabularies this scan deliberately cannot police, with the
+    // collision that makes one of them impossible written down rather than
+    // merely omitted.
+    expect(foragerAdapter.actions.length).toBe(16);
+    expect(foragerAdapter.kinds.length).toBe(55);
+    const core = new Set(foragerAdapter.actions.map((a) => a.core));
+    expect(foragerAdapter.actions.filter((a) => core.has(a.id as never)).map((a) => a.id)).toEqual([
+      'Build',
+      'Give',
+      'Flee',
+    ]);
   });
 
   for (const file of EMPTIED) {
@@ -267,6 +377,13 @@ describe('the scan sees every way of naming a world', () => {
     ['a parenthesised concatenation', `export const x = ('Witnessed') + ('Death');`],
     ['a template with a hole in it', 'export const x = `Gather${n}Succeeded`;'],
     ['a concatenation used as a key', `export const f = (m: Record<string, number>) => m['near' + 'Water'];`],
+    // W1-B2 verifier, backlog 2 — three ways of writing a name without typing it.
+    ['a name spelled in char codes', `export const x = String.fromCharCode(65, 116, 101, 70, 111, 111, 100);`],
+    ['an array joined into a name', `export const x = ['Ate', 'Food'].join('');`],
+    ['a joined name used as a key', `export const f = (m: Record<string, number>) => m[['near', 'Water'].join('')];`],
+    ['a regular expression’s own text', `export const x = /AteFood/.source;`],
+    ['a bare regular expression', `export const R = /^WitnessedDeath$/;`],
+    ['char codes nested in a concatenation', `export const x = 'Ate' + String.fromCharCode(70, 111, 111, 100);`],
   ];
 
   for (const [label, source] of CAUGHT) {
@@ -303,6 +420,45 @@ describe('the scan follows what a mind file imports', () => {
       reader({ 'memory/importance.ts': `import { foragerAdapter } from '../worlds/forager/adapter.js';` }),
     );
     expect(named).toEqual(['worlds/forager/adapter.ts (world module)']);
+  });
+
+  it('catches a table TWO modules away, and does not loop on a cycle', () => {
+    const named = worldNamesIn(
+      'memory/importance.ts',
+      reader({
+        'memory/importance.ts': `import { BASE } from '../contract/_a.js';\nexport const x = BASE;`,
+        'contract/_a.ts': `export { BASE } from './_b.js';\nimport './_a.js';`,
+        'contract/_b.ts': `export const BASE = { GatherSucceeded: 0.25 };`,
+      }),
+    );
+    expect(named).toEqual(['GatherSucceeded (event, via contract/_a.ts)']);
+  });
+
+  it('catches the package barrel, which re-exports the world', () => {
+    const named = worldNamesIn(
+      'memory/importance.ts',
+      reader({ 'memory/importance.ts': `import { foragerAdapter } from '../index.js';` }),
+    );
+    expect(named).toEqual(['index.ts (package barrel — it re-exports the world)']);
+  });
+
+  it('catches a dynamic import of the world, and an import-type of it', () => {
+    expect(
+      worldNamesIn(
+        'memory/importance.ts',
+        reader({
+          'memory/importance.ts': `export const load = () => import('../worlds/forager/adapter.js');`,
+        }),
+      ),
+    ).toEqual(['worlds/forager/adapter.ts (world module)']);
+    expect(
+      worldNamesIn(
+        'memory/importance.ts',
+        reader({
+          'memory/importance.ts': `export type T = import('../worlds/forager/types.js').ObjectKind;`,
+        }),
+      ),
+    ).toEqual(['worlds/forager/types.ts (world module)']);
   });
 
   it('does not follow into another MIND file — each is pinned in its own right', () => {

@@ -8,14 +8,14 @@ import {
   MockMindBackend,
   ReflexMind,
   attemptPrompt,
-  buildThinkPrompt,
+  buildThinkPrompt as buildThinkPromptIn,
   cognitionToExample,
   curateCorpus,
   evalJsonValidity,
   foragerAdapter,
   leakTrapBattery,
-  parseMindOutput,
-  parseMindOutputDetailed,
+  parseMindOutput as parseMindOutputIn,
+  parseMindOutputDetailed as parseMindOutputDetailedIn,
   retryPrompt,
   summarizeCorpus,
 } from '../src/index.js';
@@ -31,6 +31,20 @@ import type {
   ThinkPrompt,
 } from '../src/index.js';
 import { CTX } from './helpers.js';
+
+/**
+ * W1-B3 WIRING, AND NOTHING ELSE. The parser and the prompt builder now take
+ * the world whose vocabulary they are to use, so every call below is bound to
+ * the forager continent — the world these cases were always written about.
+ * Every assertion in this file is untouched: what is being pinned is that the
+ * SAME inputs still produce the same decisions and the same reason codes when
+ * the allowlists come out of the adapter instead of out of `schema.ts`.
+ */
+const parseMindOutput = (raw: string): ReturnType<typeof parseMindOutputIn> =>
+  parseMindOutputIn(raw, foragerAdapter);
+const parseMindOutputDetailed = (raw: string): ReturnType<typeof parseMindOutputDetailedIn> =>
+  parseMindOutputDetailedIn(raw, foragerAdapter);
+const buildThinkPrompt = (input: ThinkInput): ThinkPrompt => buildThinkPromptIn(input, foragerAdapter);
 
 const SCAFFOLD: ScaffoldState = {
   needsProvisionedWithinTicks: null,
@@ -368,7 +382,7 @@ describe('validity: the reason rides onto the attempt', () => {
   it('retries and falls back on an output that decided nothing, recording why', async () => {
     const log: CognitionRecord[] = [];
     const empty: IMindBackend = { modelId: 'mock/empty', complete: () => Promise.resolve('{}') };
-    const mind = new LlmMind(empty, { fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
+    const mind = new LlmMind(empty, { world: foragerAdapter, fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
     const out = await mind.complete(leakTrapBattery()[0]!.input);
 
     expect(out.plan.length).toBeGreaterThan(0); // reflex carried the being
@@ -384,7 +398,7 @@ describe('validity: the reason rides onto the attempt', () => {
     const log: CognitionRecord[] = [];
     const flood = JSON.stringify({ plan: Array.from({ length: 500 }, () => ({ kind: 'Idle' })) });
     const verbose: IMindBackend = { modelId: 'mock/verbose', complete: () => Promise.resolve(flood) };
-    const mind = new LlmMind(verbose, { fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
+    const mind = new LlmMind(verbose, { world: foragerAdapter, fallback: new ReflexMind(foragerAdapter), onCognition: (r) => log.push(r) });
     await mind.complete(leakTrapBattery()[0]!.input);
     expect(log[0]!.attempts[1]!.prompt.user).toContain('plan-too-long');
   });

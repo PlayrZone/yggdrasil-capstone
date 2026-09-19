@@ -167,6 +167,19 @@ describe('the forager tables, as they stood before the move', () => {
   // which reaches the body through an import order that initialises it
   // correctly; this file cannot (it loads PerceptionSystem first, which is the
   // order the body's import cycle breaks under).
+  /**
+   * W1-B3 moved two more tables here — this world's verbs and its stuff. They
+   * are transcribed the same way, against the same kind of independent
+   * "before" (`fixtures/foragerVerbsBefore.ts`), in `world-actions.test.ts`;
+   * the counts are pinned here so a member added in either place reddens a test
+   * in both files rather than only in the one someone remembered to open.
+   */
+  it('declares this world’s verbs and stuff, in the numbers it had', () => {
+    expect(foragerAdapter.actions).toHaveLength(16);
+    expect(foragerAdapter.kinds).toHaveLength(55);
+    expect(foragerAdapter.reflexPolicy).toBeDefined();
+  });
+
   it('keeps the clock the runtime, the recorder and the founders read', () => {
     expect(foragerAdapter.time).toMatchObject({
       ticksPerDay: 2400,

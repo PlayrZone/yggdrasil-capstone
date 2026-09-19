@@ -58,7 +58,11 @@ const api = {
   // in the engine, with any retry feedback already appended to `prompt.user`;
   // `input` rides along for backends that reason rather than transport. Neither
   // side may rebuild one from the other.
-  llmComplete: (prompt: unknown, input: unknown): Promise<string> => ipcRenderer.invoke('llm:complete', prompt, input),
+  // `worldId` names the adapter the engine composed `prompt` from — main
+  // rebuilds the prompt to bind it to `input`, and since engine W1-B3 that
+  // render depends on the world's own action vocabulary.
+  llmComplete: (prompt: unknown, input: unknown, worldId: unknown): Promise<string> =>
+    ipcRenderer.invoke('llm:complete', prompt, input, worldId),
   llmStatus: (): Promise<LlmStatus> => ipcRenderer.invoke('llm:status'),
   setKey: (key: string, model?: string): Promise<LlmStatus & { error?: string }> => ipcRenderer.invoke('settings:setKey', key, model),
   getSettings: (): Promise<LlmStatus & { savedModel: string | null }> => ipcRenderer.invoke('settings:get'),

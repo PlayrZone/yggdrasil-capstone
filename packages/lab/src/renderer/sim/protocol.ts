@@ -414,7 +414,10 @@ export type SimMessage =
   /**
    * A conscious being needs a model. `prompt` is the exact message set the
    * engine composed (retry feedback already folded in); `input` is the
-   * situation behind it, for a bridge that reasons rather than transports.
+   * situation behind it, for a bridge that reasons rather than transports;
+   * `worldId` names the adapter the engine composed the prompt FROM, because a
+   * prompt's verb list is now that world's (engine W1-B3) and main cannot
+   * rebuild it to check without knowing which world it was.
    */
-  | { kind: 'llm-request'; reqId: number; prompt: unknown; input: unknown }
+  | { kind: 'llm-request'; reqId: number; prompt: unknown; input: unknown; worldId: string }
   | { kind: 'error'; message: string };
