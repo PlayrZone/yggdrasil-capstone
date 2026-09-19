@@ -33,13 +33,42 @@ import type {
   SocietyReport,
 } from '@yggdrasil/engine';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
-/** Being state codes — the order the world view colours them in. */
-export const STATE_ACTIVE = 0;
-export const STATE_HUNGRY = 1;
-export const STATE_SLEEPING = 2;
-export const STATE_SICK = 3;
+/**
+ * What a being is DOING — the activity axis. Drawn as a shape (a glyph over the
+ * head plus how the body moves), never as a hue, so it survives colour-blind
+ * viewing and a greyscale print.
+ *
+ * `IDLE` and `WALKING` deliberately carry no glyph: they are the resting state
+ * of the world, and a world where every being wears a badge is unreadable.
+ */
+export const ACT_IDLE = 0;
+export const ACT_WALKING = 1;
+export const ACT_RESTING = 2;
+export const ACT_EATING = 3;
+export const ACT_DRINKING = 4;
+/** Gathering, digging, crafting, building, storing — making and taking. */
+export const ACT_WORKING = 5;
+/** Fleeing or fighting: the being is in danger or causing it. */
+export const ACT_DANGER = 6;
+/** Speaking, giving, following — acts aimed at another being. */
+export const ACT_SOCIAL = 7;
+export const ACT_COUNT = 8;
+
+/**
+ * How a being IS — the condition axis, a bitfield. Carried by hue *and* by a
+ * glyph, so hue is never the only channel. Never red-vs-green.
+ */
+export const COND_SICK = 1;
+export const COND_STARVING = 2;
+/** Violence landed on this being recently. */
+export const COND_HURT = 4;
+
+/** Life stage — drawn as body form and height. Thresholds mirror the engine's own maturity rule. */
+export const STAGE_CHILD = 0;
+export const STAGE_ADULT = 1;
+export const STAGE_ELDER = 2;
 
 /** Kind codes ride in a Uint8; 255 is the "more kinds than fit" bucket. */
 export const KIND_UNKNOWN = 255;
@@ -66,7 +95,14 @@ export interface FeedItem {
   /** Sim day the line happened on — resolved here so the UI needs no tick maths. */
   day: number;
   kind: 'speech' | 'event';
+  /** The engine's own name field for the actor — an id wearing a word, usually. */
   who: string;
+  /**
+   * The actor's id, so the renderer can call this being exactly what the world
+   * view calls it. Round one printed the engine's `Gahallian #1972` in the feed
+   * beside a world that said Ashiden, and the two were the same being.
+   */
+  whoId: number;
   text: string;
 }
 
@@ -75,20 +111,59 @@ export interface StructureUpdate {
   x: number;
   y: number;
   kind: string;
+  /** The being that raised it — so a structure can be shown as someone's. */
+  builtBy: number;
+}
+
+/**
+ * A being's own name, sent once when it is first seen and again if it changes.
+ * `name` is the engine's raw field: empty means the being has not named itself,
+ * and the lab gives it a designation rather than showing an id.
+ */
+export interface NameUpdate {
+  id: number;
+  name: string;
+}
+
+/** A being died here. The view leaves a mark that fades. */
+export interface DeathMark {
+  id: number;
+  x: number;
+  y: number;
+}
+
+/** Someone said something. `to` is where the nearest listener stood, if any. */
+export interface SpeechEvent {
+  id: number;
+  x: number;
+  y: number;
+  to: { x: number; y: number } | null;
+}
+
+/** Who a being is related to and who it is bonded to — asked for, never streamed. */
+export interface TiesReport {
+  id: number;
+  /** Parents, children and siblings, by id. */
+  kin: number[];
+  /** The beings it trusts or is closest to, strongest first. */
+  bonded: number[];
 }
 
 // ── Frame buffers ────────────────────────────────────────────────────────────
 
 /**
- * One frame of world state. Six buffers, transferred to the UI and transferred
+ * One frame of world state. Nine buffers, transferred to the UI and transferred
  * straight back on `ack`, so the steady state is zero allocation on both sides.
- * `ids[i]`, `pos[2i]`/`pos[2i+1]`, `heading[i]` and `state[i]` describe being i.
+ * `ids[i]`, `pos[2i]`/`pos[2i+1]`, `heading[i]`, `act[i]`, `cond[i]` and
+ * `stage[i]` describe being i.
  */
 export interface FrameArrays {
   ids: Int32Array;
   pos: Float32Array;
   heading: Float32Array;
-  state: Uint8Array;
+  act: Uint8Array;
+  cond: Uint8Array;
+  stage: Uint8Array;
   wildIds: Int32Array;
   wildPos: Float32Array;
   wildKind: Uint8Array;
@@ -101,7 +176,9 @@ export function allocFrameArrays(beings: number, wildlife: number): FrameArrays 
     ids: new Int32Array(b),
     pos: new Float32Array(b * 2),
     heading: new Float32Array(b),
-    state: new Uint8Array(b),
+    act: new Uint8Array(b),
+    cond: new Uint8Array(b),
+    stage: new Uint8Array(b),
     wildIds: new Int32Array(w),
     wildPos: new Float32Array(w * 2),
     wildKind: new Uint8Array(w),
@@ -110,7 +187,10 @@ export function allocFrameArrays(beings: number, wildlife: number): FrameArrays 
 
 /** The buffers to hand to `postMessage`'s transfer list. */
 export function frameBuffers(a: FrameArrays): ArrayBuffer[] {
-  return [a.ids.buffer, a.pos.buffer, a.heading.buffer, a.state.buffer, a.wildIds.buffer, a.wildPos.buffer, a.wildKind.buffer] as ArrayBuffer[];
+  return [
+    a.ids.buffer, a.pos.buffer, a.heading.buffer, a.act.buffer, a.cond.buffer, a.stage.buffer,
+    a.wildIds.buffer, a.wildPos.buffer, a.wildKind.buffer,
+  ] as ArrayBuffer[];
 }
 
 export function beingCapacity(a: FrameArrays): number {
@@ -169,12 +249,14 @@ export class KindCodec {
 
 export type QueryRequest =
   | { name: 'detail'; id: number }
+  | { name: 'ties'; id: number }
   | { name: 'analysis' }
   | { name: 'society' }
   | { name: 'culture' };
 
 export interface QueryResults {
   detail: AgentDetail | null;
+  ties: TiesReport;
   analysis: AnalysisSnapshot;
   society: SocietyReport;
   culture: { culture: CultureReport; myth: MythReport };
@@ -232,6 +314,18 @@ export interface FrameMessage {
   animalKinds: string[];
   /** Structures raised since the last frame. */
   structures: StructureUpdate[];
+  /** Names first seen or changed since the last frame. */
+  names: NameUpdate[];
+  /** Beings that died since the last frame. */
+  deaths: DeathMark[];
+  /** Utterances since the last frame. */
+  speech: SpeechEvent[];
+  /**
+   * 1 in full daylight, 0 in the dark of night. Full day covers exactly the
+   * engine's own day (`isNight` is false); the dusk and dawn crossfades live
+   * inside the engine's night, so the view never shows light the sim denies.
+   */
+  daylight: number;
   arrays: FrameArrays;
 }
 
@@ -275,5 +369,10 @@ export type SimMessage =
   | { [K in keyof QueryResults]: { kind: 'query-result'; reqId: number; name: K; result: QueryResults[K] } }[keyof QueryResults]
   /** A query that can never be answered — the asker must not wait forever. */
   | { kind: 'query-failed'; reqId: number; message: string }
-  | { kind: 'llm-request'; reqId: number; input: unknown; retryError?: string }
+  /**
+   * A conscious being needs a model. `prompt` is the exact message set the
+   * engine composed (retry feedback already folded in); `input` is the
+   * situation behind it, for a bridge that reasons rather than transports.
+   */
+  | { kind: 'llm-request'; reqId: number; prompt: unknown; input: unknown }
   | { kind: 'error'; message: string };

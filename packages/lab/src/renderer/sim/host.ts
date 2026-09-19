@@ -1,23 +1,37 @@
-import { Experiment, TICKS_PER_DAY } from '@yggdrasil/engine';
-import type { IMindBackend, SimEvent, ThinkInput } from '@yggdrasil/engine';
+import { Experiment, TICKS_PER_DAY, TICKS_PER_SEASON, TICKS_PER_YEAR } from '@yggdrasil/engine';
+import type { IMindBackend, IntentKind, SimEvent, ThinkInput, ThinkPrompt } from '@yggdrasil/engine';
 import {
+  ACT_DANGER,
+  ACT_DRINKING,
+  ACT_EATING,
+  ACT_IDLE,
+  ACT_RESTING,
+  ACT_SOCIAL,
+  ACT_WALKING,
+  ACT_WORKING,
   allocFrameArrays,
   beingCapacity,
+  COND_HURT,
+  COND_SICK,
+  COND_STARVING,
   frameBuffers,
   isDetached,
   KindCodec,
   resourceBuffers,
-  STATE_ACTIVE,
-  STATE_HUNGRY,
-  STATE_SICK,
-  STATE_SLEEPING,
+  STAGE_ADULT,
+  STAGE_CHILD,
+  STAGE_ELDER,
   wildlifeCapacity,
+  type DeathMark,
   type FeedItem,
   type FrameArrays,
+  type NameUpdate,
   type QueryRequest,
   type SimCommand,
   type SimMessage,
+  type SpeechEvent,
   type StructureUpdate,
+  type TiesReport,
 } from './protocol.js';
 
 /**
@@ -49,21 +63,97 @@ const STATS_INTERVAL_MS = 250;
 const DETAIL_INTERVAL_MS = 500;
 const STRUCTURE_SCAN_MS = 500;
 const FEED_CAP = 50;
+/**
+ * Events scanned per stats tick for the world view. Wider than the feed's
+ * window because a death or an utterance is a thing to DRAW, and at 2400× a
+ * quarter-second holds far more than fifty events; the feed still shows the
+ * newest fifty of them.
+ */
+const VISUAL_EVENT_CAP = 240;
 /** Recycled frame buffers held back from the pool's growth. */
 const POOL_MAX = 3;
+/** Change sets are bounded: a stalled tab must not grow an unbounded queue. */
+const CHANGE_QUEUE_CAP = 256;
+
+/**
+ * Maturity, mirroring the engine's own rule (`ADULT_AGE` in Experiment, one
+ * season). The engine does not export it and this view must not guess at it
+ * differently, so it is stated once, here, in the engine's own units.
+ */
+const ADULT_AGE = TICKS_PER_SEASON;
+/** Where the view starts calling a being an elder. Nothing in the sim turns on it. */
+const ELDER_AGE = TICKS_PER_YEAR;
+/** How long after violence a being still reads as hurt. */
+const HURT_TICKS = 180;
+
+/** Averaging window for the achieved-speed read-out, and how fast it follows a change. */
+const RATE_WINDOW_MS = 1500;
+const RATE_SMOOTHING = 0.4;
+
+/**
+ * A bond worth drawing. Trust and friendship start at neutral (50 each) and
+ * fear at 0, so a record that has never moved scores exactly 100; anything
+ * above that is someone this being has actually grown closer to than to a
+ * stranger, and the strongest few are what the world view threads together.
+ */
+const BOND_THRESHOLD = 100;
+const BOND_LIMIT = 6;
+
+/**
+ * Intent → what the view calls it. The engine's plan step is the truest
+ * statement of what a being is doing, so this is a straight translation and not
+ * an inference.
+ */
+const ACT_BY_INTENT: Record<IntentKind, number> = {
+  MoveTo: ACT_WALKING,
+  Follow: ACT_WALKING,
+  Gather: ACT_WORKING,
+  Dig: ACT_WORKING,
+  Craft: ACT_WORKING,
+  Build: ACT_WORKING,
+  Deposit: ACT_WORKING,
+  Withdraw: ACT_WORKING,
+  Eat: ACT_EATING,
+  Drink: ACT_DRINKING,
+  Sleep: ACT_RESTING,
+  Speak: ACT_SOCIAL,
+  Give: ACT_SOCIAL,
+  Attack: ACT_DANGER,
+  Flee: ACT_DANGER,
+  Idle: ACT_IDLE,
+};
+
+/** Night, exactly as the engine draws the line (`isNight`): the last third of a day. */
+const NIGHT_FROM = 2 / 3;
+/** Dusk and dawn are folded INSIDE the engine's night, so full light never outlasts the sim's day. */
+const DUSK_TO = NIGHT_FROM + 0.04;
+const DAWN_FROM = 0.96;
+
+/** 1 in full daylight, 0 in the dark. */
+export function daylightAt(tick: number): number {
+  const f = (((tick % TICKS_PER_DAY) + TICKS_PER_DAY) % TICKS_PER_DAY) / TICKS_PER_DAY;
+  if (f < NIGHT_FROM) return 1;
+  if (f < DUSK_TO) return 1 - (f - NIGHT_FROM) / (DUSK_TO - NIGHT_FROM);
+  if (f < DAWN_FROM) return 0;
+  return (f - DAWN_FROM) / (1 - DAWN_FROM);
+}
 
 export interface HostPort {
   post(message: SimMessage, transfer?: ArrayBuffer[]): void;
 }
 
-/** Per-being interpolation + heading track, updated in place (never reallocated). */
+/** Per-being interpolation + presentation track, updated in place (never reallocated). */
 interface Track {
   x: number;
   y: number;
   px: number;
   py: number;
   heading: number;
-  state: number;
+  act: number;
+  cond: number;
+  stage: number;
+  /** Tick until which violence still shows on this being. */
+  hurtUntil: number;
   stamp: number;
 }
 
@@ -83,11 +173,17 @@ export class ProxyMindBackend implements IMindBackend {
     private readonly port: HostPort,
   ) {}
 
-  complete(input: ThinkInput, retryError?: string): Promise<string> {
+  /**
+   * Both halves go on the wire: the exact messages the engine composed, and the
+   * situation they were composed from. The engine's contract is that a
+   * transport backend sends `prompt` and nothing else — recomposing from
+   * `input` is what made the record disagree with what was actually sent.
+   */
+  complete(prompt: ThinkPrompt, input: ThinkInput): Promise<string> {
     const reqId = ++this.seq;
     return new Promise<string>((resolve, reject) => {
       this.pending.set(reqId, { resolve, reject });
-      this.port.post({ kind: 'llm-request', reqId, input, ...(retryError ? { retryError } : {}) });
+      this.port.post({ kind: 'llm-request', reqId, prompt, input });
     });
   }
 
@@ -161,13 +257,24 @@ export class SimHost {
 
   private readonly tracks = new Map<number, Track>();
   private snapshotSeq = 0;
-  private readonly animalKinds = new KindCodec();
+  /**
+   * Rebuilt for every world. A codec that outlived its world would keep handing
+   * out codes the view already has names for while the view, which forgets its
+   * table when the world changes, had nothing to map them with — wildlife drawn
+   * as the wrong species, silently.
+   */
+  private animalKinds = new KindCodec();
   private wildIds = new Int32Array(0);
   private wildPos = new Float32Array(0);
   private wildKind = new Uint8Array(0);
   private wildCount = 0;
   private readonly seenStructures = new Set<number>();
   private structureQueue: StructureUpdate[] = [];
+  /** Names already on the wire, so a name travels once rather than every frame. */
+  private sentNames = new Map<number, string>();
+  private nameQueue: NameUpdate[] = [];
+  private deathQueue: DeathMark[] = [];
+  private speechQueue: SpeechEvent[] = [];
   private lastEventCount = 0;
   private feedSeq = 0;
   private readonly pool: FrameArrays[] = [];
@@ -339,6 +446,7 @@ export class SimHost {
     this.backend = llm ? new ProxyMindBackend(llm.model, this.port) : null;
     const exp = new Experiment({ seed, agentCount: population, ...(this.backend ? { mindBackend: this.backend } : {}) });
     this.exp = exp;
+    this.animalKinds = new KindCodec(); // a new world names its own wildlife
     this.accumulator = 0;
     this.lastPump = 0;
     this.lastEventCount = exp.eventCount;
@@ -374,6 +482,10 @@ export class SimHost {
     this.tracks.clear();
     this.seenStructures.clear();
     this.structureQueue = [];
+    this.sentNames.clear();
+    this.nameQueue = [];
+    this.deathQueue = [];
+    this.speechQueue = [];
     this.wildCount = 0;
     this.selectedId = null;
     this.pool.length = 0;
@@ -407,24 +519,48 @@ export class SimHost {
   private snapshot(): void {
     const exp = this.exp!;
     const stamp = ++this.snapshotSeq;
+    const tick = exp.tick;
     for (const a of exp.agentInfos()) {
       if (!a.alive) continue;
-      const state = a.sick ? STATE_SICK : a.sleeping ? STATE_SLEEPING : a.hungerCritical ? STATE_HUNGRY : STATE_ACTIVE;
-      const t = this.tracks.get(a.id);
+      const body = exp.agentBody(a.id);
+      const age = body ? tick - body.birthTick : ADULT_AGE;
+      const stage = age < ADULT_AGE ? STAGE_CHILD : age < ELDER_AGE ? STAGE_ADULT : STAGE_ELDER;
+      let cond = 0;
+      if (a.sick) cond |= COND_SICK;
+      if (a.hungerCritical) cond |= COND_STARVING;
+
+      let t = this.tracks.get(a.id);
       if (!t) {
-        this.tracks.set(a.id, { x: a.x, y: a.y, px: a.x, py: a.y, heading: 0, state, stamp });
-        continue;
+        t = { x: a.x, y: a.y, px: a.x, py: a.y, heading: 0, act: ACT_IDLE, cond: 0, stage, hurtUntil: 0, stamp };
+        this.tracks.set(a.id, t);
+      } else {
+        // Face the direction of travel; a being that barely moved keeps its heading.
+        const dx = a.x - t.x;
+        const dy = a.y - t.y;
+        if (dx * dx + dy * dy > 0.0004) t.heading = Math.atan2(dx, dy);
+        t.x = a.x;
+        t.y = a.y;
       }
-      // Face the direction of travel; a being that barely moved keeps its heading.
-      const dx = a.x - t.x;
-      const dy = a.y - t.y;
-      if (dx * dx + dy * dy > 0.0004) t.heading = Math.atan2(dx, dy);
-      t.x = a.x;
-      t.y = a.y;
-      t.state = state;
+      if (t.hurtUntil > tick) cond |= COND_HURT;
+      // Sleep beats the plan: a sleeping being's plan step is whatever it will
+      // do when it wakes, and drawing that would be a lie about right now.
+      const intent = body && body.plan.length > body.planStep ? body.plan[body.planStep] : undefined;
+      t.act = a.sleeping ? ACT_RESTING : intent ? ACT_BY_INTENT[intent.kind] ?? ACT_IDLE : ACT_IDLE;
+      t.cond = cond;
+      t.stage = stage;
       t.stamp = stamp;
+
+      if (body && this.sentNames.get(a.id) !== body.name) {
+        this.sentNames.set(a.id, body.name);
+        if (this.nameQueue.length < CHANGE_QUEUE_CAP) this.nameQueue.push({ id: a.id, name: body.name });
+      }
     }
-    for (const [id, t] of this.tracks) if (t.stamp !== stamp) this.tracks.delete(id);
+    for (const [id, t] of this.tracks) {
+      if (t.stamp !== stamp) {
+        this.tracks.delete(id);
+        this.sentNames.delete(id);
+      }
+    }
 
     const animals = exp.animals();
     if (this.wildIds.length < animals.length) {
@@ -449,7 +585,7 @@ export class SimHost {
     for (const s of exp.structures()) {
       if (this.seenStructures.has(s.id)) continue;
       this.seenStructures.add(s.id);
-      this.structureQueue.push({ id: s.id, x: s.x, y: s.y, kind: s.kind });
+      this.structureQueue.push({ id: s.id, x: s.x, y: s.y, kind: s.kind, builtBy: s.builtBy });
     }
   }
 
@@ -491,7 +627,9 @@ export class SimHost {
       arrays.pos[i * 2] = track.px + (track.x - track.px) * t;
       arrays.pos[i * 2 + 1] = track.py + (track.y - track.py) * t;
       arrays.heading[i] = track.heading;
-      arrays.state[i] = track.state;
+      arrays.act[i] = track.act;
+      arrays.cond[i] = track.cond;
+      arrays.stage[i] = track.stage;
       i++;
     }
     const wild = Math.min(this.wildCount, wildlifeCapacity(arrays));
@@ -501,6 +639,12 @@ export class SimHost {
 
     const structures = this.structureQueue;
     this.structureQueue = [];
+    const names = this.nameQueue;
+    this.nameQueue = [];
+    const deaths = this.deathQueue;
+    this.deathQueue = [];
+    const speech = this.speechQueue;
+    this.speechQueue = [];
     this.port.post(
       {
         kind: 'frame',
@@ -512,6 +656,10 @@ export class SimHost {
         wildlifeTotal: this.wildCount,
         animalKinds: this.animalKinds.drain(),
         structures,
+        names,
+        deaths,
+        speech,
+        daylight: daylightAt(exp.tick),
         arrays,
       },
       frameBuffers(arrays),
@@ -519,18 +667,26 @@ export class SimHost {
   }
 
   /**
-   * How fast the world is really running, as a multiple of 1×. Measured over a
-   * window of at least 400 ms so one slow slice cannot make the read-out jitter;
-   * a paused world reports 0.
+   * How fast the world is really running, as a multiple of 1×.
+   *
+   * Two things keep this honest and still. The window is long — a second and a
+   * half — because the sim runs in bursts (a 16 ms budget, then whatever the
+   * frame and stats work costs), so a short window measures the burst rather
+   * than the rate. And successive windows are smoothed, because the read-out is
+   * a label a person is reading: a number that is right on average and steady
+   * is more truthful to them than one that is exactly right for 400 ms at a
+   * time and never legible. Both are lags, not lies — a sustained change in
+   * speed reaches the label within a couple of seconds.
    */
   private updateAchieved(now: number): void {
-    const elapsed = now - this.rateWindowStart;
     if (!this.running) {
       this.achievedMult = 0;
       return;
     }
-    if (elapsed < 400) return;
-    this.achievedMult = (this.rateTicks * 1000) / elapsed / TICKS_PER_SECOND_AT_1X;
+    const elapsed = now - this.rateWindowStart;
+    if (elapsed < RATE_WINDOW_MS) return;
+    const measured = (this.rateTicks * 1000) / elapsed / TICKS_PER_SECOND_AT_1X;
+    this.achievedMult = this.achievedMult === 0 ? measured : this.achievedMult + (measured - this.achievedMult) * RATE_SMOOTHING;
     this.rateTicks = 0;
     this.rateWindowStart = now;
   }
@@ -542,8 +698,15 @@ export class SimHost {
     this.updateAchieved(this.lastStats);
     const produced = exp.eventCount - this.lastEventCount;
     this.lastEventCount = exp.eventCount;
-    const take = Math.min(produced, FEED_CAP);
-    const newFeed: FeedItem[] = take > 0 ? exp.recentEvents(take).map((e: SimEvent) => this.feedItem(exp, e)) : [];
+    const newFeed: FeedItem[] = [];
+    const scanned = Math.min(produced, VISUAL_EVENT_CAP);
+    if (scanned > 0) {
+      const events = exp.recentEvents(scanned);
+      this.collectVisualEvents(events);
+      for (let i = Math.max(0, events.length - FEED_CAP); i < events.length; i++) {
+        newFeed.push(this.feedItem(exp, events[i]!));
+      }
+    }
     this.port.post({
       kind: 'stats',
       tick: exp.tick,
@@ -568,14 +731,48 @@ export class SimHost {
     });
   }
 
+  /**
+   * The events the world view draws rather than prints: a death leaves a mark,
+   * an utterance leaves a ripple aimed at whoever was listening, and violence
+   * shows on the body it landed on for a while afterwards.
+   *
+   * Collected only while something is drawing — on another tab these would be
+   * a queue of transients nobody will ever see.
+   */
+  private collectVisualEvents(events: SimEvent[]): void {
+    for (const e of events) {
+      switch (e.type) {
+        case 'AgentDied':
+          if (this.framesOn && this.deathQueue.length < CHANGE_QUEUE_CAP) {
+            this.deathQueue.push({ id: e.actorId, x: e.x, y: e.y });
+          }
+          break;
+        case 'UtteranceSpoken': {
+          if (!this.framesOn || this.speechQueue.length >= CHANGE_QUEUE_CAP) break;
+          const heard = e.targetIds.length > 0 ? this.tracks.get(e.targetIds[0]!) : undefined;
+          this.speechQueue.push({ id: e.actorId, x: e.x, y: e.y, to: heard ? { x: heard.x, y: heard.y } : null });
+          break;
+        }
+        case 'WasAttacked':
+        case 'AttackedByPredator': {
+          const t = this.tracks.get(e.actorId);
+          if (t) t.hurtUntil = e.tick + HURT_TICKS;
+          break;
+        }
+        default:
+          break;
+      }
+    }
+  }
+
   private feedItem(exp: Experiment, e: SimEvent): FeedItem {
     const seq = ++this.feedSeq;
     const day = Math.floor(e.tick / TICKS_PER_DAY) + 1;
     const utt = e.payload['utterance'] as { text?: string } | undefined;
     if (e.type === 'UtteranceSpoken' && utt?.text) {
-      return { seq, day, kind: 'speech', who: exp.nameOf(e.actorId), text: utt.text };
+      return { seq, day, kind: 'speech', who: exp.nameOf(e.actorId), whoId: e.actorId, text: utt.text };
     }
-    return { seq, day, kind: 'event', who: exp.nameOf(e.actorId), text: eventPhrase(e.type, e.payload) };
+    return { seq, day, kind: 'event', who: exp.nameOf(e.actorId), whoId: e.actorId, text: eventPhrase(e.type, e.payload) };
   }
 
   private emitDetail(): void {
@@ -584,6 +781,46 @@ export class SimHost {
     this.lastDetail = this.now();
     const id = this.selectedId;
     this.port.post({ kind: 'detail', id: id ?? -1, detail: id === null ? null : exp.agentDetail(id) });
+  }
+
+  /**
+   * Who this being is bound to: parents, children and siblings from the birth
+   * record, and the living beings it feels closest to from its own
+   * relationships. Relationships are a mind's private ledger, so only the
+   * being's own view of them is reported — never a mutual score.
+   */
+  private ties(exp: Experiment, id: number): TiesReport {
+    const kin: number[] = [];
+    const addKin = (other: number): void => {
+      if (other !== id && !kin.includes(other) && this.tracks.has(other)) kin.push(other);
+    };
+    const parentsOf = new Map<number, [number, number]>();
+    for (const birth of exp.births) parentsOf.set(birth.child, birth.parents);
+    const mine = parentsOf.get(id);
+    for (const birth of exp.births) {
+      if (birth.child === id) {
+        addKin(birth.parents[0]);
+        addKin(birth.parents[1]);
+      } else if (birth.parents[0] === id || birth.parents[1] === id) {
+        addKin(birth.child);
+      } else if (mine && (birth.parents[0] === mine[0] || birth.parents[1] === mine[1])) {
+        addKin(birth.child); // a sibling
+      }
+    }
+
+    const bonded: number[] = [];
+    const mind = exp.minds.get(id);
+    if (mind) {
+      const scored: { id: number; score: number }[] = [];
+      for (const [other, r] of mind.relationships.asMap()) {
+        if (other === id || !this.tracks.has(other)) continue;
+        const score = r.trust + r.friendship - r.fear;
+        if (score > BOND_THRESHOLD) scored.push({ id: other, score });
+      }
+      scored.sort((a, b) => (b.score === a.score ? a.id - b.id : b.score - a.score));
+      for (const s of scored.slice(0, BOND_LIMIT)) bonded.push(s.id);
+    }
+    return { id, kin, bonded };
   }
 
   private answer(reqId: number, request: QueryRequest): void {
@@ -595,6 +832,9 @@ export class SimHost {
     switch (request.name) {
       case 'detail':
         this.port.post({ kind: 'query-result', reqId, name: 'detail', result: exp.agentDetail(request.id) });
+        break;
+      case 'ties':
+        this.port.post({ kind: 'query-result', reqId, name: 'ties', result: this.ties(exp, request.id) });
         break;
       case 'analysis':
         this.port.post({ kind: 'query-result', reqId, name: 'analysis', result: exp.analysis() });

@@ -1,17 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ACT_COUNT,
+  ACT_DANGER,
+  ACT_IDLE,
+  ACT_RESTING,
+  ACT_SOCIAL,
+  ACT_WALKING,
   allocFrameArrays,
   beingCapacity,
+  COND_HURT,
+  COND_SICK,
+  COND_STARVING,
   frameBuffers,
   isDetached,
   KIND_UNKNOWN,
   KindCodec,
   PROTOCOL_VERSION,
   resourceBuffers,
-  STATE_ACTIVE,
-  STATE_HUNGRY,
-  STATE_SICK,
-  STATE_SLEEPING,
+  STAGE_ADULT,
+  STAGE_CHILD,
+  STAGE_ELDER,
   wildlifeCapacity,
 } from '../src/renderer/sim/protocol.js';
 
@@ -21,8 +29,20 @@ describe('protocol', () => {
     expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   });
 
-  it('numbers the being states in the order the view colours them', () => {
-    expect([STATE_ACTIVE, STATE_HUNGRY, STATE_SLEEPING, STATE_SICK]).toEqual([0, 1, 2, 3]);
+  it('keeps the quiet acts first, so a default-zero lane draws no badge', () => {
+    expect(ACT_IDLE).toBe(0);
+    expect(ACT_WALKING).toBe(1);
+    expect(ACT_COUNT).toBeGreaterThan(ACT_SOCIAL);
+    expect(new Set([ACT_IDLE, ACT_WALKING, ACT_RESTING, ACT_DANGER, ACT_SOCIAL]).size).toBe(5);
+  });
+
+  it('gives every condition its own bit, so a being can be more than one thing', () => {
+    expect(COND_SICK | COND_STARVING | COND_HURT).toBe(7);
+    expect(COND_SICK & COND_STARVING).toBe(0);
+  });
+
+  it('orders the life stages youngest first', () => {
+    expect([STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]).toEqual([0, 1, 2]);
   });
 });
 
@@ -33,7 +53,9 @@ describe('frame arrays', () => {
     expect(wildlifeCapacity(a)).toBe(4);
     expect(a.pos.length).toBe(20);
     expect(a.heading.length).toBe(10);
-    expect(a.state.length).toBe(10);
+    expect(a.act.length).toBe(10);
+    expect(a.cond.length).toBe(10);
+    expect(a.stage.length).toBe(10);
     expect(a.wildPos.length).toBe(8);
     expect(a.wildKind.length).toBe(4);
   });
@@ -48,8 +70,8 @@ describe('frame arrays', () => {
   it('lists exactly the buffers to transfer, each one distinct', () => {
     const a = allocFrameArrays(3, 3);
     const buffers = frameBuffers(a);
-    expect(buffers).toHaveLength(7);
-    expect(new Set(buffers).size).toBe(7);
+    expect(buffers).toHaveLength(9);
+    expect(new Set(buffers).size).toBe(9);
   });
 
   it('reports detachment once the buffers are gone', () => {
@@ -64,11 +86,15 @@ describe('frame arrays', () => {
     const a = allocFrameArrays(2, 1);
     a.ids[0] = 42;
     a.pos[0] = 1.5;
-    a.state[1] = STATE_SICK;
+    a.act[1] = ACT_RESTING;
+    a.cond[1] = COND_SICK | COND_STARVING;
+    a.stage[1] = STAGE_ELDER;
     const there = structuredClone(a, { transfer: frameBuffers(a) });
     expect(there.ids[0]).toBe(42);
     expect(there.pos[0]).toBeCloseTo(1.5);
-    expect(there.state[1]).toBe(STATE_SICK);
+    expect(there.act[1]).toBe(ACT_RESTING);
+    expect(there.cond[1]).toBe(COND_SICK | COND_STARVING);
+    expect(there.stage[1]).toBe(STAGE_ELDER);
     const back = structuredClone(there, { transfer: frameBuffers(there) });
     expect(back.ids[0]).toBe(42);
     expect(isDetached(there)).toBe(true);

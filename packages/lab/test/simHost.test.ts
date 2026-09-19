@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { Experiment } from '@yggdrasil/engine';
-import { ProxyMindBackend, SimHost, type HostPort } from '../src/renderer/sim/host.js';
-import type { FrameMessage, SimMessage, StatsMessage, WorldMessage } from '../src/renderer/sim/protocol.js';
+import { Experiment, TICKS_PER_DAY } from '@yggdrasil/engine';
+import { daylightAt, ProxyMindBackend, SimHost, type HostPort } from '../src/renderer/sim/host.js';
+import {
+  ACT_COUNT,
+  COND_HURT,
+  COND_SICK,
+  COND_STARVING,
+  STAGE_ADULT,
+  STAGE_ELDER,
+  type FrameMessage,
+  type SimMessage,
+  type StatsMessage,
+  type WorldMessage,
+} from '../src/renderer/sim/protocol.js';
 
 /** Collects what the host would post; transfer lists are inert in-process. */
 class Recorder implements HostPort {
@@ -206,8 +217,56 @@ describe('SimHost — frames', () => {
       const info = living.find((a) => a.id === frame.arrays.ids[i]);
       expect(frame.arrays.pos[i * 2]).toBeCloseTo(info!.x, 3);
       expect(frame.arrays.pos[i * 2 + 1]).toBeCloseTo(info!.y, 3);
-      expect(frame.arrays.state[i]).toBeLessThanOrEqual(3);
+      expect(frame.arrays.act[i]).toBeLessThan(ACT_COUNT);
+      expect(frame.arrays.cond[i]! & ~(COND_SICK | COND_STARVING | COND_HURT)).toBe(0);
+      expect(frame.arrays.stage[i]).toBeLessThanOrEqual(STAGE_ELDER);
     }
+  });
+
+  it('gives every being a life stage, and says who is a child', () => {
+    const { host, port } = boot('stages', 40);
+    const frame = port.last('frame') as FrameMessage;
+    // Founders are seeded at adult age, so a fresh world holds no children.
+    for (let i = 0; i < frame.beings; i++) expect(frame.arrays.stage[i]).toBe(STAGE_ADULT);
+  });
+
+  it('sends each name once, and an unnamed being as the empty string', () => {
+    const { host, port, clock } = boot('names', 20);
+    const first = port.last('frame') as FrameMessage;
+    expect(first.names).toHaveLength(first.beings);
+    // Beings are born unnamed in this engine; only a conscious mind names itself.
+    expect(first.names.every((n) => n.name === '')).toBe(true);
+    host.handle({ kind: 'run', running: true });
+    clock.advance(32);
+    host.pump();
+    expect((port.all('frame').at(-1) as FrameMessage).names).toEqual([]);
+  });
+
+  /**
+   * The view must never show light the sim denies. `isNight()` turns true two
+   * thirds through the day, so full daylight has to end exactly there, and the
+   * whole dusk-and-dawn crossfade has to live inside the engine's night.
+   */
+  it('reports the light the engine says it is', () => {
+    expect(daylightAt(0)).toBe(1);
+    expect(daylightAt(TICKS_PER_DAY / 2)).toBe(1);
+    expect(daylightAt(Math.floor(TICKS_PER_DAY * (2 / 3)) - 1)).toBe(1);
+    expect(daylightAt(Math.ceil(TICKS_PER_DAY * (2 / 3)) + 1)).toBeLessThan(1);
+    expect(daylightAt(Math.floor(TICKS_PER_DAY * 0.8))).toBe(0);
+    expect(daylightAt(Math.floor(TICKS_PER_DAY * 0.95))).toBe(0);
+    expect(daylightAt(TICKS_PER_DAY)).toBe(1); // the next day, wrapped
+    expect(daylightAt(TICKS_PER_DAY * 3 + 100)).toBe(1);
+  });
+
+  it('answers who a being is kin to and bonded to', async () => {
+    const { host, port } = boot('ties', 30);
+    const id = host.experiment!.agentIds[0]!;
+    host.handle({ kind: 'query', reqId: 7, request: { name: 'ties', id } });
+    const answer = port.all('query-result').at(-1) as { name: string; result: { id: number; kin: number[]; bonded: number[] } };
+    expect(answer.name).toBe('ties');
+    expect(answer.result.id).toBe(id);
+    expect(answer.result.kin).not.toContain(id); // never its own kin
+    expect(answer.result.bonded).not.toContain(id);
   });
 
   it('names each animal kind exactly once, then refers to it by code', () => {
@@ -448,9 +507,13 @@ describe('ProxyMindBackend', () => {
   it('posts a think request and resolves with what comes back', async () => {
     const port = new Recorder();
     const backend = new ProxyMindBackend('model-x', port);
-    const promise = backend.complete({ situation: 'hungry' } as never, 'retry me');
+    const prompt = { system: 'you are', user: 'hungry. what now?' };
+    const promise = backend.complete(prompt as never, { situation: 'hungry' } as never);
     const request = port.last('llm-request')!;
-    expect(request).toMatchObject({ reqId: 1, retryError: 'retry me' });
+    // Both halves travel: the exact messages the engine composed, and the
+    // situation behind them. A transport bridge must never rebuild one from
+    // the other.
+    expect(request).toMatchObject({ reqId: 1, prompt, input: { situation: 'hungry' } });
     backend.settle(request.reqId, '{"plan":[]}');
     await expect(promise).resolves.toBe('{"plan":[]}');
   });
@@ -458,7 +521,7 @@ describe('ProxyMindBackend', () => {
   it('rejects with the message main sent, so NO_LLM_KEY still reads as NO_LLM_KEY', async () => {
     const port = new Recorder();
     const backend = new ProxyMindBackend('model-x', port);
-    const promise = backend.complete({} as never);
+    const promise = backend.complete({} as never, {} as never);
     backend.settle(1, undefined, 'NO_LLM_KEY');
     await expect(promise).rejects.toThrow('NO_LLM_KEY');
   });
@@ -467,7 +530,7 @@ describe('ProxyMindBackend', () => {
     const port = new Recorder();
     const backend = new ProxyMindBackend('model-x', port);
     expect(() => backend.settle(999, 'stray')).not.toThrow();
-    const promise = backend.complete({} as never);
+    const promise = backend.complete({} as never, {} as never);
     backend.abort();
     await expect(promise).rejects.toThrow('DISPOSED');
   });

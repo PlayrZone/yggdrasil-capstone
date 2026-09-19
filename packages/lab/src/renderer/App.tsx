@@ -3,11 +3,13 @@ import { SimClient, type SimFault } from './sim/client.js';
 import { SPEED_PRESETS, type SpeedPreset } from './sim/presets.js';
 import type { AgentDetail, FeedItem, QueryRequest, QueryResults, StatsMessage, WorldMessage } from './sim/protocol.js';
 import { World3D } from './World3D.js';
+import { Legend } from './Legend.js';
 import { ActivityView } from './ActivityView.js';
 import { ReportsView } from './ReportsView.js';
 import { AnalysisView } from './AnalysisView.js';
 import { SocietyView } from './SocietyView.js';
 import { CultureView } from './CultureView.js';
+import { displayName, type ZoomBand } from './beings.js';
 
 type Tab = 'world' | 'activity' | 'analysis' | 'society' | 'culture' | 'reports';
 
@@ -56,27 +58,60 @@ function usePolled<K extends 'analysis' | 'society' | 'culture'>(
 
 /**
  * The speed read-out. A preset is a promise about wall-clock time per sim day,
- * and a saturated CPU cannot keep it — so whenever the sim is more than 5% off
- * the rate the button sells, both numbers are shown. Never advertise a speed
- * the world is not doing.
+ * and a saturated CPU cannot keep it, so when the sim is well off the rate the
+ * button sells, both numbers are shown.
+ *
+ * It appears at a 14% miss and disappears again only below 6%. A single
+ * threshold puts every world that runs near its limit on the boundary, where
+ * the warning flickers on and off several times a second — which reads as a
+ * broken interface rather than as a world under load, and is the fastest way to
+ * teach someone to ignore a true warning. The gap between the two numbers is
+ * the hysteresis; the worker's own averaging does the rest.
  */
-function SpeedLabel({ client, preset }: { client: SimClient; preset: SpeedPreset }): React.ReactElement {
+const SHOW_MISS = 0.14;
+const HIDE_MISS = 0.06;
+
+function SpeedLabel({ client, preset, running }: { client: SimClient; preset: SpeedPreset; running: boolean }): React.ReactElement {
   const [achieved, setAchieved] = useState(0);
+  const [off, setOff] = useState(false);
+  const offRef = useRef(false);
+  useEffect(() => {
+    offRef.current = false;
+    setOff(false);
+  }, [preset.mult]);
+  // A paused world achieves nothing, and saying so is not a warning about the
+  // machine — it is a warning about the pause button, which the reader just
+  // pressed. Round one printed "2400× asked · 0× achieved" over a stopped sim.
+  useEffect(() => {
+    if (running) return;
+    offRef.current = false;
+    setOff(false);
+  }, [running]);
   useEffect(
     () =>
       client.onStats((s) => {
-        // Coarse so the label does not flicker, and so this component re-renders
+        // Coarse so the label does not churn, and so this component re-renders
         // far less often than the 4 Hz it is fed at.
-        const rounded = s.achievedMult >= 100 ? Math.round(s.achievedMult / 10) * 10 : Math.round(s.achievedMult);
+        const rounded = s.achievedMult >= 100 ? Math.round(s.achievedMult / 10) * 10 : Math.round(s.achievedMult * 10) / 10;
         setAchieved((prev) => (prev === rounded ? prev : rounded));
+        if (!running) return; // a stopped world is not a world falling behind
+        if (s.achievedMult <= 0) return; // no measurement yet — say nothing
+        const miss = Math.abs(s.achievedMult - preset.mult) / preset.mult;
+        const next = offRef.current ? miss > HIDE_MISS : miss > SHOW_MISS;
+        if (next !== offRef.current) {
+          offRef.current = next;
+          setOff(next);
+        }
       }),
-    [client],
+    [client, preset.mult, running],
   );
-  const off = achieved > 0 && Math.abs(achieved - preset.mult) / preset.mult > 0.05;
   return (
     <label>
       Speed — {preset.rate}
-      {off && <span className="achieved"> · {preset.mult}× asked · {achieved}× achieved</span>}
+      {/* Guarded at the render, not only at the listener: a stats tick that
+          crosses a pause click can still set the flag, and a stopped world
+          that reports "0× achieved" is a warning about nothing. */}
+      {running && off && <span className="achieved"> · {preset.mult}× asked · {achieved}× achieved</span>}
     </label>
   );
 }
@@ -136,28 +171,47 @@ function LiveFeed({ client }: { client: SimClient }): React.ReactElement | null 
     <section className="feed">
       <label>What they're doing &amp; saying</label>
       <ul>
-        {feed.map((e) => (
-          <li key={e.seq} className={e.kind}>
-            <span className="t">d{e.day}</span>{' '}
-            {e.kind === 'speech'
-              ? <span key="speech"><b>{e.who}</b>: “{e.text}”</span>
-              : <span key="event" className="ev">{e.who} · {e.text}</span>}
-          </li>
-        ))}
+        {feed.map((e) => {
+          // The same being is the same word everywhere in this renderer — in
+          // the world, in the selection bar, in the inspector and here.
+          const who = displayName(e.whoId, e.who).text;
+          return (
+            <li key={e.seq} className={e.kind}>
+              <span className="t">d{e.day}</span>{' '}
+              {e.kind === 'speech'
+                ? <span key="speech"><b>{who}</b>: “{e.text}”</span>
+                : <span key="event" className="ev">{who} · {e.text}</span>}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
 }
 
-/** The selected being. Its own subscriber, so the stats cadence never touches it. */
-function Inspector({ client, onClose }: { client: SimClient; onClose: () => void }): React.ReactElement | null {
+/**
+ * The selected being. Its own subscriber, so the stats cadence never touches it.
+ *
+ * It reports its own width up to the world view, which aims the camera clear of
+ * it: a panel that opens because you clicked a being must not then be sitting
+ * on that being.
+ */
+function Inspector({ client, onClose, onWidth }: { client: SimClient; onClose: () => void; onWidth: (px: number) => void }): React.ReactElement | null {
   const [detail, setDetail] = useState<AgentDetail | null>(null);
+  const box = useRef<HTMLDivElement | null>(null);
   useEffect(() => client.onDetail(setDetail), [client]);
+  const open = detail !== null;
+  useEffect(() => {
+    const el = box.current;
+    onWidth(open && el ? el.offsetWidth + 28 : 0);
+    return () => onWidth(0);
+  }, [open, onWidth]);
   if (!detail) return null;
+  const name = displayName(detail.id, detail.name);
   return (
-    <div className="inspector">
+    <div className="inspector" ref={box}>
       <div className="ihead">
-        <b>{detail.name}</b>
+        <b>{name.text}</b>
         <span>{detail.alive ? detail.region : 'dead'}{detail.archetype ? ` · ${detail.archetype}` : ''}</span>
         <button onClick={onClose}>✕</button>
       </div>
@@ -167,7 +221,7 @@ function Inspector({ client, onClose }: { client: SimClient; onClose: () => void
         ))}
       </div>
       <div className="iknow">
-        <label>What {detail.name.split(' ')[0]} has learned ({detail.knowledge.length})</label>
+        <label>What {name.text} has learned ({detail.knowledge.length})</label>
         <ul>
           {detail.knowledge.slice(0, 12).map((k, i) => (
             <li key={i}>{k.statement} <em>{Math.round(k.confidence * 100)}%</em></li>
@@ -185,6 +239,7 @@ export function App(): React.ReactElement {
   const worldPayloadRef = useRef<WorldMessage | null>(null);
   const tabRef = useRef<Tab>('world');
   const hiddenRef = useRef({ beings: 0, wildlife: 0 });
+  const bandRef = useRef<ZoomBand>('default');
 
   const [tab, setTab] = useState<Tab>('world');
   const [seed, setSeed] = useState('genesis-01');
@@ -199,6 +254,9 @@ export function App(): React.ReactElement {
   const [selected, setSelected] = useState<{ id: number; name: string } | null>(null);
   const [notDrawn, setNotDrawn] = useState({ beings: 0, wildlife: 0 });
   const [fault, setFault] = useState<SimFault | null>(null);
+  const [following, setFollowing] = useState(false);
+  const [tiesOn, setTiesOn] = useState(false);
+  const [band, setBand] = useState<ZoomBand>('default');
 
   const analysis = usePolled(client, tab === 'analysis', 'analysis', 2500);
   const society = usePolled(client, tab === 'society', 'society', 3000);
@@ -210,11 +268,40 @@ export function App(): React.ReactElement {
   const canvasCb = useCallback(
     (el: HTMLCanvasElement | null) => {
       if (el) {
-        const world = new World3D(el, (id) => client.select(id));
+        const world = new World3D(el, (id) => {
+          client.select(id);
+          if (id === null) {
+            setFollowing(false);
+            setTiesOn(false);
+          }
+        });
         world3dRef.current = world;
-        // A deterministic handle for drivers: a being is ~2 px at the default
-        // camera, so a test that wants to click one has to be told where it is.
-        window.__ygg = { drawnIds: () => world.drawnIds(), screenPositionOf: (id) => world.screenPositionOf(id) };
+        // A read-only handle for drivers and reviewers: what the view drew, so a
+        // screenshot can be scored against the ground truth behind it.
+        window.__ygg = {
+          drawnIds: () => world.drawnIds(),
+          screenPositionOf: (id) => world.screenPositionOf(id),
+          stateOf: (id) => world.stateOf(id),
+          stageOf: (id) => world.stageOf(id),
+          conditionOf: (id) => world.conditionOf(id),
+          activityOf: (id) => world.activityOf(id),
+          headingOf: (id) => world.headingOf(id),
+          headingOnScreen: (id) => world.headingOnScreen(id),
+          nameOf: (id) => world.nameOf(id),
+          labelsShown: () => world.labelsShown(),
+          clustersShown: () => world.clustersShown(),
+          beingPixels: () => world.beingPixels(),
+          daylight: () => world.daylightNow(),
+          zoomBand: () => world.zoomBand(),
+          bandPixels: () => world.bandPixels(),
+          annotationPixels: () => world.annotationPixels(),
+          scaleReport: () => world.scaleReport(),
+          promises: () => world.promises(),
+          activityShownOf: (id) => world.activityShownOf(id),
+          stageShownOf: (id) => world.stageShownOf(id),
+          conditionShownOf: (id) => world.conditionShownOf(id),
+          movingShownOf: (id) => world.movingShownOf(id),
+        };
         const payload = worldPayloadRef.current;
         if (payload) {
           world.resetWorld();
@@ -284,9 +371,35 @@ export function App(): React.ReactElement {
     [client],
   );
 
+  // Kin and bonds, only while someone is looking at them. Relationships drift,
+  // so the overlay is refreshed while it is on — and costs nothing while it is off.
+  useEffect(() => {
+    if (!tiesOn || !selected) {
+      world3dRef.current?.setTies(null);
+      return;
+    }
+    let live = true;
+    const ask = (): void => {
+      void client.query({ name: 'ties', id: selected.id }).then(
+        (ties) => { if (live) world3dRef.current?.setTies(ties); },
+        () => undefined, // no world to ask; the next tick tries again
+      );
+    };
+    ask();
+    const timer = setInterval(ask, 2500);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [client, tiesOn, selected]);
+
+  useEffect(() => { world3dRef.current?.setFollow(following); }, [following]);
+
   const newWorld = useCallback(() => {
     setRunning(false);
     setSelected(null);
+    setFollowing(false);
+    setTiesOn(false);
     client.setSpeed(SPEED_PRESETS[speedIdx]!.mult);
     client.createWorld(seed, agentCount, llm.hasKey ? { model: llm.model } : null);
   }, [client, seed, agentCount, llm, speedIdx]);
@@ -330,10 +443,23 @@ export function App(): React.ReactElement {
   }, [client, tab]);
 
   // One persistent rAF: orbit damping + draw. The sim is not in this loop.
+  //
+  // The legend is the one thing outside the canvas that has to follow the zoom,
+  // because what the view draws changes with it. React is told only when the
+  // BAND changes — a `setState` per frame would re-render the whole shell sixty
+  // times a second to say the same word.
   useEffect(() => {
     let raf = 0;
     const loop = (): void => {
-      if (tabRef.current === 'world') world3dRef.current?.render();
+      const world = world3dRef.current;
+      if (world && tabRef.current === 'world') {
+        world.render();
+        const now = world.zoomBand();
+        if (now !== bandRef.current) {
+          bandRef.current = now;
+          setBand(now);
+        }
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -348,10 +474,16 @@ export function App(): React.ReactElement {
     setKeyInput('');
   }, [keyInput]);
 
+  const setPanelWidth = useCallback((px: number) => {
+    world3dRef.current?.setPanelWidth(px);
+  }, []);
+
   const clearSelection = useCallback(() => {
     client.select(null);
     world3dRef.current?.setSelected(null);
     setSelected(null);
+    setFollowing(false);
+    setTiesOn(false);
   }, [client]);
 
   const sendIdea = useCallback(() => {
@@ -362,6 +494,10 @@ export function App(): React.ReactElement {
   }, [client, idea, selected]);
 
   const preset = SPEED_PRESETS[speedIdx]!;
+  // Beings are born unnamed here; only a conscious mind names itself. Everyone
+  // else gets a designation the lab can say out loud, because `#1830` is not
+  // something a researcher can hold in their head or narrate a civilization from.
+  const selectedName = selected ? displayName(selected.id, selected.name) : null;
 
   return (
     <div className="lab">
@@ -400,17 +536,26 @@ export function App(): React.ReactElement {
       <div className="body" style={{ display: tab === 'world' ? 'flex' : 'none' }}>
         <div className="stage">
           <canvas ref={canvasCb} className="world3d" />
-          <div className="legend">
-            <span><i style={{ background: '#43d18a' }} /> active</span>
-            <span><i style={{ background: '#e09a3a' }} /> hungry</span>
-            <span><i style={{ background: '#5b8bd0' }} /> sleeping</span>
-            <span><i style={{ background: '#e0524d' }} /> sick</span>
-            {notDrawn.beings > 0 && <span className="warn">{notDrawn.beings} Gahallians not drawn</span>}
+
+          <div className="selbar">
+            {selected && selectedName ? (
+              <>
+                <b className={selectedName.selfChosen ? 'named' : 'given'}>{selectedName.text}</b>
+                <span className="given-note">{selectedName.selfChosen ? 'named itself' : 'lab designation'}</span>
+                <button onClick={() => world3dRef.current?.focusSelected()}>Centre on them</button>
+                <button className={following ? 'sel' : ''} onClick={() => setFollowing((f) => !f)}>{following ? 'Following' : 'Follow'}</button>
+                <button className={tiesOn ? 'sel' : ''} onClick={() => setTiesOn((t) => !t)}>{tiesOn ? 'Hide kin & bonds' : 'Show kin & bonds'}</button>
+                <button onClick={clearSelection}>Clear</button>
+              </>
+            ) : (
+              <span className="orbit">drag to orbit · scroll to zoom · click a being to follow it</span>
+            )}
+            {notDrawn.beings > 0 && <span className="warn">{notDrawn.beings} beings not drawn</span>}
             {notDrawn.wildlife > 0 && <span className="warn">{notDrawn.wildlife} animals not drawn</span>}
-            <span className="orbit">drag to orbit · scroll to zoom · click a Gahallian</span>
           </div>
 
-          <Inspector client={client} onClose={clearSelection} />
+          <Legend band={band} />
+          <Inspector client={client} onClose={clearSelection} onWidth={setPanelWidth} />
         </div>
 
         <aside className="panel">
@@ -423,7 +568,7 @@ export function App(): React.ReactElement {
             <label>Population: {agentCount}
               <input type="range" min={20} max={256} step={2} value={agentCount} disabled={running} onChange={(e) => setAgentCount(Number(e.target.value))} />
             </label>
-            <SpeedLabel client={client} preset={preset} />
+            <SpeedLabel client={client} preset={preset} running={running} />
             <div className="speeds">
               {SPEED_PRESETS.map((p, i) => (
                 <button key={p.mult} className={i === speedIdx ? 'sel' : ''} onClick={() => setSpeedIdx(i)}>{p.label}</button>
@@ -434,11 +579,11 @@ export function App(): React.ReactElement {
           <LiveStats client={client} />
 
           <section className="idea">
-            <label>Give a thought to {selected ? selected.name : 'one Gahallian'} (only you can)</label>
+            <label>Give a thought to {selectedName ? selectedName.text : 'one Gahallian'} (only you can)</label>
             <div className="row">
               <input
                 value={idea}
-                placeholder={selected ? `whisper to ${selected.name}…` : 'click a Gahallian first'}
+                placeholder={selectedName ? `whisper to ${selectedName.text}…` : 'click a Gahallian first'}
                 disabled={!selected}
                 onChange={(e) => setIdea(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && sendIdea()}

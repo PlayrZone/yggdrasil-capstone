@@ -32,16 +32,110 @@ body {
 .stage { flex: 1; display: flex; flex-direction: column; min-width: 0; gap: 10px; padding: 16px; }
 .world { background: #0a0d10; border: 1px solid var(--line); border-radius: 6px; image-rendering: pixelated; }
 .world3d { flex: 1; min-height: 0; width: 100%; background: #0a0e12; border: 1px solid var(--line); border-radius: 6px; display: block; }
-.legend { display: flex; gap: 16px; color: var(--muted); font-size: 12px; align-items: center; justify-content: center; }
-.legend .orbit { margin-left: auto; font-style: italic; }
+
+/* Names over the world. A fixed pool of nodes the view moves; never one per being. */
+.wlabels { position: absolute; left: 0; top: 0; pointer-events: none; overflow: hidden; }
+.wlabel {
+  position: absolute; top: 0; left: 0; white-space: nowrap;
+  font-size: 11.5px; line-height: 1; letter-spacing: .1px;
+  color: #eef3f6; padding: 3px 7px 4px; border-radius: 4px;
+  background: rgba(10, 14, 18, 0.72); border: 1px solid rgba(160, 180, 195, 0.22);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+/* Dotted underline = a designation the lab gave it. Solid = a name it chose. */
+.wlabel { text-decoration: underline dotted rgba(205, 216, 222, 0.55); text-underline-offset: 3px; }
+.wlabel.named { text-decoration: none; color: #fff; }
+.wlabel.sel { border-color: rgba(255, 211, 77, 0.75); background: rgba(38, 30, 8, 0.86); color: #ffe9a8; }
+/* A name that had to move to find room keeps a line home to its being. */
+.wleader {
+  position: absolute; top: 0; left: 0; height: 1px; transform-origin: 0 0;
+  background: linear-gradient(90deg, rgba(210, 225, 235, 0.72), rgba(210, 225, 235, 0.28));
+}
+
+/* A crowd: an outline round the group, and how many are inside it. */
+.whull {
+  position: absolute; top: 0; left: 0; border-radius: 50%;
+  border: 1px dashed rgba(226, 236, 243, 0.34); background: rgba(150, 190, 215, 0.06);
+}
+/* Dark like the names, not white like a being: a count is chrome, not a body. */
+.wcount {
+  position: absolute; top: 0; left: 0; white-space: nowrap;
+  font-size: 10.5px; font-weight: 650; line-height: 1; letter-spacing: .2px;
+  color: #eaf2f7; background: rgba(10, 14, 18, 0.78); border: 1px solid rgba(180, 200, 214, 0.42);
+  padding: 2px 5px 3px; border-radius: 9px;
+}
+
+/* Which band the view is in, and the scale of the ground under it. A view that
+   silently changes what it draws cannot be trusted: the frame where the
+   pictograms vanished looks exactly like the frame where nobody was doing
+   anything, unless it says which one it is. Quiet, bottom-left, out of the
+   subject's way. */
+.wband {
+  position: absolute; left: 12px; bottom: 10px; display: flex; align-items: center; gap: 8px;
+  font-size: 10.5px; letter-spacing: .3px; color: #9fb2bd; text-transform: uppercase;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+}
+.wband span { opacity: 0.85; }
+.wband .wbar {
+  display: block; height: 5px; border: 1px solid rgba(214, 228, 238, 0.7); border-top: 0;
+  flex: none; position: relative;
+}
+.wband .wbar::after {
+  content: attr(data-span); position: absolute; left: 0; bottom: 7px;
+  font-size: 9px; letter-spacing: .2px; color: #8fa3ae; white-space: nowrap;
+}
+
+/* The selection strip sits over the canvas, opposite the inspector. */
+.selbar {
+  position: absolute; left: 30px; top: 30px; display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 7px; font-size: 12px;
+  background: rgba(13, 18, 23, 0.82); border: 1px solid var(--line); backdrop-filter: blur(4px);
+}
+.selbar b { color: #fff; font-size: 14px; letter-spacing: .2px; }
+.selbar b.given { text-decoration: underline dotted rgba(205, 216, 222, 0.5); text-underline-offset: 3px; }
+.selbar .given-note { color: var(--muted); font-size: 11px; margin-right: 4px; }
+.selbar button { padding: 4px 9px; font-size: 11.5px; }
+.selbar button.sel { background: var(--accent); border-color: var(--accent); color: #04150d; font-weight: 600; }
+/* With nothing selected the strip is only a hint, and a hint does not need a box. */
+.selbar:not(:has(b)) { background: none; border-color: transparent; backdrop-filter: none; padding-left: 2px; }
+.selbar .orbit { color: #c3d2db; font-style: italic; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95); }
 /* Only ever rendered when the view is dropping beings — silence is the normal state. */
-.legend .warn { color: #e0524d; }
+.selbar .warn { color: #e0524d; }
+
+/* The key to every mark on the map, and nothing that is not on it. */
+.legend { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: #8d9ca6; line-height: 1.25; }
+.lrow { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 12px; }
+.lname { color: #57666f; letter-spacing: .2px; }
+.lname:not(:first-child) { margin-left: 4px; padding-left: 14px; border-left: 1px solid var(--line); }
+.litem { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.litem em { color: #57666f; font-style: normal; }
+.litem.quiet { color: #57666f; white-space: normal; }
+.litem svg { display: block; flex: none; }
+.legend .sw { display: inline-block; width: 9px; height: 9px; flex: none; }
+.legend .swcount {
+  display: inline-block; font-style: normal; font-size: 9.5px; font-weight: 650; line-height: 1;
+  color: #eaf2f7; background: rgba(10, 14, 18, 0.78); border: 1px solid rgba(180, 200, 214, 0.42);
+  border-radius: 8px; padding: 1px 4px 2px;
+}
+.lmore {
+  background: transparent; border: 1px solid var(--line); color: #8d9ca6;
+  font-size: 10.5px; padding: 1px 7px 2px; border-radius: 10px; cursor: pointer; margin-left: auto;
+}
+.lmore:hover { color: #dfe9ef; border-color: #35424b; }
 /* Shown only when the sim is not keeping the speed the preset promises. */
 .controls .achieved { color: #e09a3a; }
 
 /* Selected-agent inspector (floats over the 3D view) */
 .stage { position: relative; }
-.inspector { position: absolute; top: 24px; right: 24px; width: 280px; background: rgba(17,23,28,0.95); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; backdrop-filter: blur(4px); }
+/* Narrow, and never taller than it has to be: this floats over the world, and
+   the world is the instrument. It reports its own width to the 3D view, which
+   aims the camera clear of it when you centre on a being. */
+.inspector {
+  position: absolute; top: 20px; right: 16px; width: 232px;
+  max-height: calc(100% - 40px); overflow-y: auto;
+  background: rgba(17, 23, 28, 0.93); border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; backdrop-filter: blur(4px);
+}
 .ihead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
 .ihead b { color: #fff; font-size: 15px; }
 .ihead span { color: var(--muted); font-size: 11px; text-transform: capitalize; flex: 1; }
@@ -52,13 +146,12 @@ body {
 .nbar { flex: 1; height: 7px; background: #0c1216; border-radius: 4px; overflow: hidden; }
 .nbar i { display: block; height: 100%; }
 .iknow label { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
-.iknow ul { list-style: none; margin: 0; padding: 0; max-height: 200px; overflow-y: auto; }
+.iknow ul { list-style: none; margin: 0; padding: 0; max-height: 132px; overflow-y: auto; }
 .iknow li { font-size: 12px; color: #cdd8de; padding: 3px 0; border-bottom: 1px solid #161d23; }
 .iknow li em { color: var(--green); font-style: normal; float: right; }
 .iknow li.empty { color: var(--muted); }
 .ideahint { color: var(--muted); font-size: 11px; margin: 8px 0 0; line-height: 1.4; }
 button:disabled, input:disabled { opacity: 0.5; cursor: not-allowed; }
-.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
 
 .panel { width: 340px; border-left: 1px solid var(--line); background: var(--panel); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
 .panel section { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }

@@ -166,9 +166,12 @@ describe('SimClient — restart', () => {
     expect(client.currentFault).toBeNull();
     expect(faults.at(-1)).toBeNull();
 
+    // A fresh worker is told the speed and frame state it never heard, then the
+    // world it is there to build.
+    expect(worker().kinds()).toEqual(['speed', 'frames']);
     client.createWorld('genesis-01', 40, null);
     client.setRunning(true);
-    expect(worker().kinds()).toEqual(['create', 'run']);
+    expect(worker().kinds()).toEqual(['speed', 'frames', 'create', 'run']);
   });
 
   it('gives the fresh worker a clean grace period', () => {
@@ -191,7 +194,7 @@ describe('SimClient — normal traffic', () => {
     client.createWorld('s', 10, null);
     worker().deliver({
       kind: 'frame', tick: 10, day: 1, beings: 0, beingsAlive: 0, wildlife: 0, wildlifeTotal: 0,
-      animalKinds: [], structures: [], arrays: allocFrameArrays(4, 4),
+      animalKinds: [], structures: [], names: [], deaths: [], speech: [], daylight: 1, arrays: allocFrameArrays(4, 4),
     });
     expect(worker().kinds()).toEqual(['create', 'ack']);
     expect(client.currentFault).toBeNull();
@@ -211,5 +214,55 @@ describe('SimClient — normal traffic', () => {
     const pending = client.query({ name: 'culture' });
     worker().deliver({ kind: 'query-failed', reqId: 1, message: 'NO_WORLD' });
     await expect(pending).rejects.toThrow('NO_WORLD');
+  });
+});
+
+describe('SimClient — a new world gets a new worker', () => {
+  it('keeps the first world on the worker it was born on', () => {
+    const { client, workers, worker } = harness();
+    client.createWorld('a', 10, null);
+    expect(workers).toHaveLength(1);
+    expect(worker().kinds()).toEqual(['create']);
+  });
+
+  /**
+   * The whole point of the recycle: a worker that has grown a heap to hold a
+   * few hundred minds does not give that memory back when the Experiment is
+   * dropped. Terminating it does.
+   */
+  it('terminates the old worker and builds the second world on a fresh one', () => {
+    const { client, workers } = harness();
+    client.createWorld('a', 10, null);
+    client.createWorld('b', 10, null);
+    expect(workers).toHaveLength(2);
+    expect(workers[0]!.terminated).toBe(1);
+    const created = workers[1]!.sent.find((c) => c.kind === 'create');
+    expect(created).toMatchObject({ kind: 'create', seed: 'b' });
+  });
+
+  it('tells the fresh worker the speed and frame state it was never told', () => {
+    const { client, workers } = harness();
+    client.setSpeed(600);
+    client.setFrames(false);
+    client.createWorld('a', 10, null);
+    client.createWorld('b', 10, null);
+    expect(workers[1]!.sent[0]).toEqual({ kind: 'speed', mult: 600 });
+    expect(workers[1]!.sent[1]).toEqual({ kind: 'frames', on: false });
+  });
+
+  it('rejects anything still waiting on the world that is being replaced', async () => {
+    const { client } = harness();
+    client.createWorld('a', 10, null);
+    const pending = client.query({ name: 'society' });
+    client.createWorld('b', 10, null);
+    await expect(pending).rejects.toThrow('NEW_WORLD');
+  });
+
+  it('does not recycle after a restart has already handed over a fresh worker', () => {
+    const { client, workers } = harness();
+    client.createWorld('a', 10, null);
+    client.restart();
+    client.createWorld('b', 10, null);
+    expect(workers).toHaveLength(2);
   });
 });

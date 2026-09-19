@@ -86,6 +86,11 @@ export class SimClient {
   private lastHeard = 0;
   private expectRunning = false;
   private disposed = false;
+  /** State a fresh worker has to be told again, because it was never told. */
+  private speed = 1;
+  private framesOn = true;
+  /** True once a world has been built on the current worker. */
+  private worldOnWorker = false;
 
   constructor(options: SimClientOptions = {}) {
     this.spawn = options.spawn ?? spawnSimWorker;
@@ -136,7 +141,20 @@ export class SimClient {
     return this.fault;
   }
 
+  /**
+   * Build a world, on a worker that has never held one.
+   *
+   * A second world on the same worker leaves the first one's cost behind: the
+   * old Experiment is dropped, but a worker that has grown a heap to hold a
+   * few hundred minds, their memories and a full event log does not give that
+   * memory back — a fresh Day 1 sits behind a gigabyte and a half of a world
+   * that no longer exists. So a new world gets a new worker, and the old one is
+   * terminated, which is the only way this process actually reclaims it.
+   */
   createWorld(seed: string, population: number, llm: { model: string } | null): void {
+    if (this.disposed) return;
+    if (this.worldOnWorker) this.respawn('NEW_WORLD');
+    this.worldOnWorker = true;
     this.post({ kind: 'create', seed, population, llm });
   }
 
@@ -147,11 +165,13 @@ export class SimClient {
   }
 
   setSpeed(mult: number): void {
+    this.speed = mult;
     this.post({ kind: 'speed', mult });
   }
 
   /** Stop paying for frames nobody is drawing (the world tab is hidden). */
   setFrames(on: boolean): void {
+    this.framesOn = on;
     this.post({ kind: 'frames', on });
   }
 
@@ -178,16 +198,29 @@ export class SimClient {
    */
   restart(): void {
     if (this.disposed) return;
+    this.respawn('RESTARTED');
+    emit(this.faultListeners, null);
+  }
+
+  /**
+   * Trade the current worker for a fresh one. Everything the old worker was
+   * told — the speed, whether frames are wanted — has to be said again, because
+   * the new one starts at the host's defaults and would otherwise run a world
+   * at 1× under a button that says 600×.
+   */
+  private respawn(reason: string): void {
     try {
       this.worker.terminate();
     } catch {
       // a worker that already died has nothing to terminate
     }
-    this.rejectPending('RESTARTED');
+    this.rejectPending(reason);
     this.expectRunning = false;
+    this.worldOnWorker = false;
     this.fault = null;
     this.worker = this.attach(this.spawn());
-    emit(this.faultListeners, null);
+    this.post({ kind: 'speed', mult: this.speed });
+    this.post({ kind: 'frames', on: this.framesOn });
   }
 
   /**
@@ -265,7 +298,7 @@ export class SimClient {
         break;
       }
       case 'llm-request':
-        this.forwardThink(message.reqId, message.input, message.retryError);
+        this.forwardThink(message.reqId, message.input);
         break;
       case 'ready':
         if (message.version !== PROTOCOL_VERSION) {
@@ -283,10 +316,16 @@ export class SimClient {
    * think request comes here, crosses the existing preload IPC (rate-limited
    * and schema-checked in main, where the key lives), and the raw text goes
    * back to the worker. Nothing about the key moves.
+   *
+   * It forwards the ThinkInput, because that is what the preload bridge and
+   * main's validator still accept. The engine has since moved to sending the
+   * composed prompt instead, and the worker already puts it on this wire — but
+   * main is the only place that can start using it, so until it does, a
+   * conscious mind's retry feedback is composed on the far side as before.
    */
-  private forwardThink(reqId: number, input: unknown, retryError?: string): void {
+  private forwardThink(reqId: number, input: unknown): void {
     const lab = window.lab;
-    const call = lab ? lab.llmComplete(input, retryError) : Promise.reject(new Error('NO_BRIDGE'));
+    const call = lab ? lab.llmComplete(input) : Promise.reject(new Error('NO_BRIDGE'));
     void call.then(
       (text) => this.post({ kind: 'llm-result', reqId, text }),
       (error: unknown) => this.post({ kind: 'llm-result', reqId, error: error instanceof Error ? error.message : String(error) }),
