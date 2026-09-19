@@ -235,3 +235,146 @@ plain object`; legacy shape -> `unexpected key "snapshot"`; **unknown world (`'f
 `BAD_THINK_PROMPT: unknown world`, never defaulted**; genuine engine-built pair and its retry with
 `worldId: 'forager-continent'` -> **`NO_LLM_KEY`**. All under 5 ms. Renderer: `process`, `require`, `module`
 all `undefined`, `window.lab` present. 0 page errors in any of the four sessions.
+
+---
+
+# Round 3 (L3a) (`da7779a`) — **FAIL**
+
+Built and run from a **permanent clean worktree**, `C:\dev\YggdrasilLab-critic`, detached at `da7779a`
+(the main tree is mid-refactor and was never touched: no build, test, stash or checkout there). pnpm made
+that worktree its own `node_modules` — every `@yggdrasil/*` link resolves inside the worktree
+(`packages/lab/node_modules/@yggdrasil/engine → C:\dev\YggdrasilLab-critic\packages\engine`), and a
+recursive scan found **no link of any kind pointing into the main checkout**. No source edits anywhere.
+Lab suite in the clean checkout: **388 / 388 passed** (9 files, 2.2 s).
+
+Four Electron sessions, one at a time, isolated `YGG_HOME`, reflex, no key: **A 214092** (two settled
+worlds, quadrants, FAR by wheel, condition), **B 214676** (position probes, coveredBy stacks, specimen
+inspect), **C 220148** (coveredBy round-2 test, 10 real hovers, NEAR names, real filter chips),
+**D 206172** (four bands, badges, CVD, roster, perf, limiter, bridge). All four verified gone by id;
+**0 `electron.exe` from this lab remain**. Maximized, canvas 2188 × 914.8 CSS, dpr 1.5, world paused
+before every scored frame. Shots and truth in `~/.yggdrasil-lab/rework/shots/L3a-critic-r3/`; my counts
+were written to `MY-READINGS.md` **before** `truth/` was opened. **0 page errors in all four sessions.**
+
+## The round-3 claims
+
+| claim | result |
+|---|---|
+| **1 quadrant truth** | `countAudit().quadrants[]` reconciles `pins + counted === beings` **exactly, 20 / 20 quadrants over 5 frames and 2 worlds**, including two frames where the settlement at frame centre is cut by both mid-lines (its number appears as a "7" above the line and a "16" below it). My blind counts per quadrant: world 1 whole-continent **−1.9 / 0.0 / +2.6 / 0.0 %**; world 1 straddling **+5.6 / +9.1 / 0.0 / 0.0 %**; world 2 **+1.9 / 0 / 0 / 0 %**. Whole frame: DEFAULT **−0.3 %**, **+4.3 %**, **+1.0 %**; **FAR 316 vs 316 — 0.0 %**. | **PASS** |
+| **2 `coveredBy`** | 8 picker stacks in a settlement: **0 with more than one being in `visibleIds()`** — exactly one per stack, round two's headline case (four beings at Belon's pixel, all four `coveredBy: null`) is fixed. Over 25 stacks (11 settlement + 14 specimen), beings behind the front one are out of `visibleIds()` **25 / 25** and their `*ShownOf` probes return null **25 / 25**. Residual: **2 of 101** beings are still offered while `pickAtScreen` at their own reported point returns somebody else first. | **PASS** (see defect 3) |
+| **3 specimen inspect** | Real click on a specimen in the world: inspector opens headed **"specimen — not in the simulation"**, its stage, condition and activity all equal `hoverCardFor`, `.rrow.sel` present, selbar "Galath III · specimen — not in the simulation · Centre on it · Clear". Find with the real chips: `{stages:[2], activities:[7]}` → **matched 7 of 446, highlighted 7, roster truth 7, sets equal**. | **PASS**, with the roster half qualified — see defect 4 |
+| **4 names at NEAR** | Over 5 NEAR frames `labelsShown()` equals the **visible** DOM pills 3 / 3 (8/8, 9/9, 5/5), the strip text equals `labelAudit().claim`, and `promises().names` is `within`, not `'all'`. The radius is **true**: every "visible and unnamed" being I flagged inside it is, converted to EYE distance off its own mark geometry (ring 1.74 m, `worldPerPx = 2·tan 22.5° / 914.8`), just outside — Ristuden **14.12 m** under a 14 m claim, Joram **14.35 m** under 14 m, Lumul 15.21 m, Jorondra 39.4 m under 21 m. `nameRadius` floors to the metre strictly inside the nearest readable unnamed being and 14.12 → 14 exactly. | **PASS** |
+| **5 badges** | Measured on the specimen grid at MID: badge disc **33.3 CSS px against a 134 px figure (24.8 %)** and **26 px against 75 px (35 %)** — both under the 40 % cap, against round two's 87 px discs over 62 px beings. No stacked or overlapping badges in either the specimen or the settlement frame. Withheld badges whose activity carries a pictogram report `activityShownOf === null` **1 / 1**; the two that still answer are `standing` / `walking`, which the code documents as carried by the ground streak. | **PASS** |
+| **6 no regression** | Scale bar **exact in all four bands**; chips **never** over pins; roster selection survives a real pick; condition **24 / 24**; CVD 4 / 4; true scale +1.4 %; nothing hidden by scenery; 60.01 fps / 0 long tasks; limiter 10.0 / 10.0. **But FAR is no longer reachable with the mouse** — defect 1. | **FAIL** |
+
+## The numbers
+
+| bar | target | mine | truth | |
+|---|---|---|---|---|
+| FAR whole frame (17 chips + 4 dots) | ±10% | 316 | 316 | **0.0% pass** |
+| DEFAULT whole frame, world 1 | ±10% | 301 | 302 | **−0.3% pass** |
+| world 1 quadrants TL / TR / BL / BR | ±10% each | 157 / 15 / 80 / 49 | 160 / 15 / 78 / 49 | **−1.9 / 0.0 / +2.6 / 0.0 % pass** |
+| world 1, settlement ON both mid-lines | ±10% each | 19 / 24 / 1 / 28 | 18 / 22 / 1 / 28 | **+5.6 / +9.1 / 0 / 0 % pass** |
+| world 2 quadrants | ±10% each | 54 / 20 / 20 / 3 | 53 / 20 / 20 / 3 | **+1.9 / 0 / 0 / 0 % pass** |
+| `quadrants[].reconciles` | exact | — | **20 of 20**, 5 frames | **pass** |
+| chip disc over a pin (box test AND `.wcount` rect) | 0 | 0 by eye at 4× | **0 in all 5 frames** | **pass** |
+| condition at DEFAULT, 24 filed targets | ≥70% | 24 `well` | 24 `well` | **100% pass** |
+| the two non-`well` beings in that frame | — | found both, blind, while counting (amber dashed = starving; red spiked = in danger) | Beliask starving, Vashual in danger | **pass** |
+| scale bar, four bands | honest | 500 m / 145 px · 20 m / 158 · 5 m / 197 · 2 m / 189 | `metres / metresPerPx` == probe px to **0.00 px**, drawn bar within **0.4 px** | **pass** |
+| true scale | 1 unit = 1 m | bar says 1.75 m = 69.1 px at MID; probe says the adult is **70.1 px** | +1.4% | **pass** |
+| `scaleReport()` | — | adult 1.75 · child 1.08 · elder 1.6 · **hut 4.400 (from the MESH)** · doorway 2.0 · footprint 6.08 · tree 20.25 | | pass |
+| deuteranopia + protanopia, on bodies, in frame | no collapse | **4/4 separate** — plain cream / yellow dashed / blue concentric / spiked, and the bodies differ in lightness too | | **pass** |
+| nothing hidden by scenery | 0 | **0** beings under 3 body px at DEFAULT, MID and NEAR | | pass |
+| T2, 10 real-mouse hovers in a crowd | card == truth | **10/10** card == truth · **10/10** picker == card subject · **10/10** ringed instance is the card's subject · 8/10 hit the one I aimed at, and the other 2 are in the ↑↓ list · card covers its subject **0/10** · leaves the window **0/10** | | **pass** |
+| perf, 316 @ 2400×, roster open (271 rows) | ~60 fps, 0 long tasks | **2401 frames / 40.0 s = 60.01 fps, 0 long tasks** | | pass |
+| limiter idle focused / unfocused | ~10 fps | **10.0 / 10.0** draws/s | | pass |
+| **FAR reachable with the wheel, maximized** | yes | **120 notches → 0.620 px, still DEFAULT** | round 1: 7 notches | **FAIL** |
+
+## Defects, ranked
+
+1. **HIGH — the FAR band cannot be reached with the mouse.** Two independent runs from the default
+   camera on a maximized window — 70 notches at Δ260 and **120 notches at Δ300** — both asymptote at a
+   figure of **0.620 px** with the strip still reading DEFAULT. Entering FAR from DEFAULT needs
+   `BAND_EDGE_PX[0] × (1 − BAND_HYSTERESIS)` = **0.577 px**, so the orbit's far stop lands exactly one
+   hysteresis step short of the band it was sized for: `maxOrbitDistance` is computed from the edge with
+   `FAR_HEADROOM = 1.3`, and the distance actually in force corresponds to 0.620 = `BAND_EDGE_PX[0]`
+   itself. The band is alive — `placeCamera` with `frameCandidates('far')` lands in it at 0.51 px, and
+   the picture there is the best thing in the build (`d-far.png`: 17 chips and 4 dots, 316 counted from
+   the picture against 316 in the frustum, **0.0 %**). A human simply cannot get to it. Round 1 passed
+   this bar in 7 notches and round 2 filed a FAR frame; this is a regression of something that passed.
+2. **MED — two probes answer "where is this being in the picture" differently, and the docs point a
+   driver at the wrong one.** `screenPositionOf` projects the body's mid-height and returns client
+   coordinates; `screenPoints` — what `quadrantAudit`, `markGeometry`, `planMarks` and the chip split all
+   use — projects `groundY + markRadius/2` in canvas-local coordinates. Measured over 47 pins in one
+   DEFAULT frame: **mean 11.3 px apart, max 14.3 px**. That is enough to put **26 of 302 beings (8.6 %)**
+   in a different quadrant in the world-1 frame, and it is why a reviewer checking "a cluster's members
+   all lie in one quadrant" with the documented probe finds 2–5 chips per frame that appear to straddle
+   a line. The picture and the audit agree; the probe a driver is told to aim with does not. Either
+   project both from the same point or say in `screenPositionOf`'s doc which mark it is not.
+3. **MED — `coveredBy` still under-reports at the margin.** Of 101 beings standing at their own reported
+   point, **2** (1956 behind 2331, 2490 behind 2272, both ~75 body px) are kept in `visibleIds()` with
+   `coveredBy: null` and `reason: "visible"` while `pickAtScreen` at that point returns the other one
+   first. Much smaller than round two's four-at-one-pixel, and partly an artefact of defect 2 — the
+   cover rule tests the box centre, the driver aims at `screenPositionOf` — but a reader cannot tell
+   those apart, and `visibleIds()` is the population a stranger test draws from.
+4. **MED — selecting a specimen through `ui.select` loses its roster row.** Inspector correct and headed
+   "specimen"; `.rrow.sel` absent, because the same call centres the camera, which zeroes `distance` and
+   re-sorts the table. A real mouse click on a roster row keeps it (clicked "Galir … 206 m", row still
+   marked at "14 m" after the camera moved), so the fix that landed for the pointer path never reached
+   the programmatic one — which is the path a find → inspect driver uses.
+5. **MED — the NEAR strip's radius and the card's distance are measured from different points.**
+   `hoverCardFor().distance` and the roster's `distance` column are metres from the camera's **target**;
+   the strip's "names within N m" is metres from the **eye**. In three of five NEAR frames the printed
+   radius contains **zero** readable beings (`labelAudit().within` = 0) while 8, 5 and 8 names are drawn,
+   every one of them outside it. The audit is honest and says `within: 0`; the strip reads as a claim
+   about the people you can see, and it is not one. A reader holding a card that says "3.4 m" under a
+   strip that says "names within 14 m" has been told two different things in the same units.
+6. **MED — the ghosted hut is unchanged and is the worst object in the build.**
+   `crops/badges-box-1140-980.png`: a translucent glass vitrine with grey slabs, and inside it six to
+   eleven beings blown into one white cloud whose cream rings tangle into a scribble, with three name
+   leaders pointing into the mass and two chips ("6" and "5") overlapping the same knot. Nothing is
+   *hidden* — 0 beings under 3 body px in every band that draws bodies — and nothing is *separable*
+   either. Listed not-fixed in round 2; still the single thing that most makes the close bands look
+   unserious.
+7. **LOW — the roster still counts display-only specimens as lives**: "442 living" beside a panel
+   reading "316 / 511 alive". Round-2 defect 7, unchanged.
+8. **LOW — the mint motion streak is still drawn at DEFAULT and still absent from the DEFAULT legend**,
+   where it is several times the 24 px pin. Round-2 defect 8, unchanged; I again mis-read one as a pin
+   while counting.
+9. **NOT RE-TESTED, flagged so the next critic does not assume it.** (a) The bridge's unknown-`worldId`
+   refusal and the `NO_LLM_KEY` path for a genuine engine-built pair: my probes were rejected on prompt
+   shape first (`BAD_THINK_PROMPT: unexpected key "a"`) and the preload exposes no `buildThinkPrompt`
+   (`getVersion, checkForUpdates, installUpdate, quit, onUpdate, llmComplete, llmStatus, setKey,
+   getSettings, recentActivity, onActivity, listReports, readReport, writeReport`) — round 2's result
+   stands unrefuted but unconfirmed. What I did confirm: garbage prompt → `BAD_THINK_PROMPT: prompt must
+   be a plain object`, legacy shape → `unexpected key "snapshot"`, all under 2 ms, and the renderer has
+   `process`, `require` and `module` all `undefined` with `window.lab` present. (b) "A being behind a
+   ghosted hut is still visible" was not isolated — my probe caught only specimen beings; what supports
+   it is 0 beings under 3 body px in all three body-drawing bands. (c) The hut ridge was not re-measured
+   in pixels (my NEAR hut frame landed on empty sea); `scaleReport()` now measures it **from the mesh**
+   at 4.400 m.
+
+## Craft, against `02-running-world.png` and `04-being-inspector.png`
+
+The baseline is a green relief map with coloured pinheads and a four-dot legend; this is not the same
+instrument and has not been for two rounds. What is new in round 3 is that the **picture's own claims now
+survive being attacked from outside**. A quadrant count is arithmetic: I counted four quarters of a
+settled continent off a PNG, by the legend's own sentence, and came within 2.6 % of the view's number in
+every one — including a frame where I deliberately drove the camera until a settlement sat across both
+mid-lines and watched it split into a "7" above the line and a "16" below it. The scale bar is a real
+cartographic ruler in four bands, agreeing with its own metres-per-pixel to the second decimal. The
+condition channel read 24 for 24 at one pixel per being, and the two unwell people in three hundred
+turned up in my notes before I opened the truth. Ten real-mouse hovers in a crowd produced ten correct
+cards, ten correct highlights, no card over its own subject and no card off the window. Badges have
+stopped being stickers. That half I would defend in a hostile room.
+
+Two things stop it being an instrument a robotics or interpretability lab would adopt as it stands, and
+neither is the figure art. The first is that **the widest contract is unreachable**: the FAR map is the
+most convincing single view in the build and the scroll wheel stops one hysteresis step short of it
+forever, so the thing the legend is proudest of exists only for a driver. The second is that the view
+still answers the same question twice in different units — where a being is (11 px apart, 8.6 % of the
+population in the wrong quarter), and how far away it is (eye versus target, under a strip that promises
+a radius containing nobody). Round 2 failed on a number landing in the wrong quarter of the frame and a
+visibility probe that lied; both are fixed, and I checked both against the picture rather than against
+the probe that asserts them. What replaced them is smaller and more ordinary — a clamp that is off by a
+hysteresis margin, and two measurements that disagree by eleven pixels. Fix defect 1 and I expect L3a to
+pass; fix 2 and 5 and the honesty argument is over.

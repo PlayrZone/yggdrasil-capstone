@@ -1,4 +1,4 @@
-# W1-B3 — hostile verifier: **FAIL** (one behavioural divergence; everything else holds)
+# W1-B3 — hostile verifier: round 1 **FAIL** (one behavioural divergence), round 2 **PASS** (see the Round 2 section at the foot)
 
 Verified 2026-09-19, `8a607d0` against `01a23d2`, both as commits in two temp worktrees (junctioned `node_modules`, removed junction-first; shared pnpm vitest store 114 files before and after). No game running. **Every probe ran inside a worktree — the main checkout was never edited**, and no scratch file survives. The other engineer's lab-renderer WIP was never touched; the lab suite was run from the committed tree.
 
@@ -47,3 +47,27 @@ This is reachable by any model that adds a stray field — the commonest LLM fai
 ## What B4 (`space`) and B5 (`lexicon`) inherit
 **B4:** `X`/`Y` params on `MoveTo`/`Build`/`Flee` and `ParamType 'number'` carrying coordinates; `targetId` as a raw entity handle (`ref`); memory `x`/`y`; `WorldView.agents[].x/y`, `night` and `season` (pinned in `IMPORTED_STILL_LEAKING`); `SuccessionMiner`'s `radius: 8` and `windowTicks: 600`; `RelationshipStore.DECAY_INTERVAL = 2400` — a forager day sitting in the mind; `sacredPlace`/`tragedyPlaces`; `Interventions.relocate` + `geography.clamp`.
 **B5:** `prompt.ts` (after item 2, the remaining world prose and the needs paragraph); `learning/templates.ts`; `describeEpisode`; `Narration`'s English; knowledge `statement` stored as English rather than rendered; the `hint` strings on `KindParam` (already world-side, which is the right shape for the rest to follow).
+
+---
+
+# Round 2 — **PASS** (with backlog)
+
+Re-verified 2026-09-19: `9f768c0` against `01a23d2`, two temp worktrees, junction-first cleanup, shared pnpm vitest store 114 files before and after. No game running. Every probe ran inside a worktree; the main checkout was never edited and no scratch survives. (`1680cde`'s `src/eval/**` + mcp eval tools are additive and out of scope.)
+
+**The FAIL is fixed.** `admitIntent` refuses only `undeclared-action`; a stray argument rides through untouched and is counted `deferredParam`.
+
+- **Byte-identity restored.** The same sweep that broke in round 1 — 7 reflex configs + `conscious-classic` and `conscious-continent` with the recorder on — is now **40,269,902 bytes identical**, matching round 1's *base* figures exactly: 281 `IntentRejected` with all six reasons and `totalKnowledge` 419 (classic), 84 (continent). All **12** round-1 single-intent probes identical.
+- **16 new probes, none covered by the fixture:** a stray `targetId:"7"`, `x:null`, an array arg, a nested object, a `__proto__` key, two strays beside a legal arg, an out-of-vocabulary kind, speech plus strays, a 12-step plan over the cap of 8, an exactly-8 plan, and two raw-backend variants. `resolvedOutput` (key order included), the body plan, plan step and the **full ordered event stream with reasons** are identical in every one; the only field that moves is the new-only counter line.
+- **Parser bypassed.** Swapping a being's policy object so `applyPlan` receives what no parser would emit: stray args, a 14-step plan and the control are identical. Undeclared actions are the one path that differs — at `01a23d2` the body has no arm for one and the being **stalls on that step forever** (`planStep 0`, `intentTicks 599`, zero events); now the step is dropped and the rest of the plan runs. Unreachable from any engine path (the parser checks `kind` against the same table, the reflex policy emits only declared acts, `Speak` comes from `actionForCore(Say)`), and every real-run dump is byte-identical — so not a fail, but `gate.ts`'s "refusing it changes nothing that could otherwise have happened" is wrong in mechanism: it turns a stall into a skip.
+- **The fixture is genuine and the test bites.** I re-ran `runStrayArgCohort()` myself in a worktree at `01a23d2`: my capture is byte-identical to `strayArgTrace.01a23d2.json` across all five sections (114 script entries, 114 records with `resolved` bytes, 70 ordered rejections, `rejectionsByReason`, `executedByKind`), and the new tree reproduces it. Flipping `strictArgs: true` on forager reddens `world-stray-args`, `world-actions` **and** `world-vocabulary` while the goldens stay green — which is precisely why the fixture had to exist.
+- **Prompt bytes.** 612 rows over 7 runs (both scenarios, `offerMaking` on/off, provenance off/compact/full, seeded myths, recipes, injected ideas, kin) — each as stored, as **rebuilt from the stored `ThinkInput`** (what the lab bridge does before it pays), and as the retry variant, plus a full system+user dump — **byte-identical**, sha256 `765ded151272e9c7…`. `prompt.ts` contains no argument shapes; `promptArgs` is data in `worlds/forager/actions.ts`. The toy world is offered `INTENT kind is one of: Shuffle, Snaffle, Nibble, Dawdle.` and **no `Intent args:` line at all** — no forager prose inherited.
+- **No regression** in the round-1 "holds": parser differential fuzz 5,000 generated + 689 hand-built adversarial cases, **0 divergences**; goldens, guard and compile proof green; lab bridge 148/148.
+- **Suites:** engine **649/649**, `tsc --noEmit` exit 0, mcp **27/27**.
+
+**Methodology note for anyone repeating this:** `packages/mcp` imports `@yggdrasil/engine` by package NAME, so with a shared `node_modules` junction it silently tests the *main checkout*, not the worktree. Run that way it showed 10 failures, every one from another engineer's uncommitted edits to `src/eval/{budget,interview}.ts`. Re-pointed at the worktree's own engine it is 27/27.
+
+## Backlog after round 2
+1. Correct `gate.ts`'s justification: an undeclared action at the old edge **stalled** the plan, it was not skipped. The new behaviour is better; the comment should say so rather than claim nothing changed.
+2. `prompt.ts`'s NEEDS paragraph still names `hunger, rest, safety, socialConnection` and indexes the snapshot by them: a world with other drives yields `undefined` and `fmt` **throws**, so the toy world cannot have a prompt built unless its snapshot happens to carry the forager's four. B5 owns the prose, but this one fails loudly rather than degrading.
+3. Still open from round 1: the guard cannot police action or kind ids by name (the compile proof is the substitute); `Drink`, `Withdraw` and `Attack` remain missing from the argument paragraph — now honestly declared as world data, still a B5 fix that will change what every model is shown; source kinds follow `NODE_YIELD` order; `kinds.ts`'s header says 34 `ObjectKind`s where there are 35.
+4. Closed this round: backlog 2 (`promptArgs` is world data) and backlog 5 (`authoredClamp` is counted on a run-level gate). `deferredParam` now puts a number on the tolerance the edge extends, which is the right shape.
