@@ -3,6 +3,7 @@ import {
   activityWord,
   BAND_EDGE_PX,
   BAND_ORDER,
+  bandCountsBeings,
   bandForPixels,
   bandPromise,
   bandShowsBodies,
@@ -18,10 +19,14 @@ import {
   clusterHierarchy,
   conditionHue,
   conditionWord,
+  COUNT_NOTE,
   describeState,
   designationFor,
   displayName,
   focusShiftPx,
+  FPS_ACTIVE,
+  FPS_HIDDEN,
+  FPS_IDLE,
   headingOctant,
   hex,
   HUE_DANGER,
@@ -29,13 +34,18 @@ import {
   HUE_STARVING,
   HUE_WELL,
   labelBudgetFor,
+  labelClearanceFor,
   LABEL_BUDGET_MAX,
   labelWidth,
   ELDER_M,
   figurePxAt,
   LEGEND_EXTRA,
   legendFor,
+  maxLeaderFor,
   movingFor,
+  NEAR_LABEL_M,
+  nextFrameAt,
+  octantDistance,
   PICTO_ALARM,
   PICTO_COUNT,
   PICTO_EAT,
@@ -46,6 +56,7 @@ import {
   PICTO_WORK,
   pictogramFor,
   placeLabels,
+  planCount,
   readableActivity,
   RING_DASHED,
   RING_DOUBLE,
@@ -57,8 +68,9 @@ import {
   stageFootprint,
   stageForm,
   STAGE_FORM,
-  stageHalo,
+  stageCore,
   stageWord,
+  targetFps,
   type LabelCandidate,
   type LegendItem,
   type ScreenPoint,
@@ -349,7 +361,7 @@ describe('a band promises only what it draws', () => {
       for (let act = 0; act < ACT_COUNT; act++) {
         expect(readableActivity(act, band) === null).toBe(!bandShowsDetail(band));
       }
-      expect(stageHalo(STAGE_ELDER, band)).toBe(bandShowsDetail(band));
+      expect(stageCore(STAGE_ELDER, band)).toBe(bandShowsDetail(band));
       expect(stageFootprint(STAGE_CHILD, band) < 1).toBe(bandShowsDetail(band));
     }
   });
@@ -443,13 +455,13 @@ describe('a life stage is a footprint as well as a silhouette', () => {
   it('keeps a child unmistakable, and does NOT fake an elder by shrinking them', () => {
     // A child is two-thirds of an adult, which is true of children. An elder
     // is a hand shorter, which is true of elders and is nowhere near enough to
-    // read - which is exactly why the stoop, the staff and the second ring on
-    // the ground exist. Round two's answer was to make people the size of
+    // read - which is exactly why the stoop, the staff and the filled centre
+    // on the ground exist. Round two's answer was to make people the size of
     // houses; a real elder is 1.6 m and stays 1.6 m.
     expect(CHILD_M / ADULT_M).toBeLessThan(0.7);
     expect(ADULT_M - ELDER_M).toBeLessThan(0.3);
     expect(stageForm(STAGE_ELDER).stoop).toBeGreaterThan(0.4);
-    expect(stageForm(STAGE_ELDER).halo).toBe(true);
+    expect(stageForm(STAGE_ELDER).core).toBe(true);
   });
 
   it('gives a child and an elder a second cue that is not height', () => {
@@ -466,22 +478,29 @@ describe('a life stage is a footprint as well as a silhouette', () => {
   it('puts the stage on the GROUND too, where nothing foreshortens', () => {
     // A body seen from an oblique-top camera is mostly hidden behind its own
     // head; the mark it stands in is not. Three forms, all different.
-    expect(stageFootprint(STAGE_CHILD, 'mid')).toBeLessThan(0.8);
+    // A child's pin is PLAINLY smaller, not marginally: round three's 0.68
+    // against an adult was a difference a stranger had to be looking for.
+    expect(stageFootprint(STAGE_CHILD, 'mid')).toBeLessThanOrEqual(0.6);
     expect(stageFootprint(STAGE_ADULT, 'mid')).toBe(1);
     expect(stageFootprint(STAGE_ELDER, 'mid')).toBe(1);
-    expect(stageHalo(STAGE_ELDER, 'mid')).toBe(true);
-    expect(stageHalo(STAGE_ADULT, 'mid')).toBe(false);
-    expect(stageHalo(STAGE_CHILD, 'mid')).toBe(false);
-    // The adult and the elder share a size, so the halo is the whole of what
-    // tells them apart on the ground — and only one of the three has it.
-    expect(STAGE_FORM.filter((f) => f.halo)).toHaveLength(1);
+    expect(stageCore(STAGE_ELDER, 'mid')).toBe(true);
+    expect(stageCore(STAGE_ADULT, 'mid')).toBe(false);
+    expect(stageCore(STAGE_CHILD, 'mid')).toBe(false);
+    // The adult and the elder share a size, so the FILLED CENTRE is the whole
+    // of what tells them apart on the ground — and only one of the three has
+    // it. Filled against hollow is a difference of area, which is the kind
+    // that survives twenty-four pixels; round three's extra hairline ring
+    // three pixels outside the rim was not, and stage read at 40%.
+    expect(STAGE_FORM.filter((f) => f.core)).toHaveLength(1);
+    expect(stageForm(STAGE_CHILD).core).toBe(false);
+    expect(stageForm(STAGE_ADULT).core).toBe(false);
   });
 
   it('makes every mark the same size where the contract is countability', () => {
     for (const band of ['far', 'default'] as ZoomBand[]) {
       for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
         expect(stageFootprint(stage, band)).toBe(1);
-        expect(stageHalo(stage, band)).toBe(false);
+        expect(stageCore(stage, band)).toBe(false);
       }
     }
   });
@@ -544,7 +563,7 @@ describe('the legend describes the band it is in, and nothing else', () => {
   it('shows the age forms and the streak only where they are drawn', () => {
     for (const band of BAND_ORDER) {
       const markers = itemsOf(band).filter((i) => i.kind === 'marker');
-      expect(markers.some((m) => m.halo)).toBe(bandShowsDetail(band));
+      expect(markers.some((m) => m.core)).toBe(bandShowsDetail(band));
       expect(markers.some((m) => m.footprint < 1)).toBe(bandShowsDetail(band));
       expect(markers.some((m) => m.streak)).toBe(bandShowsDetail(band));
     }
@@ -896,5 +915,311 @@ describe('centring on a being that a panel is sitting on', () => {
       const shift = focusShiftPx(1200, panel);
       expect(shift).toBeLessThanOrEqual((1200 - panel) / 2);
     }
+  });
+});
+
+// ── Counting, made mechanical ────────────────────────────────────────────────
+
+/** A deterministic little PRNG, so a failing layout can be reproduced exactly. */
+function rng(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+function scatter(seed: number, n: number, w: number, h: number): ScreenPoint[] {
+  const next = rng(seed);
+  const out: ScreenPoint[] = [];
+  // Half uniform, half piled into three settlements — which is what a frame of
+  // this world actually looks like, and the case round three got wrong.
+  const hubs = [[w * 0.25, h * 0.3], [w * 0.7, h * 0.6], [w * 0.5, h * 0.85]];
+  for (let i = 0; i < n; i++) {
+    if (next() < 0.55) {
+      const hub = hubs[Math.floor(next() * hubs.length)]!;
+      const spread = 12 + next() * 70;
+      out.push({ id: i, x: hub[0]! + (next() - 0.5) * spread, y: hub[1]! + (next() - 0.5) * spread });
+    } else {
+      out.push({ id: i, x: next() * w, y: next() * h });
+    }
+  }
+  return out;
+}
+
+describe('every being in the frame is a pin or part of a number, never both', () => {
+  const PIN = 24;
+
+  it('closes the arithmetic on every random layout', () => {
+    let chipsSeen = 0;
+    let singlesSeen = 0;
+    let inChips = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const n = 3 + (seed * 7) % 160;
+      const points = scatter(seed, n, 1400, 900);
+      const plan = planCount(points, PIN, 64);
+      const counted = plan.chips.reduce((sum, c) => sum + c.count, 0);
+      expect(plan.singles.length + counted).toBe(points.length);
+      // And the two terms are disjoint sets of the SAME beings, not two
+      // numbers that happen to add up.
+      const seen = new Set<number>(plan.singles);
+      for (const chip of plan.chips) for (const k of chip.members) seen.add(k);
+      expect(seen.size).toBe(points.length);
+      for (const chip of plan.chips) expect(chip.count).toBe(chip.members.length);
+      chipsSeen += plan.chips.length;
+      singlesSeen += plan.singles.length;
+      inChips += counted;
+    }
+    // An identity that holds because nothing ever collapses is not the
+    // identity this view needs. These layouts are settlements: most beings
+    // must end up inside a number, and plenty must not.
+    expect(chipsSeen).toBeGreaterThan(40);
+    expect(singlesSeen).toBeGreaterThan(200);
+    expect(inChips).toBeGreaterThan(singlesSeen);
+  });
+
+  it('never leaves two pins a reader must count separately touching', () => {
+    let checked = 0;
+    for (let seed = 101; seed <= 130; seed++) {
+      const points = scatter(seed, 60 + seed % 40, 1400, 900);
+      const plan = planCount(points, PIN, 64);
+      checked += plan.singles.length;
+      for (let a = 0; a < plan.singles.length; a++) {
+        for (let b = a + 1; b < plan.singles.length; b++) {
+          const p = points[plan.singles[a]!]!;
+          const q = points[plan.singles[b]!]!;
+          expect(Math.hypot(p.x - q.x, p.y - q.y)).toBeGreaterThanOrEqual(PIN);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(200);
+  });
+
+  it('never leaves a pin half-visible under a number it is not part of', () => {
+    let chips = 0;
+    for (let seed = 201; seed <= 230; seed++) {
+      const points = scatter(seed, 90, 1400, 900);
+      const plan = planCount(points, PIN, 64);
+      chips += plan.chips.length;
+      for (const k of plan.singles) {
+        const p = points[k]!;
+        for (const chip of plan.chips) {
+          const dx = (p.x - chip.x) / (chip.rx + PIN * 0.6);
+          const dy = (p.y - chip.y) / (chip.ry + PIN * 0.6);
+          expect(dx * dx + dy * dy).toBeGreaterThan(1);
+        }
+      }
+    }
+    expect(chips).toBeGreaterThan(30);
+  });
+
+  it('collapses a PAIR, not only a crowd — two overlapping rings are already unreadable', () => {
+    const plan = planCount([{ id: 1, x: 100, y: 100 }, { id: 2, x: 108, y: 103 }], 24, 8);
+    expect(plan.singles).toHaveLength(0);
+    expect(plan.chips).toHaveLength(1);
+    expect(plan.chips[0]!.count).toBe(2);
+  });
+
+  it('leaves beings that are genuinely apart alone', () => {
+    const far: ScreenPoint[] = [
+      { id: 1, x: 100, y: 100 }, { id: 2, x: 400, y: 120 }, { id: 3, x: 800, y: 600 },
+    ];
+    const plan = planCount(far, 24, 8);
+    expect(plan.singles).toHaveLength(3);
+    expect(plan.chips).toHaveLength(0);
+  });
+
+  it('is asked for by exactly the bands that promise a count', () => {
+    for (const band of BAND_ORDER) {
+      expect(bandCountsBeings(band)).toBe(bandPromise(band).count !== null);
+    }
+    expect(bandCountsBeings('far')).toBe(true);
+    expect(bandCountsBeings('default')).toBe(true);
+    expect(bandCountsBeings('mid')).toBe(false);
+    expect(bandCountsBeings('near')).toBe(false);
+  });
+
+  it('says so in the legend of every band that does it', () => {
+    for (const band of ['far', 'default'] as ZoomBand[]) {
+      const items = legendFor(band).flatMap((s) => s.items);
+      expect(items.filter((i) => i.kind === 'note').some((n) => n.label === COUNT_NOTE)).toBe(true);
+      const chips = items.filter((i) => i.kind === 'chip');
+      expect(chips).toHaveLength(1);
+      expect(chips[0]!.label).toMatch(/no (pin|dot) is drawn inside/);
+    }
+    // NEAR draws no chips at all, so it must not print one in the key.
+    expect(legendFor('near').flatMap((s) => s.items).some((i) => i.kind === 'chip')).toBe(false);
+  });
+});
+
+// ── Heading, scored two ways ─────────────────────────────────────────────────
+
+describe('scoring a heading, exactly and to within one octant', () => {
+  it('counts the steps round the compass the short way', () => {
+    expect(octantDistance('N', 'N')).toBe(0);
+    expect(octantDistance('N', 'NE')).toBe(1);
+    expect(octantDistance('N', 'NW')).toBe(1);
+    expect(octantDistance('N', 'S')).toBe(4);
+    expect(octantDistance('NW', 'N')).toBe(1);
+    expect(octantDistance('E', 'W')).toBe(4);
+    expect(octantDistance('se', ' SE ')).toBe(0);
+  });
+
+  it('refuses a word that is not a compass point rather than scoring it 0', () => {
+    expect(octantDistance('up', 'N')).toBe(-1);
+    expect(octantDistance('N', '')).toBe(-1);
+  });
+
+  it('is symmetric and never more than four', () => {
+    const points = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    for (const a of points) {
+      for (const b of points) {
+        expect(octantDistance(a, b)).toBe(octantDistance(b, a));
+        expect(octantDistance(a, b)).toBeLessThanOrEqual(4);
+      }
+    }
+  });
+
+  it('agrees with the angle the view reads off the screen', () => {
+    for (let deg = 0; deg < 360; deg += 7) {
+      expect(octantDistance(headingOctant(deg), headingOctant(deg + 45))).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+// ── Names that do not become a web ───────────────────────────────────────────
+
+describe('a name stays with its being', () => {
+  const near = (id: number, x: number, y: number, rank = 3, text = 'Nevara'): LabelCandidate => ({ id, x, y, rank, text });
+  const side = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number): number => {
+    const v = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    return v > 1e-9 ? 1 : v < -1e-9 ? -1 : 0;
+  };
+
+  it('never draws two leader lines that cross', () => {
+    // Beings in a tight row: with no crossing rule, the names shuffle sideways
+    // to find room and the lines home braid over each other.
+    const row = Array.from({ length: 10 }, (_, i) => near(i + 1, 300 + i * 26, 400));
+    const placed = placeLabels(row, 1400, 900, 10, [], 20, 52);
+    for (let a = 0; a < placed.length; a++) {
+      for (let b = a + 1; b < placed.length; b++) {
+        const p = placed[a]!;
+        const q = placed[b]!;
+        const crosses = side(p.ax, p.ay, p.x, p.y, q.ax, q.ay) * side(p.ax, p.ay, p.x, p.y, q.x, q.y) < 0
+          && side(q.ax, q.ay, q.x, q.y, p.ax, p.ay) * side(q.ax, q.ay, q.x, q.y, p.x, p.y) < 0;
+        expect(crosses).toBe(false);
+      }
+    }
+  });
+
+  it('drops a name rather than running a line across the frame for it', () => {
+    const row = Array.from({ length: 14 }, (_, i) => near(i + 1, 400 + i * 14, 500));
+    const placed = placeLabels(row, 1400, 900, 14, [], 20, 52);
+    for (const p of placed) expect(Math.hypot(p.x - p.ax, p.y - p.ay)).toBeLessThanOrEqual(52);
+    // Refusing a slot has to cost names, or the cap is not doing anything.
+    expect(placed.length).toBeLessThan(14);
+  });
+
+  it('does not grow the gap over a head with the height of the body under it', () => {
+    // At NEAR a being is ~150 px tall, and the name is anchored to its HEAD.
+    // Round three scaled the offsets by the figure and produced 300 px leaders.
+    expect(labelClearanceFor('near', 150)).toBeLessThanOrEqual(20);
+    expect(labelClearanceFor('mid', 45)).toBeLessThanOrEqual(30);
+    expect(labelClearanceFor('default', 6)).toBeGreaterThanOrEqual(11);
+    for (const band of BAND_ORDER) {
+      for (const px of [1, 6, 45, 150, 400]) {
+        expect(labelClearanceFor(band, px)).toBeLessThanOrEqual(30);
+        expect(labelClearanceFor(band, px)).toBeGreaterThanOrEqual(11);
+      }
+    }
+    expect(maxLeaderFor('near')).toBeLessThan(maxLeaderFor('mid'));
+  });
+
+  it('only offers a name to a being you could walk to, at NEAR', () => {
+    // The rule itself lives in the view (it needs world distances); this is the
+    // number it is spending, and it has to be a street rather than a valley.
+    expect(NEAR_LABEL_M).toBeGreaterThan(8);
+    expect(NEAR_LABEL_M).toBeLessThanOrEqual(30);
+  });
+});
+
+// ── How often the view is allowed to redraw ──────────────────────────────────
+
+describe('the observatory does not hog a shared GPU', () => {
+  it('draws at full rate only when the picture is actually changing', () => {
+    const base = { visible: true, focused: true, running: false, interacting: false };
+    expect(targetFps({ ...base, running: true })).toBe(FPS_ACTIVE);
+    expect(targetFps({ ...base, interacting: true })).toBe(FPS_ACTIVE);
+    expect(targetFps(base)).toBe(FPS_IDLE);
+    expect(targetFps({ ...base, focused: false })).toBe(FPS_IDLE);
+    expect(targetFps({ ...base, focused: false, running: true })).toBe(FPS_IDLE);
+    expect(targetFps({ ...base, visible: false, running: true })).toBe(FPS_HIDDEN);
+  });
+
+  it('keeps orbiting smooth even with the world paused and the window unfocused', () => {
+    // The camera damps to a stop over the better part of a second; a view that
+    // dropped to ten frames in the middle of that reads as a stutter.
+    expect(targetFps({ visible: true, focused: false, running: false, interacting: true })).toBe(FPS_ACTIVE);
+  });
+
+  it('is an order of magnitude cheaper when nothing is happening', () => {
+    expect(FPS_ACTIVE / FPS_IDLE).toBeGreaterThanOrEqual(5);
+    expect(FPS_HIDDEN).toBeLessThan(FPS_IDLE);
+    expect(FPS_ACTIVE).toBeLessThanOrEqual(60);
+  });
+
+  it('holds the capped rate on a display that runs faster than the cap', () => {
+    // 144 Hz panel, 60 fps cap. Comparing timestamps naively renders every
+    // third callback and delivers 48; the cadence has to be carried forward.
+    let last = Number.NEGATIVE_INFINITY;
+    let drawn = 0;
+    const step = 1000 / 144;
+    for (let f = 0; f < 144; f++) {
+      const tick = nextFrameAt(f * step, last, FPS_ACTIVE);
+      if (tick !== null) {
+        last = tick;
+        drawn++;
+      }
+    }
+    expect(drawn).toBeGreaterThanOrEqual(58);
+    expect(drawn).toBeLessThanOrEqual(61);
+  });
+
+  it('does not reject every other frame on a display that matches the cap', () => {
+    let last = Number.NEGATIVE_INFINITY;
+    let drawn = 0;
+    for (let f = 0; f < 60; f++) {
+      // A real 60 Hz panel delivers a hair under the nominal interval.
+      const tick = nextFrameAt(f * 16.6, last, FPS_ACTIVE);
+      if (tick !== null) {
+        last = tick;
+        drawn++;
+      }
+    }
+    expect(drawn).toBeGreaterThanOrEqual(58);
+  });
+
+  it('idles at the rate it says it does', () => {
+    let last = Number.NEGATIVE_INFINITY;
+    let drawn = 0;
+    const step = 1000 / 144;
+    for (let f = 0; f < 144; f++) {
+      const tick = nextFrameAt(f * step, last, FPS_IDLE);
+      if (tick !== null) {
+        last = tick;
+        drawn++;
+      }
+    }
+    expect(drawn).toBeGreaterThanOrEqual(9);
+    expect(drawn).toBeLessThanOrEqual(11);
+  });
+
+  it('starts drawing immediately and never tries to catch up after a stall', () => {
+    expect(nextFrameAt(0, Number.NEGATIVE_INFINITY, FPS_ACTIVE)).toBe(0);
+    // Five seconds hidden behind another window: the next frame resets the
+    // cadence rather than firing three hundred frames to make up the debt.
+    expect(nextFrameAt(5000, 0, FPS_ACTIVE)).toBe(5000);
+    expect(nextFrameAt(5, 0, FPS_ACTIVE)).toBeNull();
+    expect(nextFrameAt(100, 0, 0)).toBeNull();
   });
 });

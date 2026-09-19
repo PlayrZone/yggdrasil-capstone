@@ -21,8 +21,10 @@ import {
 } from './sim/protocol.js';
 import {
   activityWord,
+  ADULT_M,
   annotationOpacity,
   annotationRadius,
+  bandCountsBeings,
   bandForPixels,
   bandPromise,
   bandShowsBodies,
@@ -38,27 +40,33 @@ import {
   headingOctant,
   HUE_WELL,
   labelBudgetFor,
+  labelClearanceFor,
   LABEL_BUDGET_MAX,
   figurePxAt,
+  maxLeaderFor,
   movingFor,
+  NEAR_LABEL_M,
+  octantDistance,
   PICTO_GRID,
   PICTO_NONE,
   PICTO_SPEAK,
   pictogramFor,
   placeLabels,
+  planCount,
   readableActivity,
   RING_DASHED,
   RING_DOUBLE,
   RING_NOTCHED,
   RING_STYLE_COUNT,
   ringStyleFor,
+  stageCore,
   stageFootprint,
   stageForm,
-  stageHalo,
   stageWord,
   FAMILY_RGB,
   type Family,
   type Cluster,
+  type FrameCandidate,
   type LabelCandidate,
   type LabelObstacle,
   type ScreenPoint,
@@ -82,8 +90,61 @@ import { buildGlyphAtlas, PICTO_STUB_AT } from './glyphs.js';
  */
 const HSCALE = 14;
 const SEA = 0.85; // sea level, in the same height index
-const GRID = 200; // terrain resolution
 const HALF = WORLD / 2;
+
+/**
+ * The drawn ground: how finely it is tessellated, and how far it is smoothed
+ * against the sim's own height samples.
+ *
+ * The sim's mountain field is built out of `|sin|` ridges, and an absolute
+ * value has a CUSP at every zero — a sharp crease, not a valley. Sampled on a
+ * 200-square grid and drawn as flat triangles, an eighty-metre ridge repeating
+ * down a two-kilometre range came out as a comb of forty identical spikes: a
+ * reviewer looking at the east of the map saw a saw blade, and the owner is
+ * right that mountains have to read as mountains.
+ *
+ * Two changes, and neither of them touches what the sim reads. The mesh is
+ * twice as fine, so a slope is a slope rather than a staircase. And the heights
+ * the MESH is built from are the sim's own samples passed through a separable
+ * blur about forty metres wide — which rounds every cusp, takes two thirds off
+ * the eighty-metre teeth, and leaves the three-hundred-metre massif and the
+ * inland ramp that make the range a range. `heightAt` is untouched; `surfaceAt`
+ * reads the mesh, so everything the view stands on the ground stands on the
+ * ground it can see.
+ */
+const GRID = 320;
+const RELIEF_SMOOTH_M = 42;
+
+/** Bare rock above this height index, pale scree and snow above this one. */
+const ROCK_AT = 8.5;
+const SNOW_AT = 13.5;
+const ROCK_RGB: readonly [number, number, number] = [0.47, 0.46, 0.49];
+const SNOW_RGB: readonly [number, number, number] = [0.84, 0.86, 0.90];
+
+/**
+ * How far the sea floor is carried past the playable bounds, and how deep it
+ * settles — the horizon, instead of the black wall that used to fill it.
+ */
+const SHELF_FALL = WORLD * 0.35;
+const SHELF_OUT = WORLD * 8;
+const SHELF_DROP = SEA - 2.2;
+const SEA_SPAN = WORLD * 16;
+
+/**
+ * Aerial perspective: how thickly the air stands between the eye and the range.
+ *
+ * Distance haze is the only cue that says a mountain is FAR rather than small,
+ * and round three had none worth the name — linear fog starting at 1900 m, by
+ * which point the whole continent is behind you. This is exponential-squared
+ * and it is tuned for the eye's own distance: standing in the street, the range
+ * twelve hundred metres east should be half dissolved in air, and from a
+ * kilometre and a half up the same range is most of what you came to look at
+ * and must stay countable. So the density falls as the camera pulls back, which
+ * is not a physical claim — it is the instrument saying that at map scale the
+ * air is not the subject.
+ */
+const HAZE_NEAR = 0.00065;
+const HAZE_FLOOR = 0.00013;
 
 /**
  * Two layers, and the whole view turns on keeping them apart.
@@ -140,6 +201,15 @@ const PICTO_RIM = RING_R * RING_OUTER * 0.72;
  */
 const CLUSTER_CELL_MARKERS = 1.25;
 const CLUSTER_MIN = 3;
+
+/**
+ * Where a crowd's number is allowed to sit relative to its outline, tried in
+ * order: up-right first, then round the other corners and the sides. Always
+ * outside the ellipse, never on another group's number.
+ */
+const CHIP_SLOTS: readonly (readonly [number, number])[] = [
+  [1, -1], [-1, -1], [1, 1], [-1, 1], [0, -1.15], [0, 1.15], [1.25, 0], [-1.25, 0],
+];
 
 /** How many relationships may be drawn at once, and how finely an arc is cut. */
 const TIE_LINKS = 14;
@@ -224,6 +294,45 @@ const BOND_COLOR = 0x9ed35e;
 function hash2(i: number, j: number): number {
   const h = Math.sin(i * 127.1 + j * 311.7) * 43758.5453;
   return h - Math.floor(h);
+}
+
+/**
+ * One separable box pass over a square field, with a running sum so the cost
+ * does not depend on the radius. `stride` is 1 along a row and `n` down a
+ * column; edges hold their last value rather than darkening toward zero.
+ */
+function blurAxis(src: Float32Array, dst: Float32Array, n: number, radius: number, stride: number): void {
+  const other = stride === 1 ? n : 1;
+  const inv = 1 / (radius * 2 + 1);
+  for (let line = 0; line < n; line++) {
+    const base = line * other;
+    const at = (k: number): number => src[base + Math.min(n - 1, Math.max(0, k)) * stride]!;
+    let sum = 0;
+    for (let d = -radius; d <= radius; d++) sum += at(d);
+    for (let k = 0; k < n; k++) {
+      dst[base + k * stride] = sum * inv;
+      sum += at(k + radius + 1) - at(k - radius);
+    }
+  }
+}
+
+/**
+ * The sim's height samples, rounded off for the eye.
+ *
+ * Two separable box passes are a near-Gaussian, and a Gaussian is exactly the
+ * right tool here: it leaves the low frequencies that make a range a range and
+ * takes the cusps that an `|sin|` ridge field puts at every zero crossing. The
+ * sim reads `heightAt` and is not affected; this is the picture's copy.
+ */
+function smoothField(src: Float32Array<ArrayBuffer>, n: number, radius: number): Float32Array<ArrayBuffer> {
+  if (radius < 1) return src;
+  const a = new Float32Array(src);
+  const b = new Float32Array(src.length);
+  for (let pass = 0; pass < 2; pass++) {
+    blurAxis(a, b, n, radius, 1);
+    blurAxis(b, a, n, radius, n);
+  }
+  return a;
 }
 
 /** The shortest and tallest pine the view plants, as a multiple of the base cone. */
@@ -344,7 +453,7 @@ function figureGeometry(stage: number): THREE.BufferGeometry {
  * a ring that is only bright disappears on snow while a ring that is only dark
  * disappears in a forest.
  */
-function ringGeometry(style: number, halo: boolean): THREE.BufferGeometry {
+function ringGeometry(style: number, core: boolean): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
   const weigh = (g: THREE.BufferGeometry, w: [number, number, number]): THREE.BufferGeometry => {
     const count = g.attributes['position']!.count;
@@ -368,7 +477,10 @@ function ringGeometry(style: number, halo: boolean): THREE.BufferGeometry {
     weigh(new THREE.RingGeometry(1.04, 1.16, 34), INK);
   } else if (style === RING_DOUBLE) {
     weigh(new THREE.RingGeometry(0.84, 1.04, 34), COND);
-    weigh(new THREE.RingGeometry(0.40, 0.60, 28), COND);
+    // Pushed out from 0.40–0.60 to leave the middle of the mark empty: the
+    // centre now belongs to the life stage, and an elder who is also sick must
+    // still read as filled-in rather than as two marks fighting over one disc.
+    weigh(new THREE.RingGeometry(0.54, 0.70, 28), COND);
     weigh(new THREE.RingGeometry(1.04, 1.16, 34), INK);
   } else if (style === RING_NOTCHED) {
     weigh(new THREE.RingGeometry(0.70, 1.00, 34), COND);
@@ -395,17 +507,19 @@ function ringGeometry(style: number, halo: boolean): THREE.BufferGeometry {
     weigh(new THREE.RingGeometry(1.02, 1.16, 34), INK);
   }
 
-  // An elder's mark is ringed twice, and the second ring is OUTSIDE the rim.
+  // An elder's mark is FILLED IN, and that is the whole of the difference.
   //
-  // Stage was the worst-read channel in both earlier rounds, because from an
-  // oblique-top camera a body foreshortens and a stoop reads as somebody
-  // bending over their work. The ground does not foreshorten. This is the one
-  // outer band in the vocabulary — the sick being's second ring is a small disc
-  // INSIDE the rim, and a being in danger wears eight separate spikes — so it
-  // cannot be confused with a condition.
-  if (halo) {
-    weigh(new THREE.RingGeometry(1.30, 1.38, 40), INK);
-    weigh(new THREE.RingGeometry(1.22, 1.30, 40), BONE);
+  // Stage was the worst-read channel in all three earlier rounds. Round three
+  // put a second hairline ring three pixels outside the rim and a stranger
+  // still read stage at 40% at forty-four pixels, calling elders adults: at
+  // that size a thin outer circle is not a second ring, it is a slightly
+  // thicker one. So the cue is now a difference of AREA — a solid bone disc
+  // filling the middle of the mark, with its own dark keyline. Nothing else in
+  // the vocabulary fills the centre: the sick being's second ring is a band at
+  // 0.54–0.70, outside this disc, and every other style leaves the middle open.
+  if (core) {
+    weigh(new THREE.RingGeometry(0.40, 0.48, 26).translate(0, 0, 0.002), INK);
+    weigh(new THREE.CircleGeometry(0.42, 26).translate(0, 0, 0.003), BONE);
   }
 
   // The heading pointer, aimed along -Y here so that it points along +Z — the
@@ -413,32 +527,39 @@ function ringGeometry(style: number, halo: boolean): THREE.BufferGeometry {
   // +Y, so every wedge in every screenshot pointed at where the being had just
   // been.
   //
-  // It is long on purpose and it is ALWAYS long: two fifths of the whole mark,
-  // which is what it takes to call one of eight directions off a still frame.
-  // Round two spent this length on a second meaning — short for standing, long
-  // for walking — and got both wrong at once, reading heading at 55%. Motion
-  // now has a channel of its own (the streak), and the pointer has one job.
-  //
-  // It is a DART, not a flag: narrow, with a dark keyline under it and a
-  // fraction of ink mixed into its fill. Drawn at full strength and full width
-  // it was the loudest thing in the frame — a field of white kites with people
-  // somewhere underneath them — and the subject of this view is the people.
-  const keyline = new THREE.BufferGeometry();
-  keyline.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-    0.37, -1.02, 0.006, -0.37, -1.02, 0.006, 0, -2.62, 0.006,
-  ]), 3));
-  keyline.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0.5, 1]), 2));
-  keyline.setIndex([0, 1, 2]);
-  keyline.computeVertexNormals();
-  weigh(keyline, INK);
-  const wedge = new THREE.BufferGeometry();
-  wedge.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-    0.25, -1.10, 0.012, -0.25, -1.10, 0.012, 0, -2.46, 0.012,
-  ]), 3));
-  wedge.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0.5, 1]), 2));
-  wedge.setIndex([0, 1, 2]);
-  wedge.computeVertexNormals();
-  weigh(wedge, [0.86, 0.14, 0]);
+  // It is a true ARROW now, not a sliver. Round three drew a long isoceles
+  // triangle tapering from the rim to a point, in a fill that was mostly the
+  // being's own condition colour, and a stranger read the exact octant 40% of
+  // the time — every single miss landing one octant out, which is a reader who
+  // found the mark and could not resolve its axis. A shaft with a barbed head
+  // on the end of it has an axis you can see at a glance, and drawing it in
+  // BONE over a dark keyline means the arrow reads at the same strength against
+  // every ring colour, every terrain and every hour: heading does not belong to
+  // the condition channel and should not borrow its palette.
+  const tri = (
+    ax: number, ay: number, bx: number, by: number, cx: number, cy: number, z: number,
+  ): THREE.BufferGeometry => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([ax, ay, z, bx, by, z, cx, cy, z]), 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0.5, 1]), 2));
+    g.setIndex([0, 1, 2]);
+    g.computeVertexNormals();
+    return g;
+  };
+  const bar = (half: number, y0: number, y1: number, z: number): THREE.BufferGeometry => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+      -half, y0, z, half, y0, z, half, y1, z, -half, y1, z,
+    ]), 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), 2));
+    g.setIndex([0, 1, 2, 0, 2, 3]);
+    g.computeVertexNormals();
+    return g;
+  };
+  weigh(bar(0.26, -0.96, -1.66, 0.006), INK);
+  weigh(tri(0.62, -1.50, -0.62, -1.50, 0, -2.86, 0.006), INK);
+  weigh(bar(0.145, -1.02, -1.62, 0.012), BONE);
+  weigh(tri(0.46, -1.56, -0.46, -1.56, 0, -2.70, 0.012), BONE);
 
   const merged = mergeGeometries(parts, false) ?? parts[0]!;
   merged.rotateX(-Math.PI / 2); // the ring is authored in XY; the ground is XZ
@@ -581,6 +702,13 @@ interface FadeUniforms {
   uSelR: { value: number };
   /** How much of the thing survives at full fade. Foliage goes; a building ghosts. */
   uFadeFloor: { value: number };
+  /**
+   * How far ahead the camera is aiming. Anything inside the cone in front of it
+   * and nearer than this is standing in the picture; 0 turns the rule off.
+   */
+  uBlockDepth: { value: number };
+  /** Half-width of that cone, as a fraction of the distance down it. */
+  uBlockR: { value: number };
 }
 
 /**
@@ -598,6 +726,15 @@ interface FadeUniforms {
  * and sinks into the ground, computed once per instance in the vertex shader
  * from a smooth distance falloff. No stipple, no transparency sorting, no
  * second pass — and the motion reads as deliberate, which a dither never can.
+ *
+ * There is a second rule on top of the first, and it is the one that fixes the
+ * near-camera tree. Down in the street a single trunk eleven metres off the
+ * lens is a black bar across a third of the frame — far enough away that the
+ * distance rule leaves it alone, and directly in front of everything the camera
+ * came down to look at. So anything standing INSIDE THE CONE the camera is
+ * aiming down, and nearer than the point it is aiming at, steps aside on the
+ * same shrink-and-sink it already uses. Off to the side at the same distance
+ * nothing moves: the street is still a street.
  */
 function applyFoliageFade(material: THREE.Material, out: FadeUniforms[], near = 110, far = 320, floor = 0, sink = 9): void {
   material.onBeforeCompile = (shader) => {
@@ -607,6 +744,8 @@ function applyFoliageFade(material: THREE.Material, out: FadeUniforms[], near = 
       uSel: { value: new THREE.Vector3(0, -1e6, 0) },
       uSelR: { value: 0 },
       uFadeFloor: { value: floor },
+      uBlockDepth: { value: 0 },
+      uBlockR: { value: 0.2 },
     };
     Object.assign(shader.uniforms, u);
     out.push(u);
@@ -618,7 +757,9 @@ function applyFoliageFade(material: THREE.Material, out: FadeUniforms[], near = 
         uniform float uFadeFar;
         uniform vec3 uSel;
         uniform float uSelR;
-        uniform float uFadeFloor;`,
+        uniform float uFadeFloor;
+        uniform float uBlockDepth;
+        uniform float uBlockR;`,
       )
       .replace(
         '#include <begin_vertex>',
@@ -626,10 +767,18 @@ function applyFoliageFade(material: THREE.Material, out: FadeUniforms[], near = 
         {
           vec4 fadeAnchor = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
           vec3 fadeWorld = (modelMatrix * fadeAnchor).xyz;
-          float fadeDepth = -(modelViewMatrix * fadeAnchor).z;
+          vec3 fadeView = (modelViewMatrix * fadeAnchor).xyz;
+          float fadeDepth = -fadeView.z;
           float fadeCam = smoothstep(uFadeNear, uFadeFar, fadeDepth);
           float fadeSel = uSelR > 0.0 ? smoothstep(uSelR * 0.55, uSelR * 1.6, distance(fadeWorld, uSel)) : 1.0;
-          float fadeA = max(uFadeFloor, min(fadeCam, fadeSel));
+          float fadeBlock = 1.0;
+          if (uBlockDepth > 0.0 && fadeDepth > 0.0) {
+            float coneR = uBlockR * max(3.0, fadeDepth);
+            float across = 1.0 - smoothstep(coneR * 0.55, coneR, length(fadeView.xy));
+            float ahead = 1.0 - smoothstep(uBlockDepth * 0.55, uBlockDepth * 0.92, fadeDepth);
+            fadeBlock = 1.0 - across * ahead;
+          }
+          float fadeA = max(uFadeFloor, min(min(fadeCam, fadeSel), fadeBlock));
           transformed *= fadeA;
           transformed.y -= (1.0 - fadeA) * ${sink.toFixed(1)};
         }`,
@@ -680,6 +829,10 @@ export class World3D {
   private beingHeading = new Float32Array(0);
   /** 1 while this being is inside a crowd that carries its own number. */
   private beingCrowded = new Uint8Array(0);
+  /** 1 while this being projected inside the canvas on the last frame. */
+  private beingOnScreen = new Uint8Array(0);
+  /** How many beings in frame drew a mark of their own — the countable term. */
+  private pinsDrawn = 0;
   private instanceCount = 0;
 
   /**
@@ -807,6 +960,15 @@ export class World3D {
   private readonly onPointerUp: (e: PointerEvent) => void;
   private readonly onPointerMove: (e: PointerEvent) => void;
   private readonly onPointerLeave: () => void;
+  private readonly onWheel: () => void;
+  /**
+   * When the camera was last driven, and where it stood at the last drawn
+   * frame. Between them they answer "is anything about to look different?",
+   * which is what decides whether this view is allowed a full-rate frame.
+   */
+  private lastInput = 0;
+  private readonly camWas = new THREE.Vector3(NaN, NaN, NaN);
+  private camMoving = true;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -827,13 +989,14 @@ export class World3D {
     // gives the land its colour back.
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.15;
-    // Far enough back that haze belongs to the mountains and not to the ground a
-    // being is standing on.
-    this.scene.fog = new THREE.Fog(0x9db6c6, WORLD * 0.95, WORLD * 2.8);
+    // Aerial perspective, tinted to the horizon — see HAZE_NEAR. The density is
+    // re-set every frame from where the camera is standing.
+    this.scene.fog = new THREE.FogExp2(DAY_SKY_LO.getHex(), HAZE_NEAR);
 
     // A near plane of a quarter-metre, because the camera is allowed into the
-    // street with them and a one-metre plane clips a being's knees off.
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.25, WORLD * 8);
+    // street with them and a one-metre plane clips a being's knees off; far
+    // enough back to hold the sea out to where the haze has closed it.
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.25, SEA_SPAN * 0.62);
     // Higher and closer than a horizon shot: the land is the subject, and a
     // third of the frame spent on empty sky is a third of the instrument wasted.
     this.camera.position.set(-WORLD * 0.26, WORLD * 0.5, WORLD * 0.42);
@@ -861,13 +1024,19 @@ export class World3D {
     this.scene.add(this.headlight, this.headlight.target);
 
     this.skyMat = World3D.skyMaterial();
+    // Drawn first and without a depth test, so the shell only has to contain
+    // the CAMERA rather than the whole sea: the sky fills the background
+    // unconditionally and everything else paints over it. A sphere large
+    // enough to hold a twelve-kilometre ocean would otherwise have to fit
+    // inside the far plane too, and the depth buffer pays for that.
     const sky = new THREE.Mesh(new THREE.SphereGeometry(WORLD * 3, 24, 16), this.skyMat);
     sky.frustumCulled = false;
+    sky.renderOrder = -1000;
     this.scene.add(sky);
 
     this.buildTerrain();
+    this.buildSurround();
     this.buildWater();
-    this.buildWall();
     this.buildTrees();
     this.buildRocks();
 
@@ -944,10 +1113,17 @@ export class World3D {
     this.onPointerDown = (e: PointerEvent): void => {
       this.downX = e.clientX;
       this.downY = e.clientY;
+      this.lastInput = performance.now();
     };
-    this.onPointerUp = (e: PointerEvent): void => this.handleClick(e);
+    this.onPointerUp = (e: PointerEvent): void => {
+      this.lastInput = performance.now();
+      this.handleClick(e);
+    };
     this.onPointerMove = (e: PointerEvent): void => {
-      if (e.clientX !== this.pointerX || e.clientY !== this.pointerY) this.pointerMoved = true;
+      if (e.clientX !== this.pointerX || e.clientY !== this.pointerY) {
+        this.pointerMoved = true;
+        this.lastInput = performance.now();
+      }
       this.pointerX = e.clientX;
       this.pointerY = e.clientY;
       this.pointerInside = true;
@@ -956,10 +1132,14 @@ export class World3D {
       this.pointerInside = false;
       this.hoveredId = null;
     };
+    this.onWheel = (): void => {
+      this.lastInput = performance.now();
+    };
     canvas.addEventListener('pointerdown', this.onPointerDown);
     canvas.addEventListener('pointerup', this.onPointerUp);
     canvas.addEventListener('pointermove', this.onPointerMove);
     canvas.addEventListener('pointerleave', this.onPointerLeave);
+    canvas.addEventListener('wheel', this.onWheel, { passive: true });
 
     this.resize();
     this.ro = new ResizeObserver(() => this.resize());
@@ -972,6 +1152,7 @@ export class World3D {
     return new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
+      depthTest: false,
       fog: false,
       uniforms: {
         uHigh: { value: DAY_SKY_HI.clone() },
@@ -1093,66 +1274,170 @@ export class World3D {
     return out.set(-dx, 1, -dz).normalize();
   }
 
+  /** The ground's colour at a point, from its region and how high it stands. */
+  private static groundColor(wx: number, wy: number, h: number, out: [number, number, number]): void {
+    const [r, g, b] = REGION_RGB[regionAt(wx, wy)];
+    const shade = 0.82 + Math.min(0.5, h / 18) * 0.45;
+    out[0] = r * shade;
+    out[1] = g * shade;
+    out[2] = b * shade;
+    // Above the treeline the ground stops being ground: bare rock, then pale
+    // scree on the tops. Without it the range is one flat grey mass and reads
+    // as a wall rather than as height — the tops have to catch the light.
+    const rock = Math.min(1, Math.max(0, (h - ROCK_AT) / 5)) * 0.78;
+    const snow = Math.min(1, Math.max(0, (h - SNOW_AT) / 3.5)) ** 1.3 * 0.88;
+    for (let c = 0; c < 3; c++) {
+      out[c] = out[c]! + (ROCK_RGB[c]! - out[c]!) * rock;
+      out[c] = out[c]! + (SNOW_RGB[c]! - out[c]!) * snow;
+    }
+  }
+
   private buildTerrain(): void {
     const n = GRID;
     const step = WORLD / n;
-    const positions = new Float32Array((n + 1) * (n + 1) * 3);
-    const colors = new Float32Array((n + 1) * (n + 1) * 3);
-    this.gridHeight = new Float32Array((n + 1) * (n + 1));
+    const side = n + 1;
+    const raw = new Float32Array(side * side);
+    for (let j = 0; j <= n; j++) {
+      for (let i = 0; i <= n; i++) raw[j * side + i] = heightAt(i * step, j * step);
+    }
+    // The MESH is smoothed; `heightAt` is not, and the sim never sees this.
+    this.gridHeight = smoothField(raw, side, Math.max(1, Math.round(RELIEF_SMOOTH_M / step)));
+
+    const positions = new Float32Array(side * side * 3);
+    const colors = new Float32Array(side * side * 3);
+    const rgb: [number, number, number] = [0, 0, 0];
     let p = 0;
     for (let j = 0; j <= n; j++) {
       for (let i = 0; i <= n; i++) {
         const wx = i * step;
         const wy = j * step;
-        const h = heightAt(wx, wy);
-        this.gridHeight[j * (n + 1) + i] = h;
+        const h = this.gridHeight[j * side + i]!;
         positions[p] = wx - HALF;
         positions[p + 1] = h * HSCALE;
         positions[p + 2] = wy - HALF;
-        const [r, g, b] = REGION_RGB[regionAt(wx, wy)];
-        const shade = 0.82 + Math.min(0.5, h / 18) * 0.45;
-        colors[p] = r * shade;
-        colors[p + 1] = g * shade;
-        colors[p + 2] = b * shade;
+        World3D.groundColor(wx, wy, h, rgb);
+        colors[p] = rgb[0];
+        colors[p + 1] = rgb[1];
+        colors[p + 2] = rgb[2];
         p += 3;
       }
     }
-    const indices: number[] = [];
+    const indices = new Uint32Array(n * n * 6);
+    let q = 0;
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
-        const a = j * (n + 1) + i;
-        indices.push(a, a + (n + 1), a + 1, a + 1, a + (n + 1), a + (n + 1) + 1);
+        const a = j * side + i;
+        indices[q] = a;
+        indices[q + 1] = a + side;
+        indices[q + 2] = a + 1;
+        indices[q + 3] = a + 1;
+        indices[q + 4] = a + side;
+        indices[q + 5] = a + side + 1;
+        q += 6;
       }
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geo.setIndex(indices);
+    geo.setIndex(new THREE.BufferAttribute(indices, 1));
     geo.computeVertexNormals();
     this.scene.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0 })));
   }
 
   private buildWater(): void {
-    const geo = new THREE.PlaneGeometry(WORLD, WORLD);
+    const geo = new THREE.PlaneGeometry(SEA_SPAN, SEA_SPAN);
     geo.rotateX(-Math.PI / 2);
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x1d5b7d, transparent: true, opacity: 0.74, roughness: 0.12, metalness: 0.35 }));
     mesh.position.y = SEA * HSCALE;
     this.scene.add(mesh);
   }
 
-  private buildWall(): void {
-    const H = 300;
-    const TH = 14;
-    const make = (w: number, d: number, x: number, z: number): THREE.BufferGeometry => {
-      const g = new THREE.BoxGeometry(w, H, d);
-      g.translate(x, H / 2 - 30, z);
-      return g;
-    };
-    const merged = mergeGeometries([
-      make(WORLD + TH, TH, 0, -HALF), make(WORLD + TH, TH, 0, HALF),
-      make(TH, WORLD + TH, -HALF, 0), make(TH, WORLD + TH, HALF, 0),
-    ], false);
-    if (merged) this.scene.add(new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ color: 0x413d38, roughness: 1 })));
+  /**
+   * What is beyond the world — and why it is no longer a wall.
+   *
+   * The sim's continent stops dead at two kilometres, and round three closed it
+   * with four three-hundred-metre boxes in near-black. From a kilometre up that
+   * was a picture frame; at street level it was a matte black band filling the
+   * upper half of the frame, with a strip of sky above it. An instrument whose
+   * horizon is a wall is an instrument that has told you the world is a diorama.
+   *
+   * So the ground carries on instead. The terrain's own boundary is continued
+   * outward — dropping below the waterline over the first few hundred metres,
+   * then running flat for a dozen kilometres as a sea floor — and the open sea
+   * is drawn over the whole of it. Nothing marks the edge: the haze closes the
+   * distance long before the geometry runs out, and what a reader sees at the
+   * end of the land is sea going into air, which is what a horizon is.
+   */
+  private buildSurround(): void {
+    const n = GRID;
+    const step = WORLD / n;
+    const side = n + 1;
+    const at = (i: number, j: number): number => this.gridHeight[j * side + i]!;
+
+    const edge: number[] = []; // wx, wy around the boundary, in order
+    for (let i = 0; i <= n; i++) edge.push(i * step, 0);
+    for (let j = 1; j <= n; j++) edge.push(WORLD, j * step);
+    for (let i = n - 1; i >= 0; i--) edge.push(i * step, WORLD);
+    for (let j = n - 1; j >= 1; j--) edge.push(0, j * step);
+    const ring = edge.length / 2;
+
+    // Three rings of vertices: the terrain's own edge, the foot of the drop,
+    // and the far sea floor. Pushed straight out from the centre, so the strip
+    // closes round the corners without a fan and without a crack.
+    const positions = new Float32Array(ring * 3 * 3);
+    const colors = new Float32Array(ring * 3 * 3);
+    const rgb: [number, number, number] = [0, 0, 0];
+    const FLOOR: readonly [number, number, number] = [0.13, 0.19, 0.23];
+    for (let k = 0; k < ring; k++) {
+      const wx = edge[k * 2]!;
+      const wy = edge[k * 2 + 1]!;
+      const i = Math.round(wx / step);
+      const j = Math.round(wy / step);
+      const h = at(Math.min(n, i), Math.min(n, j));
+      const sx = wx - HALF;
+      const sz = wy - HALF;
+      const len = Math.max(1e-6, Math.hypot(sx, sz));
+      const ux = sx / len;
+      const uz = sz / len;
+      World3D.groundColor(wx, wy, h, rgb);
+      const write = (row: number, x: number, y: number, z: number, mix: number): void => {
+        const o = (row * ring + k) * 3;
+        positions[o] = x;
+        positions[o + 1] = y;
+        positions[o + 2] = z;
+        for (let c = 0; c < 3; c++) colors[o + c] = rgb[c]! + (FLOOR[c]! - rgb[c]!) * mix;
+      };
+      write(0, sx, h * HSCALE, sz, 0);
+      write(1, sx + ux * SHELF_FALL, SHELF_DROP * HSCALE, sz + uz * SHELF_FALL, 0.85);
+      write(2, sx + ux * SHELF_OUT, (SHELF_DROP - 0.4) * HSCALE, sz + uz * SHELF_OUT, 1);
+    }
+
+    const indices = new Uint32Array(ring * 2 * 6);
+    let q = 0;
+    for (let row = 0; row < 2; row++) {
+      for (let k = 0; k < ring; k++) {
+        const k1 = (k + 1) % ring;
+        const a = row * ring + k;
+        const b = row * ring + k1;
+        const c = (row + 1) * ring + k;
+        const d = (row + 1) * ring + k1;
+        indices[q] = a;
+        indices[q + 1] = c;
+        indices[q + 2] = b;
+        indices[q + 3] = b;
+        indices[q + 4] = c;
+        indices[q + 5] = d;
+        q += 6;
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setIndex(new THREE.BufferAttribute(indices, 1));
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, side: THREE.DoubleSide }));
+    mesh.frustumCulled = false;
+    this.scene.add(mesh);
   }
 
   private buildTrees(): void {
@@ -1450,6 +1735,7 @@ export class World3D {
     this.beingStage = new Uint8Array(cap);
     this.beingHeading = new Float32Array(cap);
     this.beingCrowded = new Uint8Array(cap);
+    this.beingOnScreen = new Uint8Array(cap);
     this.stageIds = [new Int32Array(cap), new Int32Array(cap), new Int32Array(cap)];
     for (let bucket = 0; bucket < RING_BUCKETS; bucket++) {
       const mesh = this.ringMeshes[bucket];
@@ -1680,6 +1966,7 @@ export class World3D {
   private writeMarkers(t: number): void {
     const bodies = bandShowsBodies(this.band);
     const detail = bandShowsDetail(this.band);
+    const collapses = bandCountsBeings(this.band);
     const pictos = this.pictos!;
     const cells = this.pictoCell!;
     const trails = this.trails!;
@@ -1689,6 +1976,7 @@ export class World3D {
     let pictoAt = 0;
     let trailAt = 0;
     let dotAt = 0;
+    this.pinsDrawn = 0;
 
     for (let i = 0; i < this.instanceCount; i++) {
       const id = this.ids[i]!;
@@ -1718,12 +2006,17 @@ export class World3D {
       this.fwd.addScaledVector(this.up, -this.up.dot(this.fwd)).normalize();
       this.right.crossVectors(this.up, this.fwd);
 
+      // A being the chip over its head has already counted draws NOTHING —
+      // not a pin, not a dot, not a body. Round three drew the pins anyway and
+      // asked the reader to add a number to the marks printed underneath it,
+      // which is the one arithmetic this view must never invite, and a stranger
+      // duly came out 11.6% low over the frame and 12.9% high in a quadrant.
+      // `pinsDrawn + Σ chips = beings in frame`, exactly, or the count is a
+      // guess with a legend next to it.
+      if (collapses && this.beingCrowded[i] === 1 && id !== this.selectedId) continue;
+      if (this.beingOnScreen[i] === 1) this.pinsDrawn++;
+
       if (!bodies) {
-        // A dot for everyone the crowd numbers do not already account for.
-        // Drawing both would ask a reader to add a number to the dots printed
-        // underneath it, which is the one arithmetic this view must never
-        // invite.
-        if (this.beingCrowded[i] === 1) continue;
         const rd = deco * DOT_R;
         this.basis.makeBasis(this.right, this.up, this.fwd);
         this.basis.scale(this.dummy.scale.setScalar(rd));
@@ -1734,7 +2027,7 @@ export class World3D {
         continue;
       }
 
-      const bucket = ringStyleFor(cond, act) * 2 + (stageHalo(stage, this.band) ? 1 : 0);
+      const bucket = ringStyleFor(cond, act) * 2 + (stageCore(stage, this.band) ? 1 : 0);
       const ringMesh = this.ringMeshes[bucket]!;
       const ringAt = this.ringCount[bucket]!;
       this.ringCount[bucket] = ringAt + 1;
@@ -2050,7 +2343,17 @@ export class World3D {
     (sky['uHigh']!.value as THREE.Color).copy(NIGHT_SKY_HI).lerp(DAY_SKY_HI, d);
     (sky['uLow']!.value as THREE.Color).copy(NIGHT_SKY_LO).lerp(DAY_SKY_LO, d);
     sky['uNight']!.value = night;
-    (this.scene.fog as THREE.Fog).color.copy(NIGHT_SKY_LO).lerp(DAY_SKY_LO, d);
+    // Exactly the colour the horizon is, or the haze reads as smoke rather than
+    // as air: what makes a far mountain look far is that it is turning INTO the
+    // sky, not that it is going grey.
+    const haze = this.scene.fog as THREE.FogExp2;
+    haze.color.copy(NIGHT_SKY_LO).lerp(DAY_SKY_LO, d);
+    // Thick at eye level, thin at map scale. Standing in the street the range
+    // is twelve hundred metres off and should be half air; from a kilometre and
+    // a half up it is the subject and has to stay countable.
+    const camDist = this.camera.position.distanceTo(this.controls.target);
+    const scale = (200 / Math.max(200, camDist)) ** 0.85;
+    haze.density = Math.max(HAZE_FLOOR, HAZE_NEAR * scale);
     (this.windows.material as THREE.MeshBasicMaterial).opacity = night * 0.62;
     // Bodies keep their own colour as the light goes. The land does not.
     for (const lift of this.bodyNight) lift.value = night * 0.62;
@@ -2114,6 +2417,14 @@ export class World3D {
   }
 
   private updateSelection(t: number): void {
+    // Down in the street, whatever is standing between the eye and the point it
+    // is aimed at steps aside — a rule about the CAMERA, not about the
+    // selection, so it is set whether or not anything is selected.
+    const blockDepth = this.band === 'near'
+      ? this.camera.position.distanceTo(this.controls.target)
+      : 0;
+    for (const u of this.foliageFades) u.uBlockDepth.value = blockDepth;
+
     const i = this.selectedId === null ? -1 : this.indexOf(this.selectedId);
     if (i < 0) {
       this.selRing.visible = false;
@@ -2268,6 +2579,7 @@ export class World3D {
     this.screenIndex.length = 0;
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
+    this.beingOnScreen.fill(0, 0, this.instanceCount);
     for (let i = 0; i < this.instanceCount; i++) {
       this.probe.set(this.beingPos[i * 3]!, this.beingPos[i * 3 + 1]! + this.beingMark[i]! * 0.5, this.beingPos[i * 3 + 2]!);
       this.probe.project(this.camera);
@@ -2275,6 +2587,7 @@ export class World3D {
       const px = ((this.probe.x + 1) / 2) * w;
       const py = ((1 - this.probe.y) / 2) * h;
       if (px < 0 || px > w || py < 0 || py > h) continue;
+      this.beingOnScreen[i] = 1;
       this.screenPoints.push({ id: this.ids[i]!, x: px, y: py });
       this.screenIndex.push(i);
     }
@@ -2291,24 +2604,82 @@ export class World3D {
    * the ones you can see, and the group splits into smaller ones as you zoom in
    * until, close enough, there are no groups at all and you are counting people.
    */
+  /**
+   * Where the crowds are, how many are in each, and — in the bands that promise
+   * a count — which beings the numbers have already counted.
+   *
+   * Round three drew every pin AND a number beside the group, and a stranger
+   * counting a default-camera frame came out 11.6% low over the whole picture
+   * and 12.9% high in one quadrant. That is not a reader being careless; it is a
+   * picture asking to be counted two ways at once. So where the band promises a
+   * count, the rule is now absolute: **a being is a pin or it is part of a
+   * number, and never both.** Pins that would overlap collapse into the chip
+   * that counts them and are not drawn at all, and `countAudit()` reports the
+   * two terms so the arithmetic can be checked against the picture.
+   *
+   * At NEAR there are no chips. Standing in the street, a number floating over
+   * six visible people is answering a question nobody at that distance is
+   * asking, and the band's own contract says to pull back to count.
+   */
   private updateCrowds(now: number): void {
     if (this.hullNodes.length === 0) return;
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
-    if (now - this.lastCluster > 90) {
+    const collapses = bandCountsBeings(this.band);
+    if (this.band === 'near') {
+      if (this.clusters.length > 0) {
+        this.clusters = [];
+        for (const node of this.hullNodes) node.style.display = 'none';
+        for (const node of this.countNodes) node.style.display = 'none';
+      }
+      this.beingCrowded.fill(0, 0, this.instanceCount);
+      this.chipRects.length = 0;
+      return;
+    }
+    // Ten times a second is enough while the camera is still; while it is NOT,
+    // the grouping has to be redone in the same frame as the projection it is
+    // built from, or for a tenth of a second the view draws pins inside hulls
+    // that were computed for where the beings used to be — and `countAudit`
+    // would report an arithmetic that does not close.
+    if (now - this.lastCluster > 90 || (collapses && this.camMoving)) {
       this.lastCluster = now;
-      const markerPx = this.bandPx;
-      this.clusters = clusterHierarchy(
-        this.screenPoints,
-        Math.max(14, markerPx * CLUSTER_CELL_MARKERS),
-        CLUSTER_MIN,
-        CLUSTER_BUDGET,
-      );
+      if (collapses) {
+        // One PIN wide, so two marks that could touch are always in the same
+        // group — that is what makes "no two pins a reader counts separately
+        // ever overlap" a property of the geometry rather than a hope.
+        this.clusters = planCount(this.screenPoints, this.annotationPixels(), CLUSTER_BUDGET).chips;
+      } else {
+        this.clusters = clusterHierarchy(
+          this.screenPoints,
+          Math.max(14, this.bandPx * CLUSTER_CELL_MARKERS),
+          CLUSTER_MIN,
+          CLUSTER_BUDGET,
+        );
+      }
       // Each group is anchored in the WORLD, so its outline follows the orbit
       // smoothly between the ten times a second the grouping itself is redone.
       this.beingCrowded.fill(0, 0, this.instanceCount);
       for (let c = 0; c < this.clusters.length; c++) {
         const cl = this.clusters[c]!;
+        // The selected being is never swallowed by a number. It is the one
+        // promise every band makes, so it leaves the group — and the group's
+        // total goes down by one, because the total has to keep counting
+        // exactly the beings the chip is standing in for.
+        if (collapses && this.selectedId !== null) {
+          const drop = cl.members.findIndex((m) => this.ids[this.screenIndex[m]!] === this.selectedId);
+          if (drop >= 0) {
+            cl.members.splice(drop, 1);
+            cl.count -= 1;
+          }
+        }
+        // A chip reading "1" over a being with no pin under it is a worse
+        // answer than the pin would have been. Whatever is left dissolves and
+        // draws itself — `beingCrowded` is only set below, so it does.
+        if (cl.count < 2) {
+          this.clusters.splice(c, 1);
+          c--;
+          continue;
+        }
         let cx = 0;
         let cy = 0;
         let cz = 0;
@@ -2356,6 +2727,8 @@ export class World3D {
         continue;
       }
       hull.style.display = 'block';
+      const cls = collapses ? 'whull full' : 'whull';
+      if (hull.className !== cls) hull.className = cls;
       hull.style.width = `${Math.round(rx * 2)}px`;
       hull.style.height = `${Math.round(ry * 2)}px`;
       hull.style.transform = `translate(-50%, -50%) translate(${Math.round(px)}px, ${Math.round(py)}px)`;
@@ -2366,9 +2739,26 @@ export class World3D {
       // chip's own radius. Round two put it on the boundary at 0.72 of the
       // extent, which is inside the crowd: a number printed over the people it
       // is counting hides two of them and makes the count it claims unverifiable.
+      //
+      // And clear of every chip already placed. A number sitting on another
+      // group's outline belongs to whichever group the reader decides it
+      // belongs to, which is the same ambiguity in a smaller place.
       const halfW = text.length * 3.5 + 7;
-      const chipX = Math.round(Math.min(w - halfW - 3, px + rx * 0.72 + halfW + 5));
-      const chipY = Math.round(Math.max(11, py - ry * 0.72 - 13));
+      let chipX = 0;
+      let chipY = 0;
+      for (let slot = 0; slot < CHIP_SLOTS.length; slot++) {
+        const [sx, sy] = CHIP_SLOTS[slot]!;
+        chipX = Math.round(Math.min(w - halfW - 3, Math.max(halfW + 3, px + sx * (rx * 0.72 + halfW + 5))));
+        chipY = Math.round(Math.min(h - 11, Math.max(11, py + sy * (ry * 0.72 + 13))));
+        let clear = true;
+        for (const t of this.chipRects) {
+          if (chipX - halfW < t.x1 + 4 && chipX + halfW > t.x0 - 4 && chipY - 9 < t.y1 + 4 && chipY + 9 > t.y0 - 4) {
+            clear = false;
+            break;
+          }
+        }
+        if (clear) break;
+      }
       count.style.transform = `translate(-50%, -50%) translate(${chipX}px, ${chipY}px)`;
       // Names are placed around these, not on top of them.
       this.chipRects.push({ x0: chipX - halfW, y0: chipY - 9, x1: chipX + halfW, y1: chipY + 9 });
@@ -2409,7 +2799,14 @@ export class World3D {
         return ra === rb ? a.d - b.d : ra - rb;
       });
       this.labelCandidates = [];
-      for (const { k } of near) {
+      // At NEAR, only the beings you are standing among. A reviewer's frame had
+      // fifteen names in it, most of them belonging to people on the far side
+      // of the valley — every one of them true, and together a web of leader
+      // lines over a picture of six people. The selected being, the hovered one
+      // and their kin keep their names wherever they are; everyone else has to
+      // be within walking distance.
+      const nearOnly = this.band === 'near' ? NEAR_LABEL_M * NEAR_LABEL_M : 0;
+      for (const { k, d } of near) {
         if (this.labelCandidates.length >= budget * 2 + 6) break;
         const i = this.screenIndex[k]!;
         const id = this.ids[i]!;
@@ -2418,6 +2815,10 @@ export class World3D {
         // A handful of names scattered over a continent is not an answer to
         // any of those, and the legend out there does not offer one.
         if (this.band === 'far' && rank > 1) continue;
+        if (nearOnly > 0 && rank === 3 && d > nearOnly) continue;
+        // A name over a being the view has folded into a crowd's number points
+        // at ground where nothing is drawn.
+        if (rank === 3 && bandCountsBeings(this.band) && this.beingCrowded[i] === 1) continue;
         const top = this.beingTop[i]!;
         if (rank === 3 && this.terrainHides(this.beingPos[i * 3]!, top, this.beingPos[i * 3 + 2]!)) continue;
         this.labelCandidates.push({ id, x: this.screenPoints[k]!.x, y: this.screenPoints[k]!.y, rank, text: this.labelTextFor(i, id) });
@@ -2457,7 +2858,11 @@ export class World3D {
         this.bodyRects.push({ x0: p.x - half, y0: p.y - half, x1: p.x + half, y1: p.y + half });
       }
     }
-    const placed = placeLabels(this.labelCandidates, w, h, budget, this.bodyRects, this.bandPx * 0.55);
+    const placed = placeLabels(
+      this.labelCandidates, w, h, budget, this.bodyRects,
+      labelClearanceFor(this.band, this.bandPx),
+      maxLeaderFor(this.band),
+    );
     this.labelShown.length = 0;
     for (let n = 0; n < this.labelNodes.length; n++) {
       const node = this.labelNodes[n]!;
@@ -2508,7 +2913,7 @@ export class World3D {
   }
 
   /** What this being is doing and how it is, exactly as the view encoded it. */
-  stateOf(id: number): { act: number; cond: number; picto: number; hue: number; ring: number; halo: boolean } | null {
+  stateOf(id: number): { act: number; cond: number; picto: number; hue: number; ring: number; core: boolean } | null {
     const i = this.indexOf(id);
     if (i < 0) return null;
     const act = this.beingAct[i]!;
@@ -2519,8 +2924,23 @@ export class World3D {
       picto: bandShowsDetail(this.band) ? pictogramFor(act) : PICTO_NONE,
       hue: conditionHue(cond, act),
       ring: ringStyleFor(cond, act),
-      halo: stageHalo(this.beingStage[i]!, this.band),
+      core: stageCore(this.beingStage[i]!, this.band),
     };
+  }
+
+  /**
+   * Whether this being has a mark of its own on screen right now — or whether a
+   * crowd's number is standing in for it.
+   *
+   * Everything the picture claims about ONE being is claimed only about the
+   * ones that are drawn. A stranger test that picks a being folded into a chip
+   * and scores the reader on its condition is scoring them on a mark the frame
+   * does not contain.
+   */
+  private isCollapsed(i: number): boolean {
+    return bandCountsBeings(this.band)
+      && this.beingCrowded[i] === 1
+      && this.ids[i] !== this.selectedId;
   }
 
   stageOf(id: number): number | null {
@@ -2561,10 +2981,13 @@ export class World3D {
     return stageWord(this.beingStage[i]!);
   }
 
-  /** The condition the picture claims, or `null` at FAR, where it claims none. */
+  /**
+   * The condition the picture claims, or `null` at FAR, where it claims none —
+   * and `null` for a being whose mark a crowd's number has absorbed.
+   */
   conditionShownOf(id: number): string | null {
     const i = this.indexOf(id);
-    if (i < 0 || !bandShowsBodies(this.band)) return null;
+    if (i < 0 || !bandShowsBodies(this.band) || this.isCollapsed(i)) return null;
     return conditionWord(this.beingCond[i]!, this.beingAct[i]!);
   }
 
@@ -2608,6 +3031,97 @@ export class World3D {
     const dy = -(this.probe.y - ay) * (this.canvas.clientHeight / Math.max(1, this.canvas.clientWidth));
     const deg = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
     return { deg, word: headingOctant(deg) };
+  }
+
+  /**
+   * How this frame asks to be counted, and whether the arithmetic closes.
+   *
+   * `pinsDrawn` is how many beings in frame drew a mark of their own; `chips`
+   * are the numbers over the crowds that stand in for the rest. The whole
+   * countability claim is that `pinsDrawn + Σ chips.n === beingsInFrustum`,
+   * and every term here is measured from what the renderer actually wrote this
+   * frame, not recomputed from the plan — so a bug that drew a pin under a chip
+   * shows up as a mismatch rather than as a reader's error.
+   */
+  countAudit(): { pinsDrawn: number; chips: { n: number; x: number; y: number }[]; beingsInFrustum: number } {
+    const rect = this.canvas.getBoundingClientRect();
+    const chips: { n: number; x: number; y: number }[] = [];
+    for (let c = 0; c < this.clusters.length; c++) {
+      const cl = this.clusters[c]!;
+      if (this.countNodes[c]?.style.display === 'none') continue;
+      chips.push({ n: cl.count, x: rect.left + cl.x, y: rect.top + cl.y });
+    }
+    return { pinsDrawn: this.pinsDrawn, chips, beingsInFrustum: this.screenPoints.length };
+  }
+
+  /**
+   * Score one reading of a heading against what the dart actually points at.
+   *
+   * `exact` is the eight-point call; `within1` allows a neighbouring octant,
+   * which is the difference between a reader who could not find the mark and
+   * one who found it and rounded. Round three's heading misses were ALL exactly
+   * one octant out, and with no way to say so the channel could only be scored
+   * as a flat 40%.
+   */
+  headingCheck(id: number, said: string): { truth: string; deg: number; off: number; exact: boolean; within1: boolean } | null {
+    const on = this.headingOnScreen(id);
+    if (!on) return null;
+    const off = octantDistance(said, on.word);
+    return { truth: on.word, deg: on.deg, off, exact: off === 0, within1: off >= 0 && off <= 1 };
+  }
+
+  /**
+   * Somewhere worth standing — the places on this continent where enough beings
+   * are together to read a frame's worth of them.
+   *
+   * A stranger test at MID or NEAR needs ten readable beings in one frame, and
+   * finding ten by orbiting a two-kilometre continent by hand is most of the
+   * afternoon: round three's MID frames held two. So the view offers the
+   * settlements it can see, biggest first, each with the camera placement that
+   * puts that settlement at the size the band promises.
+   */
+  frameCandidates(band: ZoomBand = 'mid'): FrameCandidate[] {
+    // Group in the WORLD, not on screen: where a reviewer should GO cannot
+    // depend on where the camera happens to be pointing now. The clustering is
+    // the same code the crowds use — x and y here are scene x and scene z.
+    const flat: ScreenPoint[] = [];
+    for (let i = 0; i < this.instanceCount; i++) {
+      flat.push({ id: this.ids[i]!, x: this.beingPos[i * 3]!, y: this.beingPos[i * 3 + 2]! });
+    }
+    const groups = clusterHierarchy(flat, band === 'near' ? 14 : 34, 4, 12);
+    // The distance at which a grown being stands the size this band is about.
+    const px = band === 'near' ? 170 : band === 'mid' ? 62 : band === 'default' ? 14 : 0.5;
+    const dist = ADULT_M / Math.max(1e-6, px * this.worldPerPx);
+    // A three-quarter view, high enough to see into the settlement and low
+    // enough that a being is a figure rather than a footprint.
+    const pitch = band === 'near' ? 0.16 : band === 'mid' ? 0.42 : 0.85;
+    const flatR = dist * Math.cos(pitch);
+    const lift = dist * Math.sin(pitch);
+    const out: FrameCandidate[] = [];
+    for (const g of groups) {
+      const ground = this.surfaceAt(g.x + HALF, g.y + HALF);
+      const centre = { x: g.x, y: ground, z: g.y };
+      out.push({
+        count: g.count,
+        centre,
+        camera: { x: centre.x - flatR * 0.72, y: ground + lift + (band === 'near' ? 1.6 : 0), z: centre.z + flatR * 0.69 },
+        target: { x: centre.x, y: ground + (band === 'near' ? 1.2 : 0), z: centre.z },
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Put the camera somewhere. The ONE probe that changes anything, and all it
+   * changes is where you are standing — which the mouse can do anyway. Nothing
+   * about the world, the data or what the view claims goes through here.
+   */
+  placeCamera(camera: { x: number; y: number; z: number }, target: { x: number; y: number; z: number }): void {
+    this.following = false;
+    this.focusUntil = 0;
+    this.camera.position.set(camera.x, camera.y, camera.z);
+    this.controls.target.set(target.x, target.y, target.z);
+    this.controls.update();
   }
 
   /** The crowds the view has put a number on, and what those numbers say. */
@@ -2793,7 +3307,24 @@ export class World3D {
     }
     this.updateLabels(now);
     this.updateBandChip();
+    // Whether the picture is still settling. `enableDamping` keeps the camera
+    // drifting for the better part of a second after the hand comes off it, and
+    // a view that dropped to ten frames a second in the middle of that would
+    // read as a stutter rather than as thrift.
+    this.camMoving = !(this.camera.position.distanceToSquared(this.camWas) < 1e-6)
+      || this.following
+      || this.focusUntil > now;
+    this.camWas.copy(this.camera.position);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * Is this view about to look different? Drives the frame limiter: the camera
+   * being driven, or still coming to rest, is the one thing that has to be
+   * drawn at full rate whatever else the world is doing.
+   */
+  isInteracting(): boolean {
+    return performance.now() - this.lastInput < 450 || this.camMoving;
   }
 
   /**
@@ -2862,6 +3393,7 @@ export class World3D {
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerleave', this.onPointerLeave);
+    this.canvas.removeEventListener('wheel', this.onWheel);
     this.ro?.disconnect();
     this.ro = null;
     this.controls.dispose();

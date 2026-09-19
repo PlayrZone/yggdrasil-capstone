@@ -164,12 +164,42 @@ export function bandForPixels(px: number, previous?: ZoomBand): ZoomBand {
 
 /** How many names a band is willing to float over the world at once. */
 export function labelBudgetFor(band: ZoomBand): number {
-  return band === 'near' ? LABEL_BUDGET_MAX : band === 'mid' ? 10 : band === 'default' ? 7 : 2;
+  return band === 'near' ? 12 : band === 'mid' ? 10 : band === 'default' ? 7 : 2;
 }
 
+/**
+ * How far a name may sit from the being it belongs to, and how long a leader
+ * line home is allowed to be.
+ *
+ * Round three scaled both with the FIGURE, reasoning that a twelve-pixel gap
+ * over a two-hundred-pixel body is a name written on its face. But the name is
+ * anchored to the being's HEAD, not its feet, so the gap over the head never
+ * needed to grow at all — and at NEAR the offsets became three hundred pixels,
+ * producing the label web a reviewer found: fifteen names on metre-long leader
+ * lines crossing each other and the frame.
+ */
+export function labelClearanceFor(band: ZoomBand, bandPx: number): number {
+  return Math.min(band === 'near' ? 20 : 30, Math.max(11, bandPx * 0.26));
+}
+
+/** The longest leader line a band will draw before it drops the name instead. */
+export function maxLeaderFor(band: ZoomBand): number {
+  return band === 'near' ? 52 : 150;
+}
+
+/**
+ * At NEAR, how close a being has to be before the view offers it a name.
+ *
+ * Standing in the street, every being on the far side of the valley is still in
+ * frame and still has a name — and a name for each of them is a page of text
+ * over a picture of six people. The selected being, the hovered one and anyone
+ * they are related to are named wherever they are; everybody else has to be
+ * close enough to walk to.
+ */
+export const NEAR_LABEL_M = 25;
 
 export const LABEL_BUDGET_MAX = 18;
-export const CLUSTER_BUDGET = 18;
+export const CLUSTER_BUDGET = 24;
 
 /**
  * Exactly what a band claims a reader can get off the picture, and the accuracy
@@ -234,6 +264,66 @@ export function bandShowsDetail(band: ZoomBand): boolean {
 /** Bands that draw a being as a figure in a ring rather than as a presence dot. */
 export function bandShowsBodies(band: ZoomBand): boolean {
   return band !== 'far';
+}
+
+// ── How often the view is allowed to redraw ──────────────────────────────────
+
+/**
+ * An observatory is not a game, and it shares a machine.
+ *
+ * The loop this view runs in is a bare `requestAnimationFrame`, which on a
+ * 144 Hz panel means a hundred and forty-four full WebGL frames a second — a
+ * continent, six thousand trees and three hundred instanced beings — for a
+ * picture that, with the world paused, is identical every time. On a shared GPU
+ * that is simply taken from whatever else the machine is doing.
+ *
+ * So the view draws at the rate the PICTURE needs, and nothing above it: sixty
+ * while something is actually changing, ten while it is not, two while nobody
+ * is looking at it. Orbiting counts as changing — a camera that damps to a stop
+ * at ten frames a second feels broken — and so does a running world, because
+ * every being in it is moving.
+ */
+export const FPS_ACTIVE = 60;
+export const FPS_IDLE = 10;
+export const FPS_HIDDEN = 2;
+
+export interface FrameNeed {
+  /** The document is on screen at all. */
+  visible: boolean;
+  /** The window has focus — somebody is looking at this and not at something else. */
+  focused: boolean;
+  /** The world is advancing, so every being in the frame is in a new place. */
+  running: boolean;
+  /** The camera is being driven, or is still coming to rest. */
+  interacting: boolean;
+}
+
+export function targetFps(need: FrameNeed): number {
+  if (!need.visible) return FPS_HIDDEN;
+  if (need.interacting) return FPS_ACTIVE;
+  if (!need.focused) return FPS_IDLE;
+  return need.running ? FPS_ACTIVE : FPS_IDLE;
+}
+
+/**
+ * Whether this animation-frame callback should draw, and the cadence mark to
+ * carry forward if it does. `null` means skip — draw nothing, allocate nothing.
+ *
+ * The mark advances by exactly one interval rather than being set to `now`, so
+ * a display running faster than the cap still averages the cap instead of
+ * losing a whole frame to rounding every time: at 144 Hz a 60 fps cap that
+ * simply compared timestamps would deliver 48. A stall longer than one interval
+ * resets the cadence rather than trying to catch up, because catching up on a
+ * shared GPU is the opposite of the point.
+ */
+export function nextFrameAt(now: number, last: number, fps: number): number | null {
+  if (fps <= 0) return null;
+  const interval = 1000 / fps;
+  // A 60 Hz panel delivers 16.6 ms against a 16.667 ms interval; without a
+  // little slack the cap would reject every other frame and halve the rate.
+  if (now - last < interval - 1.5) return null;
+  const stepped = last + interval;
+  return now - stepped > interval ? now : stepped;
 }
 
 // ── Pictograms ───────────────────────────────────────────────────────────────
@@ -393,13 +483,18 @@ export function bodyTint(hue: number): number {
  * Round one gave an elder 97% of an adult's height and a cloak, and a reviewer
  * called none of four. Round two fixed the bodies and still scored 60%, because
  * from an oblique-top camera a body foreshortens and a stoop reads as somebody
- * bending over their work.
+ * bending over their work. Round three moved the cue to the ground and gave the
+ * elder a second ring OUTSIDE the rim — and a stranger still read stage at 40%,
+ * because a hairline circle three pixels out from a bright ring is not a second
+ * ring at forty pixels, it is a slightly thicker one.
  *
- * So the stage is now on the GROUND as well as in the air, where nothing
- * foreshortens: a child's whole marker is smaller, an elder's carries a second
- * ring outside the rim, and an adult's is the plain full-size one. The bodies
- * keep their silhouettes on top of that — a head that is far too big, square
- * shoulders, or a stoop with a staff.
+ * So the stage is now the bluntest difference the mark can carry: a child's pin
+ * is plainly SMALLER and empty in the middle, an adult's is full size and empty
+ * in the middle, and an elder's is full size with a SOLID DISC filling its
+ * centre. Filled against hollow is a difference of area, not of line weight,
+ * and it is the one kind of difference that survives twenty-four pixels. The
+ * bodies keep their silhouettes on top of it — a head that is far too big,
+ * square shoulders, or a stoop with a staff.
  */
 export interface StageForm {
   stage: number;
@@ -413,16 +508,16 @@ export interface StageForm {
   prop: 'none' | 'staff';
   /** The ground marker's size against an adult's, where the band draws stage. */
   footprint: number;
-  /** Whether the ground marker carries a second ring outside its rim. */
-  halo: boolean;
+  /** Whether the ground marker is filled by a solid disc — the elder's mark. */
+  core: boolean;
   label: string;
   note: string;
 }
 
 export const STAGE_FORM: StageForm[] = [
-  { stage: STAGE_CHILD, scale: CHILD_M, head: 0.30, stoop: 0, prop: 'none', footprint: 0.68, halo: false, label: 'child', note: 'a metre tall · big head' },
-  { stage: STAGE_ADULT, scale: ADULT_M, head: 0.15, stoop: 0, prop: 'none', footprint: 1, halo: false, label: 'adult', note: '1.75 m · square shoulders' },
-  { stage: STAGE_ELDER, scale: ELDER_M, head: 0.14, stoop: 0.62, prop: 'staff', footprint: 1, halo: true, label: 'elder', note: 'stooped on a staff · mark ringed twice' },
+  { stage: STAGE_CHILD, scale: CHILD_M, head: 0.30, stoop: 0, prop: 'none', footprint: 0.56, core: false, label: 'child', note: 'a small empty pin · big head' },
+  { stage: STAGE_ADULT, scale: ADULT_M, head: 0.15, stoop: 0, prop: 'none', footprint: 1, core: false, label: 'adult', note: 'a full-size empty pin · square shoulders' },
+  { stage: STAGE_ELDER, scale: ELDER_M, head: 0.14, stoop: 0.62, prop: 'staff', footprint: 1, core: true, label: 'elder', note: 'a full-size pin FILLED IN · stooped on a staff' },
 ];
 
 export function stageForm(stage: number): StageForm {
@@ -441,9 +536,9 @@ export function stageFootprint(stage: number, band: ZoomBand): number {
   return bandShowsDetail(band) ? stageForm(stage).footprint : 1;
 }
 
-/** Whether this being's marker carries the elder's outer ring, in this band. */
-export function stageHalo(stage: number, band: ZoomBand): boolean {
-  return bandShowsDetail(band) && stageForm(stage).halo;
+/** Whether this being's marker is filled in — the elder's mark, in this band. */
+export function stageCore(stage: number, band: ZoomBand): boolean {
+  return bandShowsDetail(band) && stageForm(stage).core;
 }
 
 // ── Words ────────────────────────────────────────────────────────────────────
@@ -492,6 +587,25 @@ const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 export function headingOctant(screenDeg: number): string {
   const wrapped = ((screenDeg % 360) + 360) % 360;
   return COMPASS[Math.round(wrapped / 45) % 8]!;
+}
+
+/**
+ * How many of the eight points apart two readings are — 0 for the same, 1 for
+ * neighbours, 4 for opposite. `-1` if either word is not a compass point.
+ *
+ * Heading is the one channel where being NEARLY right is a different kind of
+ * answer from being wrong: every one of a reviewer's heading misses in round
+ * three was off by exactly one octant, which is a reader who saw the dart and
+ * rounded it, not one who could not find it. A score that cannot tell those
+ * apart cannot tell whether the mark needs to be clearer or merely sharper, so
+ * the view hands the reviewer both numbers.
+ */
+export function octantDistance(a: string, b: string): number {
+  const ia = COMPASS.indexOf(a.trim().toUpperCase());
+  const ib = COMPASS.indexOf(b.trim().toUpperCase());
+  if (ia < 0 || ib < 0) return -1;
+  const d = Math.abs(ia - ib);
+  return Math.min(d, 8 - d);
 }
 
 // ── Designations ─────────────────────────────────────────────────────────────
@@ -774,6 +888,84 @@ export function clusterHierarchy(
   return out.length > budget ? out.slice(0, budget) : out;
 }
 
+// ── Counting, made mechanical ────────────────────────────────────────────────
+
+/** Whether this band promises that every being in the frame can be counted. */
+export function bandCountsBeings(band: ZoomBand): boolean {
+  return bandPromise(band).count !== null;
+}
+
+/**
+ * Two pins that overlap are one group. Not three, not "a crowd" — two.
+ *
+ * Round three only put a number on groups of three or more and drew every pin
+ * anyway, so a settlement was a pile of overlapping rings with numbers floating
+ * beside it and a reader had to guess which rings the numbers had already
+ * counted. They guessed low in the frame (−11.6%) and high in a quadrant
+ * (+12.9%), which is exactly what guessing looks like.
+ */
+const COLLAPSE_MIN = 2;
+
+export interface CountPlan {
+  /** Indices into the points that draw their own pin — one mark, one being. */
+  singles: number[];
+  /** Groups that collapse into one number. Nothing is drawn inside them. */
+  chips: Cluster[];
+}
+
+/**
+ * Split what is on screen into pins a reader counts one by one and chips that
+ * count for them — with nothing left in between.
+ *
+ * The rule the whole thing turns on: **a being is either a pin or part of a
+ * number, never both, and never neither.** `singles.length + Σ chips.count`
+ * is exactly how many beings were passed in, and the test asserts it over
+ * random layouts. Counting the frame then stops being an estimate and becomes
+ * arithmetic: count the pins, add the numbers.
+ *
+ * Two things make that arithmetic honest in the picture as well as in the data.
+ * The grid is one PIN WIDE, so any two pins close enough to overlap land in the
+ * same or a neighbouring cell and are therefore in the same group — which means
+ * no two pins a reader is asked to count separately can ever touch. And any pin
+ * that survives the grid but still falls under a chip's outline is absorbed into
+ * it, because a half-visible ring beside a number is the one thing a reader
+ * cannot resolve.
+ */
+export function planCount(points: readonly ScreenPoint[], pinPx: number, budget: number): CountPlan {
+  const cell = Math.max(6, pinPx);
+  const chips = clusterHierarchy(points, cell, COLLAPSE_MIN, budget);
+  const taken = new Uint8Array(points.length);
+  for (const chip of chips) for (const k of chip.members) taken[k] = 1;
+
+  for (let pass = 0; pass < 3; pass++) {
+    let absorbed = false;
+    for (let k = 0; k < points.length; k++) {
+      if (taken[k] === 1) continue;
+      const p = points[k]!;
+      for (const chip of chips) {
+        const dx = (p.x - chip.x) / (chip.rx + cell * 0.6);
+        const dy = (p.y - chip.y) / (chip.ry + cell * 0.6);
+        if (dx * dx + dy * dy > 1) continue;
+        chip.members.push(k);
+        taken[k] = 1;
+        absorbed = true;
+        break;
+      }
+    }
+    if (!absorbed) break;
+    for (let c = 0; c < chips.length; c++) {
+      const chip = chips[c]!;
+      chips[c] = extentOf(points, chip.members, cell, chip.depth);
+    }
+    mergeOverlaps(chips);
+  }
+
+  const singles: number[] = [];
+  for (let k = 0; k < points.length; k++) if (taken[k] === 0) singles.push(k);
+  chips.sort((a, b) => (b.count === a.count ? a.x - b.x : b.count - a.count));
+  return { singles, chips };
+}
+
 // ── Names over the world ─────────────────────────────────────────────────────
 
 export interface LabelCandidate {
@@ -826,6 +1018,22 @@ const LABEL_SLOTS: readonly (readonly [number, number])[] = [
   [0, -1], [0, -2.3], [0, -3.6], [2.6, -1.7], [-2.6, -1.7], [4.0, -0.4], [-4.0, -0.4], [0, 1.9],
 ];
 
+/** Whether two line segments properly cross. Touching at an endpoint does not. */
+function segmentsCross(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number,
+): boolean {
+  const side = (px: number, py: number, qx: number, qy: number, rx: number, ry: number): number => {
+    const v = (qx - px) * (ry - py) - (qy - py) * (rx - px);
+    return v > 1e-9 ? 1 : v < -1e-9 ? -1 : 0;
+  };
+  const d1 = side(ax, ay, bx, by, cx, cy);
+  const d2 = side(ax, ay, bx, by, dx, dy);
+  const d3 = side(cx, cy, dx, dy, ax, ay);
+  const d4 = side(cx, cy, dx, dy, bx, by);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
 /**
  * Place as many names as will fit without lying.
  *
@@ -839,6 +1047,14 @@ const LABEL_SLOTS: readonly (readonly [number, number])[] = [
  *
  * `obstacles` carries the crowd chips AND, where the band draws few enough of
  * them, the beings themselves: a name may cover empty ground, never a body.
+ *
+ * Two rules keep the leader lines from becoming the web a reviewer found at
+ * NEAR. A slot whose line home is longer than `maxLeader` is refused outright —
+ * a name that has to travel that far to find room is a name this frame does not
+ * have room for, and no name is better than a name pointing across the picture.
+ * And a slot whose line would CROSS one already drawn is refused too: the
+ * moment two leaders cross, which name belongs to which being stops being
+ * something the picture says.
  */
 export function placeLabels(
   candidates: readonly LabelCandidate[],
@@ -847,10 +1063,12 @@ export function placeLabels(
   budget: number,
   obstacles: readonly LabelObstacle[] = [],
   clearance = 12,
+  maxLeader = Number.POSITIVE_INFINITY,
 ): PlacedLabel[] {
   const ordered = [...candidates].sort((a, b) => (a.rank === b.rank ? a.id - b.id : a.rank - b.rank));
   const taken: LabelObstacle[] = [...obstacles];
   const out: PlacedLabel[] = [];
+  const leaders: number[] = []; // ax, ay, x, y per placed leader
   const pad = 3;
   const unit = Math.max(11, clearance);
   for (const c of ordered) {
@@ -860,6 +1078,7 @@ export function placeLabels(
     for (const [mx, my] of LABEL_SLOTS) {
       const dx = mx * unit;
       const dy = my * unit;
+      if (Math.hypot(dx, dy) > maxLeader) continue;
       const cx = c.x + dx;
       const cy = c.y + dy;
       const x0 = cx - w / 2;
@@ -875,7 +1094,15 @@ export function placeLabels(
         }
       }
       if (!clear) continue;
+      for (let k = 0; k < leaders.length; k += 4) {
+        if (segmentsCross(c.x, c.y, cx, cy, leaders[k]!, leaders[k + 1]!, leaders[k + 2]!, leaders[k + 3]!)) {
+          clear = false;
+          break;
+        }
+      }
+      if (!clear) continue;
       taken.push({ x0, y0, x1, y1 });
+      leaders.push(c.x, c.y, cx, cy);
       placed = {
         id: c.id,
         text: c.text,
@@ -890,6 +1117,19 @@ export function placeLabels(
     if (placed) out.push(placed);
   }
   return out;
+}
+
+/**
+ * Somewhere worth standing: a place on the continent where enough beings are
+ * together to fill a frame, and the camera placement that frames them at the
+ * size a given band is about. Scene units throughout — y is up.
+ */
+export interface FrameCandidate {
+  /** How many beings are in this gathering. */
+  count: number;
+  centre: { x: number; y: number; z: number };
+  camera: { x: number; y: number; z: number };
+  target: { x: number; y: number; z: number };
 }
 
 // ── Where the camera should put the selected being ───────────────────────────
@@ -944,7 +1184,7 @@ export const LAND_LEGEND: { family: Family; label: string }[] = [
  * not draw — the test asserts exactly that, band by band.
  */
 export type LegendItem =
-  | { kind: 'marker'; ring: number; hue: number; halo: boolean; footprint: number; pointer: boolean; streak: boolean; label: string; note?: string }
+  | { kind: 'marker'; ring: number; hue: number; core: boolean; footprint: number; pointer: boolean; streak: boolean; label: string; note?: string }
   | { kind: 'picto'; picto: number; label: string }
   | { kind: 'dot'; label: string }
   | { kind: 'chip'; label: string }
@@ -961,9 +1201,15 @@ const SELECT_HEX = '#ffd34d';
 /** The one sentence a reader needs to trust anything they measure off the frame. */
 export const SCALE_NOTE = 'everything with a body is life-size — one unit is one metre, an adult is 1.75 m, a hut comes to twice their head';
 
+/**
+ * The counting rule, stated as arithmetic rather than as an invitation to
+ * estimate. Every being in the frame is in exactly one of the two terms.
+ */
+export const COUNT_NOTE = 'to count the frame: count the pins, add the numbers — every being is one or the other, never both';
+
 function marker(over: Partial<Extract<LegendItem, { kind: 'marker' }>> & { label: string }): LegendItem {
   return {
-    kind: 'marker', ring: RING_SOLID, hue: HUE_WELL, halo: false, footprint: 1,
+    kind: 'marker', ring: RING_SOLID, hue: HUE_WELL, core: false, footprint: 1,
     pointer: true, streak: false, ...over,
   };
 }
@@ -1004,9 +1250,10 @@ export function legendFor(band: ZoomBand): LegendSection[] {
       {
         name: 'the map',
         items: [
-          { kind: 'dot', label: 'one being' },
-          { kind: 'chip', label: 'how many are in that group, behind ones included' },
+          { kind: 'dot', label: 'one dot is one being' },
+          { kind: 'chip', label: 'a ring of people — the number is ALL of them, and no dot is drawn inside it' },
           { kind: 'swatch', color: SELECT_HEX, round: true, label: 'the one you selected — the only being named out here' },
+          { kind: 'note', label: COUNT_NOTE },
           { kind: 'note', label: SCALE_NOTE },
           { kind: 'note', label: 'a whole being is under a pixel from here, so these marks are map pins, not people — zoom in for who and what' },
         ],
@@ -1018,9 +1265,10 @@ export function legendFor(band: ZoomBand): LegendSection[] {
       {
         name: 'the map',
         items: [
-          marker({ label: 'one pin on the ground is one being', note: 'the point is its facing' }),
-          { kind: 'chip', label: 'a crowd, and how many are in it — the ones behind included' },
+          marker({ label: 'one pin is one being', note: 'the point is its facing' }),
+          { kind: 'chip', label: 'a ring of people — the number is ALL of them, and no pin is drawn inside it' },
           { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
+          { kind: 'note', label: COUNT_NOTE },
         ],
       },
       { name: 'how it is', items: CONDITION_ITEMS },
@@ -1044,9 +1292,9 @@ export function legendFor(band: ZoomBand): LegendSection[] {
     {
       name: 'how old',
       items: [
-        marker({ footprint: stageForm(STAGE_CHILD).footprint, label: 'child' }),
-        marker({ label: 'adult' }),
-        marker({ halo: true, label: 'elder', note: 'ringed twice' }),
+        marker({ footprint: stageForm(STAGE_CHILD).footprint, label: 'child', note: 'a small pin' }),
+        marker({ label: 'adult', note: 'full size, hollow' }),
+        marker({ core: true, label: 'elder', note: 'full size, FILLED IN' }),
       ],
     },
     { name: 'how it is', items: CONDITION_ITEMS },

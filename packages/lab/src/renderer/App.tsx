@@ -9,7 +9,7 @@ import { ReportsView } from './ReportsView.js';
 import { AnalysisView } from './AnalysisView.js';
 import { SocietyView } from './SocietyView.js';
 import { CultureView } from './CultureView.js';
-import { displayName, type ZoomBand } from './beings.js';
+import { displayName, nextFrameAt, targetFps, type ZoomBand } from './beings.js';
 
 type Tab = 'world' | 'activity' | 'analysis' | 'society' | 'culture' | 'reports';
 
@@ -240,6 +240,8 @@ export function App(): React.ReactElement {
   const tabRef = useRef<Tab>('world');
   const hiddenRef = useRef({ beings: 0, wildlife: 0 });
   const bandRef = useRef<ZoomBand>('default');
+  /** The draw loop reads this rather than closing over `running`. */
+  const runningRef = useRef(false);
 
   const [tab, setTab] = useState<Tab>('world');
   const [seed, setSeed] = useState('genesis-01');
@@ -287,9 +289,13 @@ export function App(): React.ReactElement {
           activityOf: (id) => world.activityOf(id),
           headingOf: (id) => world.headingOf(id),
           headingOnScreen: (id) => world.headingOnScreen(id),
+          headingCheck: (id, said) => world.headingCheck(id, said),
           nameOf: (id) => world.nameOf(id),
           labelsShown: () => world.labelsShown(),
           clustersShown: () => world.clustersShown(),
+          countAudit: () => world.countAudit(),
+          frameCandidates: (band) => world.frameCandidates(band),
+          placeCamera: (camera, target) => world.placeCamera(camera, target),
           beingPixels: () => world.beingPixels(),
           daylight: () => world.daylightNow(),
           zoomBand: () => world.zoomBand(),
@@ -442,25 +448,46 @@ export function App(): React.ReactElement {
     client.setFrames(tab === 'world'); // don't pay for frames nobody is drawing
   }, [client, tab]);
 
+  // A paused world is a still picture, and a still picture does not need sixty
+  // frames a second of a shared GPU.
+  useEffect(() => { runningRef.current = running; }, [running]);
+
   // One persistent rAF: orbit damping + draw. The sim is not in this loop.
   //
   // The legend is the one thing outside the canvas that has to follow the zoom,
   // because what the view draws changes with it. React is told only when the
   // BAND changes — a `setState` per frame would re-render the whole shell sixty
   // times a second to say the same word.
+  //
+  // And the loop is CAPPED. A bare `requestAnimationFrame` draws a continent,
+  // six thousand trees and three hundred instanced beings as fast as the panel
+  // will take them — a hundred and forty-four times a second on a fast display,
+  // for a picture that is identical every time while the world is paused. This
+  // is an observatory on a shared machine, not a game: it draws at sixty while
+  // something is changing, ten while nothing is, and two while nobody is
+  // looking. `targetFps` and `nextFrameAt` hold the whole policy and are unit
+  // tested; everything here is the plumbing.
   useEffect(() => {
     let raf = 0;
-    const loop = (): void => {
-      const world = world3dRef.current;
-      if (world && tabRef.current === 'world') {
-        world.render();
-        const now = world.zoomBand();
-        if (now !== bandRef.current) {
-          bandRef.current = now;
-          setBand(now);
-        }
-      }
+    let last = Number.NEGATIVE_INFINITY;
+    const loop = (now: number): void => {
       raf = requestAnimationFrame(loop);
+      const world = world3dRef.current;
+      if (!world || tabRef.current !== 'world') return;
+      const tick = nextFrameAt(now, last, targetFps({
+        visible: document.visibilityState === 'visible',
+        focused: document.hasFocus(),
+        running: runningRef.current,
+        interacting: world.isInteracting(),
+      }));
+      if (tick === null) return;
+      last = tick;
+      world.render();
+      const band = world.zoomBand();
+      if (band !== bandRef.current) {
+        bandRef.current = band;
+        setBand(band);
+      }
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);

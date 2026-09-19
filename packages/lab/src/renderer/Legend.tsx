@@ -41,13 +41,15 @@ function Picto({ picto }: { picto: number }): React.ReactElement {
 
 /**
  * A ground marker, as the renderer builds it: the condition ring, the elder's
- * second ring outside it, the heading pointer, and the streak of a being on the
- * move. Same shapes, same proportions, same order.
+ * filled centre, the heading arrow, and the streak of a being on the move. Same
+ * shapes, same proportions, same order — and the whole mark inside the box, so
+ * the arrow a reader is being taught to read is not clipped off the top of the
+ * key that is teaching it.
  */
 function Marker({ item }: { item: Extract<LegendItem, { kind: 'marker' }> }): React.ReactElement {
   const color = hex(item.hue);
   const cx = 15;
-  const cy = 13;
+  const cy = 19;
   const r = 7.2 * item.footprint;
   const spikes: React.ReactElement[] = [];
   if (item.ring === RING_NOTCHED) {
@@ -65,13 +67,20 @@ function Marker({ item }: { item: Extract<LegendItem, { kind: 'marker' }> }): Re
     }
   }
   return (
-    <svg viewBox="0 0 30 32" width="17" height="18" aria-hidden="true">
-      {item.streak && <path d={`M${cx - 2.6} ${cy + r} L${cx + 2.6} ${cy + r} L${cx + 0.7} ${cy + r + 13} L${cx - 0.7} ${cy + r + 13} Z`} fill={color} opacity="0.5" />}
+    <svg viewBox="0 0 30 40" width="15" height="20" aria-hidden="true">
+      {item.streak && <path d={`M${cx - 2.6} ${cy + r} L${cx + 2.6} ${cy + r} L${cx + 0.7} ${cy + r + 12} L${cx - 0.7} ${cy + r + 12} Z`} fill={color} opacity="0.5" />}
       {spikes}
-      {item.halo && <circle cx={cx} cy={cy} r={r + 3.1} fill="none" stroke="#e8ddc9" strokeWidth="1.5" />}
       <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="2.6" strokeDasharray={item.ring === RING_DASHED ? '3.4 2.6' : undefined} />
-      {item.ring === RING_DOUBLE && <circle cx={cx} cy={cy} r={r * 0.42} fill="none" stroke={color} strokeWidth="2" />}
-      {item.pointer && <path d={`M${cx - 2.7} ${cy - r - 0.4} L${cx + 2.7} ${cy - r - 0.4} L${cx} ${cy - r - 8.4} Z`} fill={color} />}
+      {item.ring === RING_DOUBLE && <circle cx={cx} cy={cy} r={r * 0.61} fill="none" stroke={color} strokeWidth="1.9" />}
+      {/* The elder's mark is FILLED IN — a difference of area, which is the one
+          kind that survives twenty-four pixels. See STAGE_FORM. */}
+      {item.core && <circle cx={cx} cy={cy} r={r * 0.40} fill="#e8ddc9" stroke="#0a0e12" strokeWidth="1.1" />}
+      {item.pointer && (
+        <>
+          <path d={`M${cx - 1.4} ${cy - r - 0.6} h2.8 v${-3.8} h-2.8 Z`} fill="#e8ddc9" stroke="#0a0e12" strokeWidth="0.9" strokeLinejoin="round" />
+          <path d={`M${cx - 4.0} ${cy - r - 3.6} L${cx + 4.0} ${cy - r - 3.6} L${cx} ${cy - r - 10.4} Z`} fill="#e8ddc9" stroke="#0a0e12" strokeWidth="0.9" strokeLinejoin="round" />
+        </>
+      )}
     </svg>
   );
 }
