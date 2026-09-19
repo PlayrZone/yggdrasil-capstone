@@ -22,6 +22,7 @@ import {
 import { brushReduce, NO_BRUSH, shouldScrollToBrush, type Brush } from './roster.js';
 import type { RosterRow } from './roster.js';
 import { cycleCandidate, type PickCandidate } from './crowd.js';
+import { isSpecimenId } from './legibility.js';
 
 type Tab = 'world' | 'activity' | 'analysis' | 'society' | 'culture' | 'reports';
 
@@ -220,22 +221,82 @@ const LiveFeed = React.memo(function LiveFeed({ client }: { client: SimClient })
 });
 
 /**
+ * A selected SPECIMEN, in the inspector's own frame.
+ *
+ * The legibility specimen is display-only: it is drawn, hovered, filtered,
+ * listed and selected exactly like a being, and the sim has never heard of it.
+ * Round two's find → inspect loop landed the camera and the gold ring on the
+ * right specimen and then showed an empty panel, which is the one place the
+ * rare combinations live. So it answers here instead — from `hoverCardFor`,
+ * the same read-out the hover card is built from, so the two can never
+ * disagree — and says outright what it is rather than passing for a life.
+ */
+function SpecimenCard({ card, boxRef, onClose }: {
+  card: HoverCardData;
+  boxRef: React.RefObject<HTMLDivElement | null>;
+  onClose: () => void;
+}): React.ReactElement {
+  const name = displayName(card.id, undefined);
+  const needs: [string, number][] = [['hunger', card.hunger], ['rest', card.rest]];
+  return (
+    <div className="inspector" ref={boxRef}>
+      <div className="ihead">
+        <b>{name.text}</b>
+        <span>specimen — not in the simulation</span>
+        <button onClick={onClose}>✕</button>
+      </div>
+      <div className="ispec">
+        <div className="srow"><span>stage</span><b>{card.stage}</b></div>
+        <div className="srow"><span>condition</span><b>{card.condition}</b></div>
+        <div className="srow"><span>doing</span><b>{card.activity}</b></div>
+        <div className="srow"><span>facing</span><b>{card.heading}</b></div>
+      </div>
+      <div className="ineeds">
+        {needs.map(([k, v]) => (
+          <div key={k} className="nrow"><span>{k}</span><span className="nbar"><i style={{ width: `${v}%`, background: v >= 75 ? '#e0524d' : v >= 50 ? '#e09a3a' : '#43d18a' }} /></span></div>
+        ))}
+      </div>
+      <div className="iknow">
+        <label>Why there is nothing else here</label>
+        <ul>
+          <li className="empty">
+            A specimen is a drawn example of everything the view encodes — every stage, condition,
+            activity and heading, including combinations a young world may not contain. It has no
+            life in the simulation, so it has learned nothing and can be given no thought.
+          </li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The selected being. Its own subscriber, so the stats cadence never touches it.
  *
  * It reports its own width up to the world view, which aims the camera clear of
  * it: a panel that opens because you clicked a being must not then be sitting
  * on that being.
  */
-const Inspector = React.memo(function Inspector({ client, onClose, onWidth }: { client: SimClient; onClose: () => void; onWidth: (px: number) => void }): React.ReactElement | null {
+const Inspector = React.memo(function Inspector(
+  { client, specimen, onClose, onWidth }:
+  { client: SimClient; specimen: HoverCardData | null; onClose: () => void; onWidth: (px: number) => void },
+): React.ReactElement | null {
   const [detail, setDetail] = useState<AgentDetail | null>(null);
   const box = useRef<HTMLDivElement | null>(null);
   useEffect(() => client.onDetail(setDetail), [client]);
-  const open = detail !== null;
+  const open = detail !== null || specimen !== null;
   useEffect(() => {
     const el = box.current;
     onWidth(open && el ? el.offsetWidth + 28 : 0);
     return () => onWidth(0);
   }, [open, onWidth]);
+  // A specimen being is drawn, hoverable, filterable and on the roster, and it
+  // is not in the simulation — so `client.select` has nothing to answer with.
+  // The rare combinations only exist here (an elder speaking, a starving child,
+  // somebody fleeing), which made this exactly where find → inspect broke. The
+  // card is built from the same read-out the hover card uses, and says plainly
+  // what it is.
+  if (specimen) return <SpecimenCard card={specimen} boxRef={box} onClose={onClose} />;
   if (!detail) return null;
   const name = displayName(detail.id, detail.name);
   return (
@@ -305,6 +366,10 @@ export function App(): React.ReactElement {
   const [rosterOpen, setRosterOpen] = useState(true);
   const [chip, setChip] = useState<{ cluster: number; x: number; y: number } | null>(null);
   const [chipSum, setChipSum] = useState<ReturnType<World3D['chipSummary']>>(null);
+  /** The selected specimen, if the selection is one — see `SpecimenCard`. */
+  const [specimenId, setSpecimenId] = useState<number | null>(null);
+  const [specimenCard, setSpecimenCard] = useState<HoverCardData | null>(null);
+  const specimenRef = useRef<number | null>(null);
   const filterRef = useRef(filter);
   const rowsRef = useRef(rows);
   const brushRef = useRef(brush);
@@ -317,6 +382,27 @@ export function App(): React.ReactElement {
 
   useEffect(() => () => client.dispose(), [client]);
 
+  /**
+   * Choosing a being — the ONE route, whether the click came from the picture,
+   * the roster or a driver.
+   *
+   * A specimen id is a display-only id: sending it to the sim asks a question
+   * the sim cannot answer, and round two's selection therefore lit up the world
+   * and left the inspector empty. So the two cases are split once, here, and
+   * both of them end with something selected.
+   */
+  const chooseBeing = useCallback(
+    (id: number | null) => {
+      const spec = id !== null && isSpecimenId(id);
+      setSpecimenId(spec ? id : null);
+      specimenRef.current = spec ? id : null;
+      if (!spec) setSpecimenCard(null);
+      else setSpecimenCard(world3dRef.current?.hoverCardFor(id) ?? null);
+      client.select(spec ? null : id);
+    },
+    [client],
+  );
+
   // Callback ref: spin up / tear down the WebGL world with the canvas element.
   const canvasCb = useCallback(
     (el: HTMLCanvasElement | null) => {
@@ -324,7 +410,7 @@ export function App(): React.ReactElement {
         const world = new World3D(
           el,
           (id) => {
-            client.select(id);
+            chooseBeing(id);
             if (id === null) {
               setFollowing(false);
               setTiesOn(false);
@@ -404,7 +490,7 @@ export function App(): React.ReactElement {
             clearFilters: () => setFilter(emptyFilter()),
             hover: (id) => setBrush(id === null ? NO_BRUSH : { id, source: 'roster' }),
             select: (id) => {
-              client.select(id);
+              chooseBeing(id);
               world.setSelected(id);
               if (id !== null) world.centreOn(id);
             },
@@ -423,7 +509,7 @@ export function App(): React.ReactElement {
         delete window.__ygg;
       }
     },
-    [client],
+    [client, chooseBeing],
   );
 
   // A new world: terrain stays, everything living in it is replaced.
@@ -529,6 +615,11 @@ export function App(): React.ReactElement {
       setCard(id === null ? null : world.hoverCardFor(id));
       const at = chipRef.current;
       setChipSum(at === null ? null : world.chipSummary(at));
+      // A specimen has no sim behind it to push detail, so its panel is kept
+      // current on the same heartbeat the roster is — its facing changes with
+      // the camera even though its life never does.
+      const spec = specimenRef.current;
+      if (spec !== null) setSpecimenCard(world.hoverCardFor(spec));
     };
     tick();
     const timer = setInterval(tick, 250);
@@ -593,11 +684,11 @@ export function App(): React.ReactElement {
   const pickRow = useCallback(
     (id: number) => {
       const world = world3dRef.current;
-      client.select(id);
+      chooseBeing(id);
       world?.setSelected(id);
       world?.centreOn(id);
     },
-    [client],
+    [chooseBeing],
   );
 
   const newWorld = useCallback(() => {
@@ -705,12 +796,12 @@ export function App(): React.ReactElement {
   }, []);
 
   const clearSelection = useCallback(() => {
-    client.select(null);
+    chooseBeing(null);
     world3dRef.current?.setSelected(null);
     setSelected(null);
     setFollowing(false);
     setTiesOn(false);
-  }, [client]);
+  }, [chooseBeing]);
 
   const sendIdea = useCallback(() => {
     const clean = idea.trim();
@@ -787,7 +878,14 @@ export function App(): React.ReactElement {
           )}
 
           <div className="selbar">
-            {selected && selectedName ? (
+            {specimenCard ? (
+              <>
+                <b className="given">{displayName(specimenCard.id, undefined).text}</b>
+                <span className="given-note">specimen — not in the simulation</span>
+                <button onClick={() => world3dRef.current?.focusSelected()}>Centre on it</button>
+                <button onClick={clearSelection}>Clear</button>
+              </>
+            ) : selected && selectedName ? (
               <>
                 <b className={selectedName.selfChosen ? 'named' : 'given'}>{selectedName.text}</b>
                 <span className="given-note">{selectedName.selfChosen ? 'named itself' : 'lab designation'}</span>
@@ -804,7 +902,7 @@ export function App(): React.ReactElement {
           </div>
 
           <Legend band={band} />
-          <Inspector client={client} onClose={clearSelection} onWidth={setPanelWidth} />
+          <Inspector client={client} specimen={specimenCard} onClose={clearSelection} onWidth={setPanelWidth} />
         </div>
 
         <RosterDock
@@ -815,7 +913,7 @@ export function App(): React.ReactElement {
           brushFromWorld={shouldScrollToBrush(brush)}
           onHoverRow={hoverRow}
           onLeave={leaveRoster}
-          selectedId={selected?.id ?? null}
+          selectedId={specimenId ?? selected?.id ?? null}
           onPick={pickRow}
           open={rosterOpen}
           onOpen={setRosterOpen}

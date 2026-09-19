@@ -23,7 +23,7 @@ import {
 } from './sim/protocol.js';
 import {
   conditionMix,
-  coveringBody,
+  coveringBodies,
   groupByActivity,
   orderCandidates,
   suppressOverlaps,
@@ -46,6 +46,7 @@ import {
   bandForPixels,
   bandPromise,
   bandShowsBodies,
+  badgeMetres,
   bandShowsDetail,
   bodyTint,
   DETAIL_MIN_PX,
@@ -66,9 +67,11 @@ import {
   maxLeaderFor,
   movingFor,
   nameClaimFor,
+  nameRadius,
   NEAR_LABEL_M,
   octantDistance,
   placeCountChip,
+  regionOf,
   PICTO_GRID,
   PICTO_NONE,
   PICTO_SPEAK,
@@ -92,6 +95,7 @@ import {
   type FrameCandidate,
   type LabelCandidate,
   type LabelObstacle,
+  type NameSubject,
   type ScreenPoint,
   type ZoomBand,
 } from './beings.js';
@@ -319,6 +323,16 @@ const PICTO_RIM = RING_R * RING_OUTER * 0.72;
  * it belongs — see `uOffset`.
  */
 const PICTO_NEAR_SCALE = 0.58;
+
+/**
+ * The floor under a badge — the ceiling is `badgeMetres`.
+ *
+ * Below this a pictogram is a smudge with an explanation: the band already
+ * says it draws no detail for a being this small (`DETAIL_MIN_PX`), and
+ * drawing one anyway is the picture claiming something its own probes
+ * correctly refuse to.
+ */
+const PICTO_MIN_BODY_PX = DETAIL_MIN_PX;
 
 /**
  * A crowd is a group of beings closer together than this many marker-widths,
@@ -1100,6 +1114,8 @@ export class World3D {
   private dotDim: THREE.InstancedBufferAttribute | null = null;
   private pictos: THREE.InstancedMesh | null = null;
   private pictoCell: THREE.InstancedBufferAttribute | null = null;
+  /** Per badge: the marker unit its stub is welded to the ring with. */
+  private pictoRim: THREE.InstancedBufferAttribute | null = null;
   /** The streak behind a being that is on the move. */
   private trails: THREE.InstancedMesh | null = null;
   /** What a being is at FAR: a dot on the ground, and nothing claimed about it. */
@@ -1133,6 +1149,16 @@ export class World3D {
    * item L4's fifth promise, and `markAudit()` reports it.
    */
   private beingMarkClear = new Uint8Array(0);
+  /**
+   * 1 while this being's BADGE also stands clear of every other badge.
+   *
+   * A second pass over the same rule, on the discs' own geometry rather than on
+   * the rings they are welded to: a badge is drawn out past the rim, so two
+   * beings whose rings clear each other can still have discs in a stack. The
+   * one that made a reviewer call the close bands a sticker sheet was four
+   * badges in a vertical column over three bodies.
+   */
+  private beingPictoClear = new Uint8Array(0);
   /** How many beings in frame drew a mark of their own — the countable term. */
   private pinsDrawn = 0;
   private instanceCount = 0;
@@ -1260,15 +1286,24 @@ export class World3D {
   private namedWithin = 0;
   /** How many names the budgeter placed this frame — the same list the DOM got. */
   private namesExpected = 0;
-  /** How many of those belong to beings inside `namedWithin`. */
+  /** How many beings stand inside `namedWithin` — every one of them named. */
   private namesWithin = 0;
   /** Reused: whose name went up this frame, for the audit above. */
   private readonly placedIds = new Set<number>();
+  /** Reused: the frame's beings as the naming rule sees them. */
+  private readonly nameSubjects: NameSubject[] = [];
 
   /** Drawn bodies as screen boxes, rebuilt at most once per frame. */
   private boxes: BodyBox[] = [];
   private readonly boxById = new Map<number, BodyBox>();
   private boxFrame = -1;
+  /**
+   * And who is drawn where each of them stands — the whole frame's occlusion,
+   * resolved in one pass beside the boxes it is read off. `visibleIds()` asks
+   * per being; a rule that walked every box per question would be a quadratic
+   * probe over three hundred people.
+   */
+  private coverById = new Map<number, number>();
 
   /** The scale bar, as last measured off the ground under the view centre. */
   private scaleMetres = 0;
@@ -1313,6 +1348,16 @@ export class World3D {
   private readonly chipClear = new Uint8Array(CLUSTER_BUDGET);
   /** Per cluster: world centre x, y, z, and the camera distance it was found at. */
   private readonly clusterWorld = new Float32Array(CLUSTER_BUDGET * 4);
+  /**
+   * Per cluster: who it counts, by id, as of the grouping it was planned in.
+   *
+   * The grouping is redone ten times a second and the beings keep walking, so
+   * "every member of this chip is in this quarter of the frame" is a fact about
+   * the plan, not about this frame. These ids are what `crowdsStrayed` checks
+   * the live positions against, so the fact is re-established the instant it
+   * stops being true rather than a tenth of a second later.
+   */
+  private clusterIds: number[][] = [];
   private lastCluster = 0;
   /** How wide the panel floating over the right of the canvas is, in pixels. */
   private panelWidth = 0;
@@ -2065,6 +2110,10 @@ export class World3D {
     cell.setUsage(THREE.DynamicDrawUsage);
     pictoGeo.setAttribute('aCell', cell);
     this.pictoCell = cell;
+    const rim = new THREE.InstancedBufferAttribute(new Float32Array(64), 1);
+    rim.setUsage(THREE.DynamicDrawUsage);
+    pictoGeo.setAttribute('aRim', rim);
+    this.pictoRim = rim;
     this.pictos = new THREE.InstancedMesh(pictoGeo, World3D.pictoMaterial(atlas, this.pictoFade), 64);
     // The pictogram shader reads `instanceColor`, and three only declares that
     // attribute for a mesh that already has one.
@@ -2073,12 +2122,6 @@ export class World3D {
     this.pictos.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.pictos.frustumCulled = false;
     this.pictos.renderOrder = RENDER_PICTO;
-    // Push the quad up and right by exactly enough that the stub drawn into
-    // the lower-left of every cell ends on the rim of the ring the instance is
-    // anchored to. Read off the atlas's own numbers, so moving the chip in the
-    // drawing moves it in the world.
-    const offset = (this.pictos.material as THREE.ShaderMaterial).uniforms['uOffset']!.value as THREE.Vector2;
-    offset.set(PICTO_RIM / PICTO_H - PICTO_STUB_AT[0], PICTO_RIM / PICTO_H - PICTO_STUB_AT[1]);
     this.scene.add(this.pictos);
   }
 
@@ -2119,7 +2162,15 @@ export class World3D {
       uniforms: {
         uMap: { value: map },
         uGrid: { value: PICTO_GRID },
-        uOffset: { value: new THREE.Vector2(0, 0) },
+        // The weld is measured off the RING and the quad is sized off the
+        // FIGURE, so the two cannot be one offset in quad-units any more: a
+        // badge capped to its being's height would have dragged its own stub
+        // in off the rim with it. `uRim` is where the ring's edge is per
+        // marker-unit, `aRim` is this being's marker, and `uStub` is where the
+        // stub sits inside the cell — so the chip keeps landing on its own
+        // ring at any size.
+        uRim: { value: PICTO_RIM },
+        uStub: { value: new THREE.Vector2(PICTO_STUB_AT[0], PICTO_STUB_AT[1]) },
         // The chip is annotation and fades back with the rest of it. Round
         // five's first NEAR frame had ninety-six chips at full strength over
         // rings at 0.42 and a scene at 1.0: a wall of badges with a village
@@ -2128,15 +2179,17 @@ export class World3D {
       },
       vertexShader: `
         uniform float uGrid;
-        uniform vec2 uOffset;
+        uniform float uRim;
+        uniform vec2 uStub;
         attribute float aCell;
+        attribute float aRim;
         varying vec2 vUv;
         varying vec3 vTint;
         void main() {
           vec4 world = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
           float s = length(instanceMatrix[0].xyz);
           vec4 mv = modelViewMatrix * world;
-          mv.xy += position.xy * s + uOffset * s;
+          mv.xy += position.xy * s + vec2(uRim * aRim) - uStub * s;
           gl_Position = projectionMatrix * mv;
           // The atlas is drawn with a canvas, whose rows run DOWN, and uploaded
           // with three's default flip, so texture rows run UP. Round one read
@@ -2306,6 +2359,7 @@ export class World3D {
     this.beingCrowded = new Uint8Array(cap);
     this.beingOnScreen = new Uint8Array(cap);
     this.beingMarkClear = new Uint8Array(cap);
+    this.beingPictoClear = new Uint8Array(cap);
     this.stageIds = [new Int32Array(cap), new Int32Array(cap), new Int32Array(cap)];
     for (let bucket = 0; bucket < RING_BUCKETS; bucket++) {
       const mesh = this.ringMeshes[bucket];
@@ -2330,6 +2384,10 @@ export class World3D {
       cell.setUsage(THREE.DynamicDrawUsage);
       this.pictos.geometry.setAttribute('aCell', cell);
       this.pictoCell = cell;
+      const rim = new THREE.InstancedBufferAttribute(new Float32Array(cap), 1);
+      rim.setUsage(THREE.DynamicDrawUsage);
+      this.pictos.geometry.setAttribute('aRim', rim);
+      this.pictoRim = rim;
     }
     for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
       const ghost = this.xrays[stage];
@@ -2380,6 +2438,7 @@ export class World3D {
     this.labelPicked = [];
     this.labelShown = [];
     this.clusters = [];
+    this.clusterIds = [];
     for (const node of this.labelNodes) node.style.display = 'none';
     for (const node of this.leaderNodes) node.style.display = 'none';
     for (const node of this.hullNodes) node.style.display = 'none';
@@ -2683,21 +2742,9 @@ export class World3D {
       const mat = this.pictos?.material as THREE.ShaderMaterial | undefined;
       if (mat) mat.uniforms['uOpacity']!.value = fade;
     }
-    const pf = this.band === 'near' ? PICTO_NEAR_SCALE : 1;
-    if (pf !== this.pictoScale) {
-      this.pictoScale = pf;
-      // The stub has to keep landing on the ring's rim, and the rim is a
-      // fraction of the MARKER while the quad is now a fraction of the chip —
-      // so the offset is re-derived rather than left to drift.
-      const mat = this.pictos?.material as THREE.ShaderMaterial | undefined;
-      const off = mat?.uniforms['uOffset']?.value as THREE.Vector2 | undefined;
-      if (off) {
-        off.set(
-          PICTO_RIM / (PICTO_H * pf) - PICTO_STUB_AT[0],
-          PICTO_RIM / (PICTO_H * pf) - PICTO_STUB_AT[1],
-        );
-      }
-    }
+    // The weld is a per-instance term now (`aRim`), so the band's chip scale is
+    // just a scale: nothing has to be re-derived when it changes.
+    this.pictoScale = this.band === 'near' ? PICTO_NEAR_SCALE : 1;
     for (let i = 0; i < this.instanceCount; i++) {
       const annot = this.annotationAt(this.beingPos[i * 3]!, this.beingPos[i * 3 + 1]!, this.beingPos[i * 3 + 2]!);
       this.beingMark[i] = annot / RING_R;
@@ -2727,10 +2774,12 @@ export class World3D {
    */
   private planMarks(): void {
     this.beingMarkClear.fill(1, 0, this.instanceCount);
+    this.beingPictoClear.fill(1, 0, this.instanceCount);
     this.marksHeld = 0;
     if (this.screenPoints.length < 2) return;
     const points: MarkPoint[] = [];
     const index: number[] = [];
+    const slots: number[] = [];
     for (let k = 0; k < this.screenPoints.length; k++) {
       const i = this.screenIndex[k]!;
       // A being a crowd chip has already counted draws nothing at all, so it
@@ -2740,6 +2789,7 @@ export class World3D {
       const p = this.screenPoints[k]!;
       points.push({ x: p.x, y: p.y, r: this.markRadiusOf(i) });
       index.push(i);
+      slots.push(k);
     }
     const clear = suppressOverlaps(points);
     for (let n = 0; n < index.length; n++) {
@@ -2747,6 +2797,60 @@ export class World3D {
       this.beingMarkClear[index[n]!] = 0;
       this.marksHeld++;
     }
+    this.planBadges(index, slots);
+  }
+
+  /**
+   * And the same rule again, one layer out: which badges stand clear of each
+   * other.
+   *
+   * The ring test is not enough for the disc welded outside it. A badge is
+   * pushed past the rim and is drawn at up to four tenths of its being's own
+   * height, so two beings a comfortable ring apart can still put their discs in
+   * a column — which is exactly what a reviewer found, four of them stacked
+   * over three bodies with the leaders crossing. Same rule, same reasoning:
+   * both sides of a collision are dropped, because a badge that might be the
+   * neighbour's is a confident wrong answer.
+   */
+  private planBadges(index: readonly number[], slots: readonly number[]): void {
+    if (!bandShowsDetail(this.band)) return;
+    const discs: MarkPoint[] = [];
+    const who: number[] = [];
+    for (let n = 0; n < index.length; n++) {
+      const i = index[n]!;
+      if (this.beingMarkClear[i] === 0 || !this.badgeDrawn(i)) continue;
+      const at = this.badgeDiscOf(i, slots[n]!);
+      if (!at) continue;
+      discs.push(at);
+      who.push(i);
+    }
+    const clear = suppressOverlaps(discs);
+    for (let n = 0; n < who.length; n++) if (!clear[n]) this.beingPictoClear[who[n]!] = 0;
+  }
+
+  /** Whether this being's act HAS a badge, and whether it is drawn big enough to be one. */
+  private badgeDrawn(i: number): boolean {
+    return pictogramFor(this.beingAct[i]!) !== PICTO_NONE && this.bodyPixelsOf(i) >= PICTO_MIN_BODY_PX;
+  }
+
+  /** How big this being's badge is drawn, in metres — capped against its own figure. */
+  private badgeSizeOf(i: number): number {
+    return badgeMetres(this.beingMark[i]!, PICTO_H * this.pictoScale, stageForm(this.beingStage[i]!).scale);
+  }
+
+  /**
+   * Where that badge lands on screen and how far it reaches — the same geometry
+   * the shader builds it from: out along both axes to the ring's rim, then the
+   * quad's own half-size past the stub in its lower-left corner.
+   */
+  private badgeDiscOf(i: number, k: number): MarkPoint | null {
+    const p = this.screenPoints[k];
+    if (!p) return null;
+    const scale = this.distanceTo(i) * this.worldPerPx;
+    if (scale <= 0) return null;
+    const s = this.badgeSizeOf(i);
+    const off = (PICTO_RIM * this.beingMark[i]! + s * (0.5 - PICTO_STUB_AT[0])) / scale;
+    return { x: p.x + off, y: p.y - off, r: (s * 0.5) / scale };
   }
 
   /**
@@ -2782,6 +2886,7 @@ export class World3D {
     const collapses = bandCountsBeings(this.band);
     const pictos = this.pictos!;
     const cells = this.pictoCell!;
+    const rims = this.pictoRim!;
     const trails = this.trails!;
     const dots = this.dots!;
     const halos = this.halos!;
@@ -2946,11 +3051,20 @@ export class World3D {
       // present tense.
       const picto = pictogramFor(act);
       if (picto === PICTO_NONE) continue;
+      // Withheld for the same reason the arrow is, one layer further out: a
+      // badge in a stack belongs to whichever body the reader picks. And not
+      // drawn at all under a being too small for the band to claim detail
+      // about — `visibilityOf` already says nothing is readable there.
+      if (this.beingPictoClear[i] === 0 || !this.badgeDrawn(i)) continue;
       this.dummy.position.set(sx, surface + deco * 0.10, sz);
       this.dummy.rotation.set(0, 0, 0);
-      this.dummy.scale.setScalar(deco * PICTO_H * this.pictoScale);
+      // Capped against this being's own figure, so an annotation can never be
+      // the largest thing in the picture of a person; the stub still finds the
+      // rim, which is `aRim`'s whole job.
+      this.dummy.scale.setScalar(this.badgeSizeOf(i));
       this.dummy.updateMatrix();
       pictos.setMatrixAt(pictoAt, this.dummy.matrix);
+      rims.array[pictoAt] = deco;
       // Bone, for every condition and every band. Condition already has a
       // shape, a lightness and a body tint; a chip that also carried a hue
       // would be a second, weaker answer to a question already answered. The
@@ -3007,6 +3121,7 @@ export class World3D {
     pictos.instanceMatrix.needsUpdate = true;
     if (pictos.instanceColor) pictos.instanceColor.needsUpdate = true;
     cells.needsUpdate = true;
+    rims.needsUpdate = true;
     this.dummy.scale.setScalar(1);
   }
 
@@ -3819,6 +3934,7 @@ export class World3D {
     if (this.band === 'near') {
       if (this.clusters.length > 0) {
         this.clusters = [];
+        this.clusterIds = [];
         for (const node of this.hullNodes) node.style.display = 'none';
         for (const node of this.countNodes) node.style.display = 'none';
         for (const node of this.chipLeadNodes) node.style.display = 'none';
@@ -3833,7 +3949,7 @@ export class World3D {
     // built from, or for a tenth of a second the view draws pins inside hulls
     // that were computed for where the beings used to be — and `countAudit`
     // would report an arithmetic that does not close.
-    if (now - this.lastCluster > 90 || (collapses && this.camMoving)) {
+    if (now - this.lastCluster > 90 || (collapses && (this.camMoving || this.crowdsStrayed(w, h)))) {
       this.lastCluster = now;
       if (collapses) {
         // One PIN wide, so two marks that could touch are always in the same
@@ -3858,6 +3974,7 @@ export class World3D {
       // Each group is anchored in the WORLD, so its outline follows the orbit
       // smoothly between the ten times a second the grouping itself is redone.
       this.beingCrowded.fill(0, 0, this.instanceCount);
+      this.clusterIds = [];
       for (let c = 0; c < this.clusters.length; c++) {
         const cl = this.clusters[c]!;
         // The selected being is never swallowed by a number. It is the one
@@ -3882,13 +3999,16 @@ export class World3D {
         let cx = 0;
         let cy = 0;
         let cz = 0;
+        const ids: number[] = [];
         for (const m of cl.members) {
           const i = this.screenIndex[m]!;
           this.beingCrowded[i] = 1;
+          ids.push(this.ids[i]!);
           cx += this.beingPos[i * 3]!;
           cy += this.beingPos[i * 3 + 1]!;
           cz += this.beingPos[i * 3 + 2]!;
         }
+        this.clusterIds[c] = ids;
         const n = cl.members.length;
         this.clusterWorld[c * 4] = cx / n;
         this.clusterWorld[c * 4 + 1] = cy / n;
@@ -3897,6 +4017,7 @@ export class World3D {
           this.probe.set(cx / n, cy / n, cz / n),
         );
       }
+      this.clusterIds.length = this.clusters.length;
     }
 
     this.chipRects.length = 0;
@@ -3940,8 +4061,37 @@ export class World3D {
       if (parts && parts.num.textContent !== text) parts.num.textContent = text;
       count.style.display = 'block';
       if (parts) this.paintChip(parts, cl);
-      this.placeChip(c, count, lead, px, py, rx, ry, text.length * 3.5 + 7, w, h);
+      this.placeChip(c, count, lead, px, py, rx, ry, text.length * 3.5 + 7, w, h, cl.region);
     }
+  }
+
+  /**
+   * Whether any crowd's people have walked out of the quarter of the frame its
+   * number is being drawn in — or out of the frame altogether.
+   *
+   * The grouping is a tenth of a second old at worst and the world runs at up
+   * to 2400×, so "every member of this chip is in this quadrant" is a claim
+   * with a shelf life. Rather than let the arithmetic be approximately true
+   * between plans, the plan is redone the frame it stops being exactly true:
+   * this walks the members once — three hundred integers — and any mismatch,
+   * including an index that no longer belongs to the being it was planned for,
+   * asks for a regrouping.
+   */
+  private crowdsStrayed(w: number, h: number): boolean {
+    if (this.clusterIds.length !== this.clusters.length) return true;
+    const view = { w, h };
+    for (let c = 0; c < this.clusters.length; c++) {
+      const cl = this.clusters[c]!;
+      const ids = this.clusterIds[c];
+      if (!ids || ids.length !== cl.members.length) return true;
+      const home = cl.region;
+      for (let j = 0; j < ids.length; j++) {
+        const p = this.screenPoints[cl.members[j]!];
+        if (!p || p.id !== ids[j]) return true;
+        if (home !== undefined && regionOf(p.x, p.y, view) !== home) return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -3965,9 +4115,15 @@ export class World3D {
   private placeChip(
     c: number, count: HTMLElement, lead: HTMLElement,
     px: number, py: number, rx: number, ry: number, halfW: number, w: number, h: number,
+    region: number | undefined,
   ): void {
     const halfH = CHIP_HALF_H;
-    const at = placeCountChip({ x: px, y: py, rx, ry }, halfW, halfH, this.pinRects, this.chipRects, { w, h }, CHIP_GAP);
+    // The crowd's OWN quarter of the frame, not the quarter its projected
+    // centre happens to land in: the hull follows the orbit between plans and
+    // the number must not drift across a line its people are not on.
+    const at = placeCountChip(
+      { x: px, y: py, rx, ry, region }, halfW, halfH, this.pinRects, this.chipRects, { w, h }, CHIP_GAP,
+    );
     // Nothing free: the number gets out of the way of the people instead of the
     // other way round.
     const shrink = at.clear ? 1 : CHIP_SHY_SCALE;
@@ -4248,29 +4404,35 @@ export class World3D {
     // reviewer read the two as a contradiction, correctly: three statements
     // about naming, no two of them about the same thing.
     this.namesExpected = this.placedIds.size;
-    if (this.band !== 'near') {
-      this.namedWithin = 0;
-      this.namesWithin = 0;
-      return;
-    }
-    let cut = NEAR_LABEL_M;
+    // Measured in every band, on one rule, because `within` meaning "beings
+    // inside the radius" at NEAR and "however many names are drawn" everywhere
+    // else was itself the contradiction: a reviewer read
+    // `{withinM: 12.25, shown: 13, within: 1}` under a strip saying "names
+    // within 12 m · 13 shown" and could not tell which of the three was wrong.
+    // `nameRadius` floors the radius to the metre the strip prints and counts
+    // the beings inside THAT, so the strip, the audit and the DOM are three
+    // readings of one number.
+    this.nameSubjects.length = 0;
     for (let k = 0; k < this.screenPoints.length; k++) {
       const i = this.screenIndex[k]!;
       const id = this.ids[i]!;
-      if (this.placedIds.has(id) || isSpecimenId(id)) continue;
-      if (this.markerPixelsOf(i) < READABLE_MARK_PX || this.isCollapsed(i)) continue;
-      const d = this.distanceTo(i);
-      if (d < cut) cut = d;
+      if (isSpecimenId(id)) continue;
+      this.nameSubjects.push({
+        distance: this.distanceTo(i),
+        readable: this.markerPixelsOf(i) >= READABLE_MARK_PX && !this.isCollapsed(i),
+        named: this.placedIds.has(id),
+      });
     }
-    let held = 0;
-    for (let k = 0; k < this.screenPoints.length; k++) {
-      const i = this.screenIndex[k]!;
-      if (isSpecimenId(this.ids[i]!)) continue;
-      if (this.markerPixelsOf(i) < READABLE_MARK_PX || this.isCollapsed(i)) continue;
-      if (this.distanceTo(i) <= cut) held++;
-    }
-    this.namedWithin = cut;
-    this.namesWithin = held;
+    const reach = nameRadius(this.nameSubjects, this.band === 'near' ? NEAR_LABEL_M : this.farthestOnScreen());
+    this.namedWithin = reach.withinM;
+    this.namesWithin = reach.within;
+  }
+
+  /** How far the furthest being in frame stands — the cap outside NEAR, where the rule looks at the whole frame. */
+  private farthestOnScreen(): number {
+    let out = 0;
+    for (const s of this.nameSubjects) if (s.distance > out) out = s.distance;
+    return out;
   }
 
   /**
@@ -4286,16 +4448,19 @@ export class World3D {
    * The naming claim, measured. `claim` is the band chip's own words; `expected`
    * is how many names the budgeter placed and `shown` is how many are on screen
    * — they are the same number or the view is lying. `withinM` is the radius
-   * inside which no readable being went unnamed, and `within` is how many
-   * beings that is.
+   * the frame reached, in the whole metres the strip prints, and `within` is how
+   * many beings stand inside it — all of them named, which is what the radius
+   * means. The same two fields in every band: `within` counted one population
+   * at NEAR and a different one at MID, and a reviewer could not tell which
+   * reading to believe.
    */
   labelAudit(): { claim: string; withinM: number; expected: number; shown: number; within: number } {
     return {
       claim: this.nameClaim(),
-      withinM: this.band === 'near' ? this.namedWithin : 0,
+      withinM: this.namedWithin,
       expected: this.namesExpected,
       shown: this.labelShown.length,
-      within: this.band === 'near' ? this.namesWithin : this.labelShown.length,
+      within: this.namesWithin,
     };
   }
 
@@ -4577,12 +4742,14 @@ export class World3D {
     // world rather than inside it.
     const carried = !bandShowsDetail(this.band) || bodyPx >= XRAY_MIN_BODY_PX;
     // And whether somebody is standing in front of it. Bodies are opaque and
-    // drawn in depth order, so a being behind another being is not in the
-    // picture where the view says it is — which is exactly where a driver
-    // points the mouse.
-    const coveredBy = inFrame && !collapsed && bandShowsBodies(this.band)
-      ? coveringBody(this.bodyBoxes(), id)
-      : null;
+    // drawn in depth order, so out of any pile of figures sharing a patch of
+    // screen exactly one is in the picture — which is exactly where a driver
+    // points the mouse, and what the picker already answers.
+    let coveredBy: number | null = null;
+    if (inFrame && !collapsed && bandShowsBodies(this.band)) {
+      this.bodyBoxes();
+      coveredBy = this.coverById.get(id) ?? null;
+    }
     const reason = !inFrame ? 'out of frame'
       : collapsed ? 'counted by a crowd chip'
         : markPx < READABLE_MARK_PX ? 'drawn too small to read'
@@ -4632,6 +4799,9 @@ export class World3D {
       this.boxes.push(box);
       this.boxById.set(box.id, box);
     }
+    // One pass for the whole frame, in the picker's own order, beside the boxes
+    // it is read off — see `coveringBodies`.
+    this.coverById = coveringBodies(this.boxes);
     return this.boxes;
   }
 
@@ -4742,7 +4912,12 @@ export class World3D {
     // this being is doing and must not be scored as though it did. Standing and
     // walking survive: they were never carried by a chip, only by the streak on
     // the ground behind the being, which cannot point at a neighbour.
-    if (this.beingMarkClear[i] === 0 && pictogramFor(this.beingAct[i]!) !== PICTO_NONE) return null;
+    //
+    // Three ways it can be withheld — a crowded ring, a stack of badges, a
+    // figure too small for the band to draw detail on — and all three have to
+    // be here, or the probe answers for a mark that is not in the frame.
+    if (pictogramFor(this.beingAct[i]!) !== PICTO_NONE
+      && (this.beingMarkClear[i] === 0 || this.beingPictoClear[i] === 0 || !this.badgeDrawn(i))) return null;
     return readableActivity(this.beingAct[i]!, this.band);
   }
 
@@ -4827,7 +5002,11 @@ export class World3D {
    * frame, not recomputed from the plan — so a bug that drew a pin under a chip
    * shows up as a mismatch rather than as a reader's error.
    */
-  countAudit(): { pinsDrawn: number; chips: { n: number; x: number; y: number }[]; beingsInFrustum: number } {
+  countAudit(): {
+    pinsDrawn: number; chips: { n: number; x: number; y: number }[]; beingsInFrustum: number;
+    counts: boolean;
+    quadrants: { region: number; pins: number; chips: number; counted: number; beings: number; reconciles: boolean }[];
+  } {
     const rect = this.canvas.getBoundingClientRect();
     const chips: { n: number; x: number; y: number }[] = [];
     for (let c = 0; c < this.clusters.length; c++) {
@@ -4835,7 +5014,48 @@ export class World3D {
       if (this.countNodes[c]?.style.display === 'none') continue;
       chips.push({ n: cl.count, x: rect.left + cl.x, y: rect.top + cl.y });
     }
-    return { pinsDrawn: this.pinsDrawn, chips, beingsInFrustum: this.screenPoints.length };
+    return {
+      pinsDrawn: this.pinsDrawn,
+      chips,
+      beingsInFrustum: this.screenPoints.length,
+      counts: bandCountsBeings(this.band),
+      quadrants: this.quadrantAudit(),
+    };
+  }
+
+  /**
+   * The same arithmetic, one quarter of the frame at a time.
+   *
+   * The whole-frame count closed to 0.5% for three rounds while a quadrant
+   * count ran −88% to +45%, and the legend grew a clause — "a number only ever
+   * counts people in its own part of the frame" — that the placement search was
+   * free to break: a disc pushed off a pin walked across a mid-line and carried
+   * twenty beings with it. So the clause is a measurement now. `pins` is the
+   * beings that drew their own mark in this quadrant, `counted` is the sum of
+   * the chips whose DISC sits in it — where a reader reads the number — and
+   * `beings` is how many are actually standing there. The three reconcile
+   * exactly, in every quadrant, wherever the band promises a count at all.
+   */
+  private quadrantAudit(): { region: number; pins: number; chips: number; counted: number; beings: number; reconciles: boolean }[] {
+    const view = { w: this.canvas.clientWidth, h: this.canvas.clientHeight };
+    const collapses = bandCountsBeings(this.band);
+    const out = [0, 1, 2, 3].map((region) => ({ region, pins: 0, chips: 0, counted: 0, beings: 0, reconciles: false }));
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const p = this.screenPoints[k]!;
+      const q = out[regionOf(p.x, p.y, view)]!;
+      q.beings++;
+      const i = this.screenIndex[k]!;
+      if (collapses && this.beingCrowded[i] === 1 && p.id !== this.selectedId) continue;
+      q.pins++;
+    }
+    for (let c = 0; c < this.clusters.length; c++) {
+      if (this.countNodes[c]?.style.display === 'none') continue;
+      const q = out[regionOf(this.chipAt[c * 2]!, this.chipAt[c * 2 + 1]!, view)]!;
+      q.chips++;
+      q.counted += this.clusters[c]!.count;
+    }
+    for (const q of out) q.reconciles = q.pins + q.counted === q.beings;
+    return out;
   }
 
   /**

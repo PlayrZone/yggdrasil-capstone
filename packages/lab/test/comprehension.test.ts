@@ -34,6 +34,7 @@ import {
 } from '../src/renderer/roster.js';
 import {
   conditionMix,
+  coveringBodies,
   coveringBody,
   cycleCandidate,
   groupByActivity,
@@ -662,12 +663,63 @@ describe('the probes do not offer a being somebody else is standing in front of'
     expect(coveringBody([box(1, 100, 100, 30), box(2, 400, 100, 12)], 1)).toBeNull();
   });
 
-  it('does not let two beings at the same depth cover each other', () => {
-    // A metre apart on one line of sight is a crowd, not an occlusion — and
-    // "both are hidden" would empty the frame.
+  it('resolves two beings at the same depth to exactly one, rather than to neither', () => {
+    // Round two's rule gave the pair a half-metre of depth slack and left BOTH
+    // reporting `coveredBy: null` — which is how a reviewer found four beings
+    // sharing one pixel, all four still offered by `visibleIds()` while the
+    // picker correctly returned one of them. Two figures three pixels apart are
+    // one drawn body and one behind it, whatever the depths say; the nearer one
+    // is visible and the other names it.
     const boxes = [box(1, 100, 100, 30), box(2, 103, 101, 29.8)];
-    expect(coveringBody(boxes, 1)).toBeNull();
     expect(coveringBody(boxes, 2)).toBeNull();
+    expect(coveringBody(boxes, 1)).toBe(2);
+  });
+
+  it('leaves exactly one being visible out of a stack of 2, 4 or 10', () => {
+    for (const n of [2, 4, 10]) {
+      const boxes = [];
+      for (let i = 0; i < n; i++) boxes.push(box(i + 1, 100 + i * 0.5, 100 + i * 0.4, 20 + i * 0.1));
+      const cover = coveringBodies(boxes);
+      const visible = boxes.filter((b) => !cover.has(b.id));
+      expect(visible).toHaveLength(1);
+      expect(visible[0]!.id).toBe(1); // nearest to the eye — the picker's own order
+      // …and nobody is covered by somebody who is themselves covered.
+      for (const b of boxes) {
+        if (!cover.has(b.id)) continue;
+        expect(cover.get(b.id)).toBe(1);
+      }
+    }
+  });
+
+  it('breaks an exact depth tie the way the picker does — by id', () => {
+    const boxes = [box(9, 100, 100, 20), box(2, 100, 100, 20), box(5, 100, 100, 20)];
+    const cover = coveringBodies(boxes);
+    expect(cover.get(2)).toBeUndefined();
+    expect(cover.get(5)).toBe(2);
+    expect(cover.get(9)).toBe(2);
+  });
+
+  it('is a threshold, not a touch: a shoulder-clip is still two beings', () => {
+    // 20 × 60 boxes, side by side, the front one's edge just clear of the back
+    // one's own reported point — so only the area rule can fire. Overlap is
+    // measured as a fraction of the BACK being's figure: how much of IT is
+    // hidden.
+    const under = [box(1, 100, 100, 30), box(2, 111, 100, 10)]; // 45% of #1 covered
+    expect(coveringBodies(under).get(1)).toBeUndefined();
+    const over = [box(1, 100, 100, 30), box(2, 110.3, 100, 10)]; // 48.5%, point still clear
+    expect(coveringBodies(over).get(1)).toBe(2);
+    // Vertically, for the same reason: a head over a shoulder is two people.
+    expect(coveringBodies([box(1, 100, 100, 30), box(2, 100, 132, 10, 20, 60)]).get(1)).toBeUndefined();
+  });
+
+  it('says nothing about scenery: a being behind a ghosted hut is still visible', () => {
+    // Only BEINGS are in this list — `bodyBoxes()` builds it from the drawn
+    // figures and nothing else — because anything else standing in front of a
+    // being is ghosted by construction and the being is drawn through it. A
+    // hut's box would have hidden a being the picture does show.
+    const alone = [box(1, 100, 100, 30)];
+    expect(coveringBodies(alone).size).toBe(0);
+    expect(coveringBody(alone, 1)).toBeNull();
   });
 
   it('names the NEAREST of several in front, which is the one actually drawn', () => {

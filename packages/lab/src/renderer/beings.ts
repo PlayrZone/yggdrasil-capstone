@@ -490,6 +490,27 @@ export const PICTO_COUNT = 6;
 /** The atlas is a square grid of this many cells per side. */
 export const PICTO_GRID = 3;
 
+/**
+ * How tall a badge may be drawn against the being it describes, as a fraction
+ * of that being's own figure.
+ *
+ * The marker a badge is sized from is a MAP unit: it holds a screen size out
+ * wide, where a body is a pixel. Taken alone it made a sixty-pixel figure wear
+ * a disc two thirds of its own height and a twenty-pixel one wear a disc bigger
+ * than itself — a reviewer counted eight badges outweighing fourteen beings and
+ * called it the reason the close bands read as a sticker sheet. An annotation
+ * ON a person may not be the largest thing in the picture of that person.
+ */
+export const PICTO_MAX_OF_FIGURE = 0.40;
+
+/**
+ * A badge's drawn height in metres: the band's share of the marker, capped
+ * against the figure. A ceiling, never a size — a small marker is left alone.
+ */
+export function badgeMetres(markerM: number, bandShare: number, figureM: number): number {
+  return Math.min(markerM * bandShare, figureM * PICTO_MAX_OF_FIGURE);
+}
+
 export function pictogramFor(act: number): number {
   switch (act) {
     case ACT_RESTING: return PICTO_REST;
@@ -836,6 +857,13 @@ export interface Cluster {
   members: number[];
   /** 0 is a whole settlement; 1 and 2 are the parts it was split into. */
   depth: number;
+  /**
+   * Which quarter of the frame every one of its members stands in — `regionOf`,
+   * and the same number for all of them, because a group is cut at the frame's
+   * own mid-lines before it is ever given a number. `undefined` where no frame
+   * was passed in and the question has no answer.
+   */
+  region?: number;
 }
 
 /**
@@ -1164,7 +1192,10 @@ export function planCount(
 
   // The absorb pass merges overlapping outlines, which can put a group back
   // together that the extent cap had just taken apart — so the cap is applied
-  // again, LAST, and nothing merges after it.
+  // again, and the QUADRANT split runs after it, last of all. Nothing merges,
+  // absorbs or caps after this line: every pass above can move a being from one
+  // group to another, and the split is only true by construction if it is the
+  // final word on who is in which group.
   const compact = capExtent(chips, points, cell, maxExtent);
   const regioned = view ? splitByRegion(compact, points, cell, view) : compact;
   // A chip standing in for ONE being says less than that being's own pin does,
@@ -1181,6 +1212,15 @@ export function planCount(
   const singles: number[] = [];
   for (let k = 0; k < points.length; k++) if (taken[k] === 0) singles.push(k);
   final.sort((a, b) => (b.count === a.count ? a.x - b.x : b.count - a.count));
+  // Every member is in one quarter of the frame now, so the group HAS a
+  // quadrant — and carries it, so the number drawn for it can be held there
+  // rather than landing wherever the placement search found room.
+  if (view) {
+    for (const chip of final) {
+      const p = points[chip.members[0]!]!;
+      chip.region = regionOf(p.x, p.y, view);
+    }
+  }
   return { singles, chips: final };
 }
 
@@ -1249,6 +1289,19 @@ const CHIP_SLOTS: readonly (readonly [number, number])[] = [
   [1, -1], [-1, -1], [1, 1], [-1, 1], [0, -1.15], [0, 1.15], [1.25, 0], [-1.25, 0],
 ];
 
+/**
+ * And how far out each slot is tried, in CSS pixels past the chip's own
+ * half-size.
+ *
+ * The disc is now HELD inside its crowd's own quarter of the frame, which takes
+ * away the escape route it used to have — round two's chip walked across a
+ * mid-line to get off a pin and carried twenty beings into the wrong quadrant
+ * with it. A ladder of three rings gives the search twenty-four places to stand
+ * inside its own quarter instead, so it almost never has to choose between
+ * covering a being and being read in the wrong place.
+ */
+const CHIP_STEPS: readonly number[] = [0, 14, 30];
+
 export interface ChipPlacement {
   /** Centre of the chip, in canvas pixels. */
   x: number;
@@ -1278,7 +1331,7 @@ export interface ChipPlacement {
  * and a being may never lose one with a number.
  */
 export function placeCountChip(
-  hull: { x: number; y: number; rx: number; ry: number },
+  hull: { x: number; y: number; rx: number; ry: number; region?: number },
   halfW: number,
   halfH: number,
   pins: readonly LabelObstacle[],
@@ -1286,45 +1339,62 @@ export function placeCountChip(
   view: CountView,
   gap = 6,
 ): ChipPlacement {
-  // The number is read where it SITS, so it has to sit in the part of the
-  // frame its people are in. Splitting the crowds at the quadrant lines is only
-  // half the job: a disc pushed up and to the right of a hull near the middle
-  // of the frame carries its twenty beings across the line with it, which is
-  // how a settled world still came out +36% in one quadrant and −29% in
-  // another with every chip's members in one place.
-  const home = regionOf(hull.x, hull.y, view);
+  // The number is read where it SITS, so it SITS where its people are. Cutting
+  // the crowds at the quadrant lines was only half the job: round two's search
+  // scored the wrong quarter as a cost of thirty against a pin's hundred, so a
+  // disc pushed up and right off a hull near the middle of the frame carried
+  // its beings across the line with it — chips claiming 151 people in a corner
+  // that held 131. A cost the search can pay is not a constraint. This one it
+  // cannot: every candidate is held in the crowd's own quarter, and a chip with
+  // nowhere clear to stand there shrinks and fades where it belongs rather than
+  // being read in the wrong place.
+  const home = hull.region ?? regionOf(hull.x, hull.y, view);
   let best: ChipPlacement | null = null;
   let bestScore = Infinity;
-  for (const [sx, sy] of CHIP_SLOTS) {
-    const len = Math.hypot(sx, sy) || 1;
-    const ux = sx / len;
-    const uy = sy / len;
-    const anchorX = hull.x + hull.rx * ux;
-    const anchorY = hull.y + hull.ry * uy;
-    const x = Math.round(Math.min(view.w - halfW - 3, Math.max(halfW + 3, anchorX + ux * (halfW + gap))));
-    const y = Math.round(Math.min(view.h - halfH - 3, Math.max(halfH + 3, anchorY + uy * (halfH + gap))));
-    const covers = chipCoverage(x, y, halfW, halfH, pins, chips);
-    // Being in the wrong quarter of the frame is not something the chip can
-    // apologise for by shrinking, so it steers the choice without ever making
-    // a chip that covers nothing call itself unclear.
-    const score = covers + (regionOf(x, y, view) === home ? 0 : CHIP_WRONG_REGION);
-    if (score < bestScore) {
-      bestScore = score;
-      best = { x, y, anchorX, anchorY, clear: covers === 0, covers };
+  for (const step of CHIP_STEPS) {
+    for (const [sx, sy] of CHIP_SLOTS) {
+      const len = Math.hypot(sx, sy) || 1;
+      const ux = sx / len;
+      const uy = sy / len;
+      const anchorX = hull.x + hull.rx * ux;
+      const anchorY = hull.y + hull.ry * uy;
+      const x = holdInHalf(anchorX + ux * (halfW + gap + step), halfW, home & 1, view.w);
+      const y = holdInHalf(anchorY + uy * (halfH + gap + step), halfH, (home & 2) === 0 ? 0 : 1, view.h);
+      const covers = chipCoverage(x, y, halfW, halfH, pins, chips);
+      if (covers === 0) return { x, y, anchorX, anchorY, clear: true, covers };
+      if (covers < bestScore) {
+        bestScore = covers;
+        best = { x, y, anchorX, anchorY, clear: false, covers };
+      }
     }
-    if (score === 0) break;
   }
   return best ?? { x: hull.x, y: hull.y, anchorX: hull.x, anchorY: hull.y, clear: false, covers: 1 };
 }
 
 /**
+ * One axis of the hold: the whole disc inside its own half of the frame where
+ * there is room for it, and — whatever the canvas edge then does to it — its
+ * CENTRE always on its own side of the mid-line, because the centre is where
+ * `regionOf` reads it and therefore where a reader counts it.
+ */
+function holdInHalf(v: number, half: number, side: number, span: number): number {
+  const mid = span / 2;
+  const lo = side === 0 ? 0 : mid;
+  const hi = side === 0 ? mid : span;
+  let x = v;
+  if (hi - lo >= half * 2 + 2) x = Math.min(Math.max(x, lo + half + 1), hi - half - 1);
+  x = Math.round(Math.min(Math.max(x, half + 3), span - half - 3));
+  if (side === 0 && x >= mid) x = Math.ceil(mid) - 1;
+  else if (side === 1 && x < mid) x = Math.ceil(mid);
+  return x;
+}
+
+/**
  * What each thing a chip could land on costs it. A pin is a BEING and weighs
- * most; carrying a number out of its own quarter of the frame is next, because
- * that is a count a reader gets wrong rather than a mark they cannot see; a
- * name or another chip is chrome.
+ * most; a name or another chip is chrome. The quarter of the frame is not on
+ * this list any more — it is not a cost, it is a constraint.
  */
 const CHIP_ON_PIN = 100;
-const CHIP_WRONG_REGION = 30;
 const CHIP_ON_CHIP = 10;
 
 /** What this position would cover, weighed by what a reader can least afford to lose. */
@@ -1361,9 +1431,50 @@ function chipCoverage(
  * all be true.
  */
 export function nameClaimFor(band: ZoomBand, withinM: number, shown: number): string {
-  if (band === 'near') return `names within ${withinM.toFixed(0)} m · ${shown} shown`;
+  if (band === 'near') return `names within ${Math.floor(Math.max(0, withinM))} m · ${shown} shown`;
   if (bandPromise(band).names === 'found') return `only the selected being is named · ${shown} shown`;
   return `names where there is room, nearest first · ${shown} shown`;
+}
+
+/** One being, as the naming rule sees it: how far off, readable, and named. */
+export interface NameSubject {
+  /** Metres from the eye. */
+  distance: number;
+  /** Whether the frame drew a mark for it at all — an unreadable being is not a broken promise. */
+  readable: boolean;
+  /** Whether a name was actually placed over it this frame. */
+  named: boolean;
+}
+
+/**
+ * The radius the frame reached, and how many beings are inside it.
+ *
+ * Both halves in one place because a reviewer found them disagreeing: a strip
+ * saying "names within 12 m · 13 shown" over an audit reporting
+ * `{withinM: 12.25, shown: 13, within: 1}`, with `within` meaning one thing at
+ * NEAR and "however many names are drawn" at every other band. Three readings,
+ * no two of them about the same population.
+ *
+ * So there is one rule. The radius is the distance to the nearest READABLE
+ * being that went unnamed, FLOORED to the metre the strip prints — rounding it
+ * up would claim a metre of ground the frame did not name — and `within` is how
+ * many readable beings stand inside that printed radius. Every one of them is
+ * named, by construction, and `within <= named` always holds.
+ */
+export function nameRadius(subjects: readonly NameSubject[], cap: number): { withinM: number; within: number } {
+  // The bound: nothing readable and unnamed is nearer than this.
+  let bound = Number.POSITIVE_INFINITY;
+  for (const s of subjects) {
+    if (!s.readable || s.named) continue;
+    if (s.distance < bound) bound = s.distance;
+  }
+  // The largest whole metre STRICTLY inside that bound — a being standing at
+  // exactly the printed radius must be one the frame named.
+  const reached = Number.isFinite(bound) ? Math.ceil(bound) - 1 : Math.floor(cap);
+  const withinM = Math.max(0, Math.min(reached, Math.floor(cap)));
+  let within = 0;
+  for (const s of subjects) if (s.readable && s.distance <= withinM) within++;
+  return { withinM, within };
 }
 
 export interface LabelCandidate {

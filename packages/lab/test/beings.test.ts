@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   activityWord,
+  badgeMetres,
   BAND_EDGE_PX,
   BAND_ORDER,
   bandCountsBeings,
@@ -48,8 +49,10 @@ import {
   maxLeaderFor,
   movingFor,
   nameClaimFor,
+  nameRadius,
   NAME_NOTE,
   NEAR_LABEL_M,
+  PICTO_MAX_OF_FIGURE,
   nextFrameAt,
   octantDistance,
   placeCountChip,
@@ -1387,41 +1390,92 @@ describe('every being in the frame is a pin or part of a number, never both', ()
    */
   const VIEW = { w: 1400, h: 900 };
 
-  it('gives a quadrant the same arithmetic as the whole frame', () => {
-    let quadrants = 0;
-    for (let seed = 301; seed <= 340; seed++) {
-      const points = scatter(seed, 40 + (seed * 11) % 180, VIEW.w, VIEW.h);
-      const plan = planCount(points, PIN, 64, VIEW);
-      // The truth: where the beings actually are.
-      const truth = [0, 0, 0, 0];
-      for (const p of points) truth[regionOf(p.x, p.y, VIEW)]! += 1;
-      // What a reader gets: the pins they can see in the quadrant, plus the
-      // numbers whose chips sit in it.
-      const read = [0, 0, 0, 0];
-      for (const k of plan.singles) {
-        const p = points[k]!;
-        read[regionOf(p.x, p.y, VIEW)]! += 1;
-      }
-      // Read where the chip's NUMBER sits, not where its outline is centred:
-      // the disc is what a reader counts, and a disc pushed up and to the
-      // right of a hull near the middle of the frame used to carry twenty
-      // beings across the line with it.
-      const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
-      for (const chip of plan.chips) {
-        const halfW = String(chip.count).length * 3.5 + 7;
-        const at = placeCountChip({ x: chip.x, y: chip.y, rx: chip.rx, ry: chip.ry }, halfW, 9, [], placed, VIEW);
-        placed.push({ x0: at.x - halfW, y0: at.y - 9, x1: at.x + halfW, y1: at.y + 9 });
-        read[regionOf(at.x, at.y, VIEW)]! += chip.count;
-      }
-      for (let q = 0; q < 4; q++) {
-        quadrants++;
-        const off = Math.abs(read[q]! - truth[q]!);
-        // Within one being, or within a tenth — the bar a reviewer counting a
-        // quadrant by eye is held to.
-        expect(off <= 1 || off <= truth[q]! * 0.1).toBe(true);
-      }
+  /**
+   * What a reader gets against what is there, one quarter of the frame at a
+   * time — `countAudit().quadrants` in pure form, with the chips placed by the
+   * same call the renderer makes so the DISC's quadrant is the one counted.
+   * `pins` says whether the frame's own marks are in the way, which is when the
+   * placement search has to choose between covering a being and leaving home.
+   */
+  const readQuadrants = (points: readonly ScreenPoint[], withPins = false): { read: number[]; truth: number[] } => {
+    const plan = planCount(points, PIN, 64, VIEW);
+    const truth = [0, 0, 0, 0];
+    for (const p of points) truth[regionOf(p.x, p.y, VIEW)]! += 1;
+    const read = [0, 0, 0, 0];
+    const pins: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    for (const k of plan.singles) {
+      const p = points[k]!;
+      read[regionOf(p.x, p.y, VIEW)]! += 1;
+      if (withPins) pins.push({ x0: p.x - PIN / 2, y0: p.y - PIN / 2, x1: p.x + PIN / 2, y1: p.y + PIN / 2 });
     }
-    expect(quadrants).toBe(160);
+    const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    for (const chip of plan.chips) {
+      const halfW = String(chip.count).length * 3.5 + 7;
+      const at = placeCountChip(
+        { x: chip.x, y: chip.y, rx: chip.rx, ry: chip.ry, region: chip.region }, halfW, 9, pins, placed, VIEW,
+      );
+      placed.push({ x0: at.x - halfW, y0: at.y - 9, x1: at.x + halfW, y1: at.y + 9 });
+      read[regionOf(at.x, at.y, VIEW)]! += chip.count;
+    }
+    return { read, truth };
+  };
+
+  it('gives a quadrant the same arithmetic as the whole frame — exactly, not nearly', () => {
+    // Round two of this item left the bar at ±10% and shipped the defect
+    // inside it: the split was right, the PLACEMENT was not, and a disc pushed
+    // off a pin walked across a mid-line carrying twenty beings with it. There
+    // is no approximation in "count the pins, add the numbers", so there is
+    // none here either.
+    let layouts = 0;
+    for (let seed = 301; seed <= 620; seed++) {
+      const { read, truth } = readQuadrants(scatter(seed, 40 + (seed * 11) % 180, VIEW.w, VIEW.h));
+      expect(read).toEqual(truth);
+      layouts++;
+    }
+    expect(layouts).toBe(320);
+  });
+
+  it('is still exact with a pin under every slot the chip would like', () => {
+    // A chip may lose a fight with a being and shrink; it may not solve the
+    // fight by being read somewhere else.
+    for (let seed = 701; seed <= 730; seed++) {
+      const { read, truth } = readQuadrants(scatter(seed, 60 + seed % 120, VIEW.w, VIEW.h), true);
+      expect(read).toEqual(truth);
+    }
+  });
+
+  it('is exact on a blob sitting exactly on the mid-point', () => {
+    // The adversarial case the ±10% bar could never have caught: one gathering
+    // centred on the crossing of both lines, with members in all four
+    // quadrants and a hull centred on nothing.
+    for (const spread of [6, 18, 44, 90]) {
+      const points: ScreenPoint[] = [];
+      const next = rng(spread);
+      for (let i = 0; i < 80; i++) {
+        points.push({
+          id: i,
+          x: VIEW.w / 2 + (next() - 0.5) * spread,
+          y: VIEW.h / 2 + (next() - 0.5) * spread,
+        });
+      }
+      const { read, truth } = readQuadrants(points);
+      expect(read).toEqual(truth);
+      expect(truth.filter((n) => n > 0).length).toBeGreaterThan(1);
+    }
+  });
+
+  it('is exact on a line of beings standing along a mid-line', () => {
+    // Every being on the boundary itself, where `regionOf`'s own tie-break is
+    // the only thing deciding which side they are counted on.
+    const down: ScreenPoint[] = [];
+    for (let i = 0; i < 60; i++) down.push({ id: i, x: VIEW.w / 2, y: 40 + i * 13 });
+    const across: ScreenPoint[] = [];
+    for (let i = 0; i < 60; i++) across.push({ id: i, x: 40 + i * 21, y: VIEW.h / 2 });
+    const both = [...down, ...across.map((p, i) => ({ ...p, id: 1000 + i }))];
+    for (const points of [down, across, both]) {
+      const { read, truth } = readQuadrants(points);
+      expect(read).toEqual(truth);
+    }
   });
 
   it('never lets one chip stand for two places at once', () => {
@@ -1769,9 +1823,10 @@ describe('a crowd’s number sits outside its ring and off every being', () => {
 
   it('stands outside the outline it belongs to, not inside the crowd', () => {
     // The failure was arithmetic: the old offset was 0.72 of the extent, which
-    // for any hull wider than the chip is inside it.
-    for (const rx of [20, 80, 200, 420]) {
-      const hull = { x: 700, y: 450, rx, ry: rx * 0.7 };
+    // for any hull wider than the chip is inside it. The hulls here sit inside
+    // one quarter of the frame, which is what `planCount` now produces.
+    for (const rx of [20, 80, 200]) {
+      const hull = { x: 350, y: 250, rx, ry: rx * 0.7 };
       const at = placeCountChip(hull, 14, 9, [], [], VIEW);
       const dx = (at.x - hull.x) / hull.rx;
       const dy = (at.y - hull.y) / hull.ry;
@@ -1780,9 +1835,45 @@ describe('a crowd’s number sits outside its ring and off every being', () => {
   });
 
   it('keeps its leader line home short — a number with no ring is not a count', () => {
-    const hull = { x: 700, y: 450, rx: 120, ry: 90 };
+    const hull = { x: 350, y: 250, rx: 120, ry: 90 };
     const at = placeCountChip(hull, 14, 9, [], [], VIEW);
     expect(Math.hypot(at.anchorX - at.x, at.anchorY - at.y)).toBeLessThan(40);
+  });
+
+  it('stays in its crowd’s own quarter of the frame, whatever that costs it', () => {
+    // The constraint that replaced round two's thirty-point penalty. A hull
+    // pressed against a mid-line with a wall of pins on the far side: the old
+    // search bought its way across for less than a pin was worth, and the
+    // twenty people it counted were read in the wrong corner.
+    const wall = [{ x0: VIEW.w / 2 - 240, y0: 0, x1: VIEW.w / 2 + 240, y1: VIEW.h }];
+    for (const region of [0, 1, 2, 3]) {
+      const hull = {
+        x: VIEW.w / 2 + ((region & 1) === 0 ? -30 : 30),
+        y: VIEW.h / 2 + ((region & 2) === 0 ? -30 : 30),
+        rx: 26, ry: 20, region,
+      };
+      const at = placeCountChip(hull, 14, 9, wall, [], VIEW);
+      expect(regionOf(at.x, at.y, VIEW)).toBe(region);
+      // …and it says out loud that it had to stand on somebody.
+      expect(at.clear).toBe(false);
+    }
+  });
+
+  it('keeps the whole disc inside its own quarter where the quarter has room', () => {
+    for (const region of [0, 1, 2, 3]) {
+      const hull = {
+        x: VIEW.w / 2 + ((region & 1) === 0 ? -20 : 20),
+        y: VIEW.h / 2 + ((region & 2) === 0 ? -20 : 20),
+        rx: 40, ry: 30, region,
+      };
+      const at = placeCountChip(hull, 16, 9, [], [], VIEW);
+      const x0 = (region & 1) === 0 ? 0 : VIEW.w / 2;
+      const y0 = (region & 2) === 0 ? 0 : VIEW.h / 2;
+      expect(at.x - 16).toBeGreaterThanOrEqual(x0);
+      expect(at.x + 16).toBeLessThanOrEqual(x0 + VIEW.w / 2);
+      expect(at.y - 9).toBeGreaterThanOrEqual(y0);
+      expect(at.y + 9).toBeLessThanOrEqual(y0 + VIEW.h / 2);
+    }
   });
 
   it('admits it when the frame has nowhere free — it does not pretend', () => {
@@ -1821,5 +1912,70 @@ describe('the naming claim is one sentence, and it is the one the chip prints', 
     expect(nameClaimFor('default', 0, 4)).not.toContain('within');
     expect(nameClaimFor('far', 0, 1)).toContain('only the selected being');
     for (const band of BAND_ORDER) expect(nameClaimFor(band, 12, 3)).toContain('3 shown');
+  });
+
+  /**
+   * Round two: a NEAR strip reading "names within 12 m · 13 shown" over an
+   * audit reporting `{withinM: 12.25, expected: 13, shown: 13, within: 1}` —
+   * and the same `within` field equal to `shown` at MID. A reviewer could not
+   * tell which of the three readings was the wrong one, and they were right not
+   * to. `nameRadius` is the one rule all three now come from.
+   */
+  it('quotes a radius the frame actually kept, and counts the beings inside THAT', () => {
+    const subjects = [];
+    for (let i = 0; i < 120; i++) {
+      // Everyone inside 12.25 m is named; the nearest unnamed being stands at
+      // exactly the awkward distance that produced the contradiction.
+      const distance = 0.4 + i * 0.35;
+      subjects.push({ distance, readable: i % 9 !== 0, named: distance < 12.25 && i % 9 !== 0 });
+    }
+    const reach = nameRadius(subjects, NEAR_LABEL_M);
+    expect(reach.withinM).toBe(12);
+    expect(Number.isInteger(reach.withinM)).toBe(true);
+    // The strip prints the same whole metre the audit reports — no rounding
+    // between them, because there is only one number.
+    expect(nameClaimFor('near', reach.withinM, 7)).toBe(`names within ${reach.withinM} m · 7 shown`);
+    // And `within` is the population inside it, every one of them named.
+    const inside = subjects.filter((s) => s.readable && s.distance <= reach.withinM);
+    expect(reach.within).toBe(inside.length);
+    expect(inside.every((s) => s.named)).toBe(true);
+    expect(reach.within).toBeGreaterThan(20);
+  });
+
+  it('never quotes a metre it did not reach, over three hundred crowded frames', () => {
+    for (let seed = 1; seed <= 320; seed++) {
+      const next = rng(seed);
+      const subjects = [];
+      for (let i = 0; i < 40; i++) {
+        const distance = next() * 30;
+        subjects.push({ distance, readable: next() > 0.15, named: next() > 0.45 });
+      }
+      const reach = nameRadius(subjects, NEAR_LABEL_M);
+      expect(reach.withinM).toBeLessThanOrEqual(NEAR_LABEL_M);
+      expect(reach.withinM).toBeGreaterThanOrEqual(0);
+      // The claim, checked against every being it is about: nothing readable
+      // and unnamed stands inside the radius the strip prints.
+      for (const s of subjects) {
+        if (s.readable && !s.named) expect(s.distance).toBeGreaterThan(reach.withinM);
+      }
+      expect(reach.within).toBe(subjects.filter((s) => s.readable && s.distance <= reach.withinM).length);
+    }
+  });
+
+  it('caps a badge against the figure it belongs to, at any marker size', () => {
+    // The marker is a MAP unit and holds a screen size out wide, so a badge
+    // sized purely from it outgrew the being it described — eight badges
+    // outweighing fourteen people. Figure-relative, it cannot.
+    for (const figure of [CHILD_M, ADULT_M, ELDER_M]) {
+      for (const marker of [0.4, 1.875, 6, 40, 400]) {
+        for (const share of [0.64, 0.64 * 0.58]) {
+          const s = badgeMetres(marker, share, figure);
+          expect(s).toBeLessThanOrEqual(figure * PICTO_MAX_OF_FIGURE + 1e-9);
+          expect(s).toBeLessThanOrEqual(marker * share + 1e-9);
+        }
+      }
+    }
+    // Small markers are left alone: the cap is a ceiling, not a size.
+    expect(badgeMetres(0.5, 0.64, ADULT_M)).toBeCloseTo(0.32, 6);
   });
 });

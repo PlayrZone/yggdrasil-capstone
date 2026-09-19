@@ -171,31 +171,76 @@ export interface BodyBox {
 }
 
 /**
- * Who is standing in front of this being, at the exact point the view reports
- * it at — or `null` when that pixel is its own.
+ * How much of a being's own figure another one has to cover before the picture
+ * stops being about it: a fraction of ITS box, not of the pair.
  *
- * Bodies are drawn opaque and in depth order, so a being behind another being
- * is not in the picture at that point, however large and well drawn it is. Six
- * rounds of probes never said so: `visibleIds()` offered beings whose reported
- * position belonged to somebody standing in front of them, a reviewer pointed a
- * real mouse at each one, and the card that opened was — correctly — about the
- * being that WAS drawn there. The identification score went to 3/10 and the
- * picking was not the thing that was wrong.
- *
- * `slack` keeps two beings at the same depth from covering each other: a metre
- * apart on the same line of sight is a crowd, not an occlusion.
+ * Just under a half, and that is where it belongs. Past a half the nearer body
+ * necessarily holds this one's own reported point and the first rule has
+ * already fired; this is the sliver below that, where a figure is nearly gone
+ * and the pixel a driver would aim at is a fraction of one away from the body
+ * drawn over it. Two figures merely clipping each other's shoulders are a
+ * crowd, and both of them are there to be pointed at.
  */
-export function coveringBody(boxes: readonly BodyBox[], id: number, slack = 0.5): number | null {
-  let self: BodyBox | undefined;
-  for (const b of boxes) if (b.id === id) { self = b; break; }
-  if (!self) return null;
-  let front: BodyBox | null = null;
-  for (const b of boxes) {
-    if (b.id === id || b.depth > self.depth - slack) continue;
-    if (self.x < b.x0 || self.x > b.x1 || self.y < b.y0 || self.y > b.y1) continue;
-    if (front === null || b.depth < front.depth) front = b;
+export const COVER_OVERLAP = 0.48;
+
+/**
+ * Who is drawn where each being is — the front-most one for every stack on
+ * screen, and `null` for whoever that front-most one is.
+ *
+ * Bodies are opaque and painted in depth order, so out of any pile of figures
+ * sharing a patch of screen exactly ONE is in the picture. Round two's probe
+ * asked a narrower question — is the point this being is reported at inside
+ * somebody else's box, and is that somebody at least half a metre nearer — and
+ * a reviewer duly found four beings sharing one pixel, all four reporting
+ * `coveredBy: null` and all four offered by `visibleIds()` while the picker
+ * correctly returned one of them. The depth slack was the bug: in a real crowd
+ * the people standing on each other's line of sight are a pace apart, not a
+ * metre.
+ *
+ * So the order is the PICKER's order — nearest to the eye, `id` breaking an
+ * exact tie, exactly what `orderCandidates` does inside one layer — and the
+ * rule is greedy against what is already known to be drawn: a being is covered
+ * by the first being in front of it that either holds the point the view
+ * reports it at or covers `minOverlap` of its figure. Nothing is ever covered
+ * by a being that is itself covered, so a stack of ten resolves to one visible
+ * being and nine that name it.
+ */
+export function coveringBodies(boxes: readonly BodyBox[], minOverlap = COVER_OVERLAP): Map<number, number> {
+  const out = new Map<number, number>();
+  const order = boxes.slice().sort((a, b) => a.depth - b.depth || a.id - b.id);
+  const front: BodyBox[] = [];
+  for (const b of order) {
+    let by: BodyBox | null = null;
+    for (const f of front) {
+      if (coversBox(f, b, minOverlap)) { by = f; break; }
+    }
+    if (by === null) front.push(b);
+    else out.set(b.id, by.id);
   }
-  return front === null ? null : front.id;
+  return out;
+}
+
+/** Whether `front` is what is drawn where `back` is. */
+function coversBox(front: BodyBox, back: BodyBox, minOverlap: number): boolean {
+  // The point the view REPORTS this being at — where a driver aims — inside the
+  // other one's figure. This fires for a small being behind a large one whose
+  // boxes share little area, and it is the case round one of this rule caught.
+  if (back.x >= front.x0 && back.x <= front.x1 && back.y >= front.y0 && back.y <= front.y1) return true;
+  const w = Math.min(front.x1, back.x1) - Math.max(front.x0, back.x0);
+  if (w <= 0) return false;
+  const h = Math.min(front.y1, back.y1) - Math.max(front.y0, back.y0);
+  if (h <= 0) return false;
+  const area = Math.max(1e-6, (back.x1 - back.x0) * (back.y1 - back.y0));
+  return (w * h) / area >= minOverlap;
+}
+
+/**
+ * Who is standing in front of this ONE being, or `null` when the picture at
+ * that patch of screen is its own. The whole frame's answer, read off once —
+ * `coveringBodies` is what a caller asking about every being should use.
+ */
+export function coveringBody(boxes: readonly BodyBox[], id: number, minOverlap = COVER_OVERLAP): number | null {
+  return coveringBodies(boxes, minOverlap).get(id) ?? null;
 }
 
 /** Step through a disambiguation list, wrapping — the arrow keys' whole behaviour. */

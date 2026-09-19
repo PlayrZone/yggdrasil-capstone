@@ -68,9 +68,12 @@ export interface WorldProbe {
   /** The names floating over the world right now — only ones actually drawn. */
   labelsShown(): string[];
   /**
-   * The naming claim, measured rather than asserted: how far out every readable
-   * being got a name this frame, how many that was, and how many are drawn.
-   * NEAR's legend points at this number, so the claim can never outrun it.
+   * The naming claim, measured rather than asserted: the radius the frame
+   * reached in the whole metres the strip prints, how many beings stand inside
+   * it (all of them named), how many names the budgeter placed, and how many
+   * are drawn. One meaning for `within` in every band — it used to count a
+   * population at NEAR and the drawn names everywhere else, and no reader could
+   * tell which claim to believe.
    */
   labelAudit(): { claim: string; withinM: number; expected: number; shown: number; within: number };
   /**
@@ -93,8 +96,19 @@ export interface WorldProbe {
    * pin drawn for itself or part of exactly one chip's number, so
    * `pinsDrawn + Σ chips.n === beingsInFrustum` — the countability claim, made
    * checkable against the picture rather than argued about.
+   *
+   * `quadrants` is the same arithmetic one quarter of the frame at a time,
+   * which is how every reviewer has actually been asked to check a count:
+   * `pins + counted === beings` in each, where `counted` sums the chips whose
+   * DISC sits in that quadrant — where a reader reads a number. It holds
+   * wherever `counts` is true; MID and NEAR promise no count and draw pins
+   * inside their outlines, so there is nothing there to reconcile.
    */
-  countAudit(): { pinsDrawn: number; chips: { n: number; x: number; y: number }[]; beingsInFrustum: number };
+  countAudit(): {
+    pinsDrawn: number; chips: { n: number; x: number; y: number }[]; beingsInFrustum: number;
+    counts: boolean;
+    quadrants: { region: number; pins: number; chips: number; counted: number; beings: number; reconciles: boolean }[];
+  };
   /**
    * Places on the continent worth pointing a camera at, biggest gathering
    * first, each with the camera and target that frame it at the size the band
