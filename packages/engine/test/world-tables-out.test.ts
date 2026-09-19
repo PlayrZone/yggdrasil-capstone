@@ -86,8 +86,15 @@ const STILL_LEAKING: Record<string, string> = {
  * that takes each away. Following imports one level found exactly one, and it
  * is a real finding rather than an excuse: `WorldView.night` is a circumstance
  * of THIS world sitting in a world-neutral shape, and a world without a diurnal
- * cycle has nothing to put there. It is B4's, with `season` and the coordinates
- * beside it — B2 does not touch `WorldView`.
+ * cycle has nothing to put there.
+ *
+ * W1-B4 took the COORDINATES out of `contract/types.ts` — `AgentSnapshot`, the
+ * observed things, `MemoryRecord`, `EvidenceSnapshot` and both story sites are
+ * opaque `PlaceRef`s — and `test/mind-no-geometry.test.ts` now polices the
+ * shape the way this file polices the names. `night` and `season` are PROSE
+ * this world's prompt reads out, so they go with the rest of it at B5; the one
+ * plane left in the contract is `SimEvent`'s, which is the BODY's event and is
+ * B6's (pinned in `mind-no-geometry.test.ts`).
  *
  * A module on this list is not followed into (every mind file imports
  * `contract/types.ts`, and reporting it 20 times says nothing new); a module

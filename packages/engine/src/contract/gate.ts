@@ -90,11 +90,19 @@ export class WorldGate {
    * the body. A plan crosses carrying opaque ids and the body executes this
    * world's own narrow kinds, so something has to say the two agree.
    *
-   * WHAT IS REFUSED HERE IS AN UNDECLARED ACTION, and only that. Nothing
-   * downstream could execute one — the body's dispatch has no arm for it — so
-   * refusing it changes nothing that could otherwise have happened, and it is
-   * unreachable from this world's parser (which checks `kind` against the same
-   * table) and from its reflex policy (which emits the acts it was given).
+   * WHAT IS REFUSED HERE IS AN UNDECLARED ACTION, and only that. It is
+   * unreachable from any engine path — this world's parser checks `kind`
+   * against the same table, its reflex policy emits only the acts it was given,
+   * and speech is composed from `actionForCore(Say)` — and every recorded run
+   * is byte-identical with it in place.
+   *
+   * It does CHANGE THE MECHANISM, and the earlier claim that it "changes
+   * nothing that could otherwise have happened" was wrong (W1-B3 verifier,
+   * round 2, backlog 1). The body's dispatch has no arm for an undeclared act,
+   * so before this gate existed such a step did not fall through: the being
+   * STALLED on it forever (`planStep` frozen, `intentTicks` climbing, no
+   * events). Refusing it here skips the step and lets the rest of the plan run,
+   * which is better — but it is a different outcome, not the same one.
    *
    * AN UNDECLARED ARGUMENT IS NOT REFUSED unless the world asked for that
    * (`WorldAdapter.strictArgs`). This is the W1-B3 verifier's one FAIL: in a

@@ -22,8 +22,10 @@ import { ScaffoldLedger } from '../record/ScaffoldLedger.js';
 import { actionForCore } from '../contract/actions.js';
 import { traitCurveValue } from '../contract/adapter.js';
 import { WorldGate } from '../contract/gate.js';
+import { encodePlan } from '../contract/wire.js';
+import type { WireIntent } from '../contract/wire.js';
 import type { CognitionDefaults, WorldAdapter } from '../contract/adapter.js';
-import type { Intent, MindOutput, SimEvent, Traits } from '../contract/types.js';
+import type { MindOutput, SimEvent, Traits } from '../contract/types.js';
 import { generationOf } from './kinship.js';
 import { runFlagsFrom } from './options.js';
 import type { ExperimentOptions, RunFlags } from './options.js';
@@ -274,7 +276,7 @@ export class SimRuntime implements RuntimeView, SocietyHost {
               if (this.recordingEnded) return;
               const live = this.agentBody(agentId);
               let resolved: MindOutput | null = null;
-              let applied: readonly Intent[] | null = null;
+              let applied: readonly WireIntent[] | null = null;
               if (live?.alive) {
                 // A conscious Gahallian may name itself, once, while still unnamed.
                 if (output.name && live.name === '') live.name = output.name;
@@ -301,12 +303,20 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     }
   }
 
-  /** Hand a decision to the body; returns the plan array the body now owns. */
-  private applyPlan(agentId: number, output: MindOutput): Intent[] | null {
+  /**
+   * Hand a decision to the body; returns the plan array the body now owns.
+   *
+   * THE CODEC'S SECOND SEAM (W1-B4). A mind's plan carries opaque places; the
+   * body executes this world's own physics and has always been handed this
+   * world's own argument fields. `encodeIntent` is where the one becomes the
+   * other — after the gate, so what is admitted is judged on the act the MIND
+   * decided, and before the body, so nothing downstream changed at all.
+   */
+  private applyPlan(agentId: number, output: MindOutput): WireIntent[] | null {
     const body = this.agentBody(agentId);
     if (!body) return null;
     const speak = this.speakAction;
-    const composed: Intent[] = [
+    const composed: MindOutput['plan'] = [
       ...(speak === undefined ? [] : output.utterances.map((utterance) => ({ kind: speak, utterance }))),
       ...output.plan,
     ];
@@ -320,8 +330,9 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     // the plan is handed over exactly as before, and the body still validates
     // every step against physics.
     const gate = this.minds.get(agentId)?.gate;
-    const plan = gate ? composed.filter((intent) => gate.admitIntent(this.adapter, intent)) : composed;
-    this.body.setPlan(body, plan as BodyIntent[]);
+    const admitted = gate ? composed.filter((intent) => gate.admitIntent(this.adapter, intent)) : composed;
+    const plan = encodePlan(this.adapter, admitted);
+    this.body.setPlan(body, plan as unknown as BodyIntent[]);
     return plan;
   }
 

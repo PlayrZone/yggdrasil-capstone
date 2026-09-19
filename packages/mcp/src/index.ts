@@ -627,6 +627,12 @@ server.registerTool(
  * `run_ab`, `ignorance_probe`, `judge_traces`. Registered through a module of
  * their own so decision D1's guard — allowPaid AND a named, persisted budget —
  * lives in one file next to the store that holds the counter.
+ *
+ * It is handed `hasLlmKey`, not `makeLlmBackend`: the eval tools describe the
+ * backend they want and the engine's door constructs it from env, already
+ * wrapped in its budget. Nothing here can hand the instrument a client, so
+ * nothing here can hand it an unbudgeted one. `testFetch` is deliberately not
+ * passed — the server has no test seam.
  */
 registerEvalTools({
   registerTool: (name, config, handler) =>
@@ -641,8 +647,11 @@ registerEvalTools({
   // most interesting row in this table.
   audit: (tool, detail) => db.recordAction('mcp', tool, detail, undefined, Date.now()),
   announce: (kind, summary, opts) => announce(kind, summary, opts ?? {}),
-  makeLlmBackend,
+  hasLlmKey,
   llmModelId,
+  // Read here and handed straight to the door. It is never logged, never
+  // audited, and no tool schema has a field for one.
+  llmApiKey: () => process.env['FIREWORKS_API_KEY'],
 });
 
 // ── reports (shared read/write channel between the human and the AI) ────────────

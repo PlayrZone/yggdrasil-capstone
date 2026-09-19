@@ -22,10 +22,13 @@ import type { IntentKind } from './types.js';
  * what any of them ACHIEVES — that stays physical, and stays to be discovered.
  */
 
-// x/y are a point in this world's plane. B4 replaces the pair with one `place`
-// param, at which point no coordinate reaches a mind at all.
-const X: ParamSchema = { id: 'x', type: 'number' };
-const Y: ParamSchema = { id: 'y', type: 'number' };
+/**
+ * WHERE THE ACT IS AIMED (W1-B4). One param, not two: the mind carries an
+ * opaque place and this world writes it as the pair `x`,`y` it always has
+ * (`foragerSpace.fields`). The wire, the prompt's argument shapes and the body
+ * are unchanged; what changed is that none of them is spelled in the mind.
+ */
+const PLACE: ParamSchema = { id: 'place', type: 'place' };
 /** A node, a container or another being — whatever the act is aimed at. */
 const TARGET: ParamSchema = { id: 'targetId', type: 'ref' };
 /** Anything the world is made of. The hint is the parser's, word for word. */
@@ -76,13 +79,13 @@ const act = (
  *    list of params cannot; `Dig`, `Craft` and `Speak` each carry a sentence.
  */
 export const FORAGER_ACTIONS: readonly ForagerAction[] = [
-  act('MoveTo', 'Move', [X, Y, TARGET], { at: 1, shape: 'x,y|targetId' }),
+  act('MoveTo', 'Move', [PLACE, TARGET], { at: 1, shape: 'x,y|targetId' }),
   act('Gather', 'Take', [TARGET], { at: 2 }),
   act('Dig', 'Take', [], { at: 5, gloss: '(dig the ground where you stand)' }), // the ground where you stand; it takes nothing
   act('Eat', 'Use', [OBJECT_KIND], { at: 3 }),
   act('Drink', 'Use', []), // from whatever water is within reach
   act('Sleep', 'Rest', [DURATION], { at: 8 }),
-  act('Build', 'Build', [BUILD_KIND, X, Y], { at: 4, endsLine: true }),
+  act('Build', 'Build', [BUILD_KIND, PLACE], { at: 4, endsLine: true }),
   act('Deposit', 'Give', [OBJECT_KIND, TARGET], { at: 7, shape: 'objectKind,targetId?' }), // into a container, or the ground
   act('Withdraw', 'Take', [OBJECT_KIND, TARGET]),
   act('Give', 'Give', [TARGET, OBJECT_KIND], { at: 6 }),
@@ -96,6 +99,6 @@ export const FORAGER_ACTIONS: readonly ForagerAction[] = [
   }),
   act('Speak', 'Say', [SPEECH], { at: 13, gloss: '(put speech in utterances)' }),
   act('Follow', 'Attend', [TARGET], { at: 12 }),
-  act('Flee', 'Flee', [X, Y], { at: 11 }),
+  act('Flee', 'Flee', [PLACE], { at: 11 }),
   act('Idle', 'Wait', [DURATION], { at: 9, endsLine: true }),
 ];

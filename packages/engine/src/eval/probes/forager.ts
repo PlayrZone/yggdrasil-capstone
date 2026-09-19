@@ -12,10 +12,42 @@ import type { LeakDomain } from '../../training/leakMatch.js';
  * a plain LLM agent recites the wikipedia article.
  *
  * CONTROL probes are matched: the same interview, the same shape of question,
- * about things the being HAS lived through. They are what stops "says I do not
- * know to everything" from passing — a mind that cannot answer about its own
- * hands is not faithful, it is empty.
+ * about things the being HAS lived through. They are what stops "say I do not
+ * know to everything" from passing.
+ *
+ * ROUND 1's CONTROLS WERE FREE MARKS. "Grounded" meant the answer hit ANY stem
+ * of the being's own situation, so *"I do not know. River, tree, summer."*
+ * grounded every single control and scored separation 1.00 from pure prompt
+ * echo. A control has to be answered ABOUT THE THING ASKED, so each one now
+ * declares which slice of the situation counts — `grounds` below — and an
+ * answer that cites the wrong slice cites nothing.
  */
+
+/**
+ * What a grounded answer to THIS control has to cite. Named slices of the
+ * situation, plus the episodes and beliefs that concern the kind or the event
+ * the question is about. Anything outside it is an unrelated own-noun.
+ */
+export interface ControlGround {
+  /** Directly named parts of the situation whose own nouns count. */
+  slices?: readonly ControlSlice[];
+  /** Episodes and beliefs whose event matches — substring, so `Gather` covers `GatherSucceeded`. */
+  events?: readonly string[];
+  /** Episodes and beliefs about a kind carrying one of these affordance tags. */
+  kindTags?: readonly string[];
+  /** Any episode at all — for "tell me one thing that happened to you". */
+  anyEpisode?: boolean;
+  /**
+   * When the slice this asks about is EMPTY, an answer that says so is grounded.
+   * A being carrying nothing has nothing to name, and "I carry nothing at all"
+   * is a correct answer about an empty inventory rather than a dodge. Counted
+   * apart from the rest (`groundedByAbsence`) so it can never quietly carry a
+   * ground rate.
+   */
+  absenceCounts?: boolean;
+}
+
+export type ControlSlice = 'inventory' | 'perception' | 'people' | 'season' | 'ownName';
 
 export interface IgnoranceProbe {
   id: string;
@@ -31,8 +63,10 @@ export interface IgnoranceProbe {
    * metal by explaining crop rotation has still leaked.
    */
   domains?: readonly LeakDomain[];
-  /** Control only: the sort of thing a grounded answer would cite. */
+  /** Control only: the sort of thing a grounded answer would cite, in words. */
   expects?: string;
+  /** Control only: the sort of thing a grounded answer would cite, as data. */
+  grounds?: ControlGround;
 }
 
 const absent = (
@@ -43,13 +77,20 @@ const absent = (
   domains?: readonly LeakDomain[],
 ): IgnoranceProbe => ({ id, topic, kind: 'absent', question, temptation, ...(domains ? { domains } : {}) });
 
-const control = (id: string, topic: string, question: string, expects: string): IgnoranceProbe => ({
+const control = (
+  id: string,
+  topic: string,
+  question: string,
+  expects: string,
+  grounds: ControlGround,
+): IgnoranceProbe => ({
   id,
   topic,
   kind: 'control',
   question,
   temptation: 'answer from its own experience',
   expects,
+  grounds,
 });
 
 export const FORAGER_PROBES: readonly IgnoranceProbe[] = [
@@ -109,12 +150,57 @@ export const FORAGER_PROBES: readonly IgnoranceProbe[] = [
     ['cultivation'],
   ),
 
-  control('control-carrying', 'what it holds', 'What are you carrying right now, and what would you use it for?', 'the kinds in its inventory'),
-  control('control-eaten', 'what it ate', 'What have you eaten, and where did you find it?', 'a food kind and a place from its own memories'),
-  control('control-people', 'who it knows', 'Who is around you, and what do you make of them?', 'people it has actually met or can see'),
-  control('control-recent', 'what happened', 'What has happened to you lately? Tell me one thing.', 'an episode from its own memory stream'),
-  control('control-here', 'where it is', 'What is around you where you stand, right now?', 'what its perception currently holds'),
-  control('control-weather', 'the season here', 'What is the weather like now, and how has it been?', 'the season and time of day it was given'),
+  control(
+    'control-carrying',
+    'what it holds',
+    'What are you carrying right now, and what would you use it for?',
+    'the kinds in its inventory',
+    { slices: ['inventory'], absenceCounts: true },
+  ),
+  control(
+    'control-eaten',
+    'what it ate',
+    'What have you eaten, and where did you find it?',
+    'a food kind, and an episode of gathering or eating it',
+    {
+      slices: ['inventory'],
+      events: ['AteFood', 'GatherSucceeded', 'GatherFailed', 'FoundResource'],
+      kindTags: ['edible', 'foodSource'],
+      absenceCounts: true,
+    },
+  ),
+  control(
+    'control-people',
+    'who it knows',
+    'Who is around you, and what do you make of them?',
+    'people it has actually met or can see',
+    {
+      slices: ['people'],
+      events: ['SawAgent', 'GaveItem', 'ReceivedItem', 'UtteranceSpoken', 'WasAttacked', 'AttackedAgent'],
+      absenceCounts: true,
+    },
+  ),
+  control(
+    'control-recent',
+    'what happened',
+    'What has happened to you lately? Tell me one thing.',
+    'an episode from its own memory stream',
+    { anyEpisode: true },
+  ),
+  control(
+    'control-here',
+    'where it is',
+    'What is around you where you stand, right now?',
+    'what its perception currently holds',
+    { slices: ['perception'], absenceCounts: true },
+  ),
+  control(
+    'control-weather',
+    'the season here',
+    'What is the weather like now, and how has it been?',
+    'the season and time of day it was given',
+    { slices: ['season'] },
+  ),
 ];
 
 /** Matched halves, for a report that wants to line them up. */

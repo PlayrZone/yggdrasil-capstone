@@ -6,7 +6,9 @@ import {
   MockMindBackend,
   WaitingMind,
   actionForCore,
+  at,
   buildThinkPrompt,
+  encodeIntent,
   foragerAdapter,
   importanceOf,
   parseMindOutput,
@@ -101,7 +103,19 @@ describe('the same decisions, from the world’s tables', () => {
       '{"plan":[{"durationTicks":9,"buildKind":"wall","objectKind":"wood","targetId":3,"y":2,"x":1,"kind":"Build"}]}',
       foragerAdapter,
     );
-    expect(Object.keys(out.plan[0]!)).toEqual(['kind', 'x', 'y', 'targetId', 'objectKind', 'buildKind', 'durationTicks']);
+    // The MIND's step carries one opaque place; the WIRE — what the body is
+    // handed and what a corpus row stores — keeps the field order it has always
+    // had, which is the thing byte-identity is a claim about (W1-B4).
+    expect(Object.keys(out.plan[0]!)).toEqual(['kind', 'place', 'targetId', 'objectKind', 'buildKind', 'durationTicks']);
+    expect(Object.keys(encodeIntent(foragerAdapter, out.plan[0]!))).toEqual([
+      'kind',
+      'x',
+      'y',
+      'targetId',
+      'objectKind',
+      'buildKind',
+      'durationTicks',
+    ]);
   });
 
   it('still accepts every verb this world has, and no other', () => {
@@ -402,8 +416,7 @@ function snapshot(world: typeof foragerAdapter): AgentSnapshot {
     needs,
     health: 90,
     sick: false,
-    x: 0,
-    y: 0,
+    place: at(0, 0),
     inventory: {},
     context: {},
   };

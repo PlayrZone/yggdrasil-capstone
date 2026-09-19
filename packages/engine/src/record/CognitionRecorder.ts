@@ -1,4 +1,7 @@
-import type { Intent, MindOutput, SimEvent, ThinkInput } from '../contract/types.js';
+import type { WorldAdapter } from '../contract/adapter.js';
+import { encodeOutput } from '../contract/wire.js';
+import type { WireIntent } from '../contract/wire.js';
+import type { MindOutput, SimEvent, ThinkInput } from '../contract/types.js';
 import type { CognitionRecord } from '../consciousness/LlmMind.js';
 import { ENGINE_VERSION } from '../version.js';
 import { OutcomeTracker } from './OutcomeTracker.js';
@@ -21,6 +24,12 @@ import { COGNITION_SCHEMA_VERSION, DEFAULT_RECORDED_PROVENANCE } from './types.j
 
 export interface CognitionRecorderOptions {
   sink: ICognitionSink;
+  /**
+   * The world this run is in. A record stores what the WORLD was handed — a
+   * plan in its own argument fields — so the codec that writes an opaque place
+   * back out is the adapter's (W1-B4). Nothing else here reads it.
+   */
+  adapter: WorldAdapter;
   runId: string;
   scenarioId: string;
   worldId: string;
@@ -40,8 +49,9 @@ export interface CognitionRecorderOptions {
 export interface CompletedAct {
   beingId: number;
   parsed: MindOutput;
-  /** The plan as handed to the body, or null when it was never applied. */
-  appliedPlan: readonly Intent[] | null;
+  /** The plan as handed to the body — already in its own argument fields (the
+   *  body edge is where the codec sits) — or null when it was never applied. */
+  appliedPlan: readonly WireIntent[] | null;
   resolved: MindOutput | null;
   /** The tick the result landed on, which is not the tick it was asked at. */
   tick: number;
@@ -207,7 +217,7 @@ export class CognitionRecorder {
         fellBackToReflex: attempt.fellBackToReflex,
         ...(attempt.error !== undefined ? { error: attempt.error } : {}),
       },
-      parsedOutput: snapshotJson(act.parsed),
+      parsedOutput: snapshotJson(encodeOutput(this.options.adapter, act.parsed)),
       resolvedOutput: resolvedOf(act),
       appliedTick: act.appliedPlan ? act.tick : null,
       latencyMs: attempt.latencyMs,

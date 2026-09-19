@@ -55,6 +55,7 @@ export function createRecorder(host: RecorderHost, spec: RecorderSpec): Cognitio
   if (!recording) return null;
   return new CognitionRecorder({
     sink: recording.sink,
+    adapter: host.adapter,
     runId: recording.runId,
     scenarioId: recording.scenarioId ?? 'default',
     worldId: recording.worldId ?? spec.worldId,

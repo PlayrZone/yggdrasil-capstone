@@ -6,7 +6,11 @@ import type { ResourceNode } from '../src/body/ResourceNodeSystem.js';
 import type { Structure } from '../src/body/PerceptionSystem.js';
 import type { Animal } from '../src/body/WildlifeSystem.js';
 import type { SeedInGround } from '../src/body/WorldRegularities.js';
-import type { Intent } from '../src/contract/types.js';
+// The BODY's intent: `applyPlan` writes this world's own argument fields at the
+// body edge (W1-B4), so what a body holds is what it always held — which is why
+// this digest is unchanged and the goldens did not have to be re-recorded.
+import type { Intent } from '../src/body/contract.js';
+import { pointOf } from '../src/worlds/forager/space.js';
 import type { SettledView } from '../src/runner/RuntimeView.js';
 import type { ScenarioId } from '../src/worlds/forager/scale.js';
 
@@ -130,7 +134,10 @@ function mind(d: Digest, exp: Experiment, agentId: number): void {
   d.dict(Object.fromEntries(m.memory.experienceCounts()));
   for (const r of memories) {
     d.num(r.id).num(r.tick).push(r.type).push(r.origin).push(r.outcome).num(r.importance);
-    d.num(r.x).num(r.y).push(r.summaryText).num(r.toldBy).num(r.causedBy).push(r.objectKind ?? '~');
+    // This is a forager run, so the digest may open a place; it hashes the same
+    // two numbers in the same order it always did.
+    const where = r.place ? pointOf(r.place) : undefined;
+    d.num(where?.x).num(where?.y).push(r.summaryText).num(r.toldBy).num(r.causedBy).push(r.objectKind ?? '~');
     d.push(r.subjects.join(','));
     d.push(r.utterance?.speechAct ?? '~').push(r.utterance?.narrativeId ?? '~');
     d.num(r.utterance?.narrativeFirstTick);
@@ -156,7 +163,8 @@ function mind(d: Digest, exp: Experiment, agentId: number): void {
   const stories = m.narratives.all().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   d.num(stories.length);
   for (const s of stories) {
-    d.push(s.id).push(s.text).num(s.x).num(s.y).num(s.firstTick).flag(s.firsthand);
+    const site = pointOf(s.place);
+    d.push(s.id).push(s.text).num(site.x).num(site.y).num(s.firstTick).flag(s.firsthand);
     d.num(s.timesHeard).num(s.retellable);
   }
 

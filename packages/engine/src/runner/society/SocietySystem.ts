@@ -2,6 +2,7 @@ import type { World } from '../../core/World.js';
 import type { SimEventBus } from '../../body/SimEventBus.js';
 import type { GahallianBody } from '../../body/GahallianBody.js';
 import type { AgentMind } from '../../agent/AgentMind.js';
+import type { PlaceRef } from '../../contract/space.js';
 import type { SimEvent, Traits } from '../../contract/types.js';
 import type { BirthRecord } from '../RuntimeView.js';
 
@@ -44,8 +45,9 @@ export interface SocietyHost {
 export interface AuthoredStory {
   id: string;
   text: string;
-  x: number;
-  y: number;
+  /** Where it happened, as the world's own handle — a story has a site, and
+   *  what a site IS stays the world's (W1-B4). */
+  place: PlaceRef;
 }
 
 /**

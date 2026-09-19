@@ -1,17 +1,21 @@
 import type {
+  AgentSnapshot,
   Goal,
-  Intent,
   KnowledgeRecord,
   KnowledgeStatus,
   MemoryRecord,
-  MindOutput,
+  ObservedAgent,
+  ObservedResource,
+  ObservedStructure,
   RelationshipRecord,
   SimEvent,
   SpeechAct,
   ThinkInput,
   ThinkTrigger,
   Utterance,
+  WorldView,
 } from '../contract/types.js';
+import type { WireIntent, WireOutput } from '../contract/wire.js';
 import type { ActionId, EventId, KindId } from '../contract/ids.js';
 import type { Needs, ObjectKind } from '../worlds/forager/types.js';
 import type { ProvenanceLevel } from '../learning/ILearner.js';
@@ -31,8 +35,19 @@ export const COGNITION_SCHEMA_VERSION = 3;
 
 // ─── The think input, frozen ─────────────────────────────────────────────────
 
+/**
+ * A RECORD AS IT STORES. The mind's opaque `place` is written back as the
+ * fields this world writes a place with, where they have always been — `x`,`y`
+ * on the forager plane — so a v3 row recorded before W1-B4 and after it are the
+ * same bytes. WHICH fields those are is the world's, so a reader that wants
+ * them back asks the same `SpaceOps` the writer used
+ * (`deserializeThinkInput(row, world)`); the index signature is the honest type
+ * for a shape only a world can name.
+ */
+export type Written<T> = Omit<T, 'place'> & Record<string, unknown>;
+
 /** A memory as it stores: the retrieval embedding is a typed array JSON drops. */
-export type SerializedMemoryRecord = Omit<MemoryRecord, 'embedding'> & { embedding?: number[] };
+export type SerializedMemoryRecord = Written<Omit<MemoryRecord, 'embedding'>> & { embedding?: number[] };
 
 /**
  * Knowledge as a row stores it. `provenance` is dropped: no prompt reads it
@@ -60,11 +75,21 @@ export interface NonFiniteSubstitution {
 }
 
 export interface SerializedThinkInput
-  extends Omit<ThinkInput, 'relationships' | 'recalledMemories' | 'knowledge'> {
+  extends Omit<
+    ThinkInput,
+    'relationships' | 'recalledMemories' | 'knowledge' | 'snapshot' | 'worldView'
+  > {
   /** A Map does not survive JSON; its entries do, in the Map's own order. */
   relationships: [number, RelationshipRecord][];
   recalledMemories: SerializedMemoryRecord[];
   knowledge: SerializedKnowledgeRecord[];
+  /** Places written back as this world's own fields — see `Written`. */
+  snapshot: Written<AgentSnapshot>;
+  worldView: Omit<WorldView, 'agents' | 'resources' | 'structures'> & {
+    agents: Written<ObservedAgent>[];
+    resources: Written<ObservedResource>[];
+    structures: Written<ObservedStructure>[];
+  };
   /**
    * The numbers the prompt was rendered from that JSON cannot hold. Each stores
    * as `0` — so the row stays valid JSON that any reader can parse — with the
@@ -111,11 +136,15 @@ export interface CognitionAttempt {
  */
 export type CognitionStatus = 'answered' | 'unanswered-at-run-end';
 
-/** What the world actually received, after the engine resolved speech. */
+/**
+ * What the world actually received, after the engine resolved speech. Its plan
+ * is in the WIRE form — the world's own argument fields, which is what the body
+ * was handed and therefore what a row has to say it was handed (W1-B4).
+ */
 export interface ResolvedOutput {
   goals: Goal[];
   /** The plan as handed to the body: resolved utterances first, then intents. */
-  plan: Intent[];
+  plan: WireIntent[];
   utterances: Utterance[];
   name?: string;
   thought?: string;
@@ -235,8 +264,10 @@ export interface CognitionRecordV2 {
   attempts: CognitionAttempt[];
   modelId: string;
   parse: { valid: boolean; retried: boolean; fellBackToReflex: boolean; error?: string };
-  /** Straight out of the parser (or the reflex fallback) — before speech resolution. */
-  parsedOutput: MindOutput;
+  /** Straight out of the parser (or the reflex fallback) — before speech
+   *  resolution, and written in the world's own argument fields like the plan
+   *  below it, so a row reads as the model wrote it. */
+  parsedOutput: WireOutput;
   /** Null when the being died mid-thought, or the act never came back at all. */
   resolvedOutput: ResolvedOutput | null;
   /** The tick the answer was applied on; null for an unanswered act. */

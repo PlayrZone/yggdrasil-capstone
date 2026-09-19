@@ -8,6 +8,7 @@ import { memoryFromEvent } from '../src/memory/memoryFromEvent.js';
 import { WorldGate } from '../src/contract/gate.js';
 import { foragerAdapter } from '../src/worlds/forager/adapter.js';
 import { toyWorld } from './fixtures/toyAdapter.js';
+import { toySpace } from './fixtures/toySpace.js';
 import { CTX } from './helpers.js';
 
 /**
@@ -93,10 +94,15 @@ describe('an event the world does not declare forms no memory', () => {
       actions: [],
       kinds: [],
       time: { ticksPerDay: 1, ticksPerSeason: 1, ticksPerYear: 1, adultAge: 1, seasonAt: () => 'one' },
+      // A half-built world still has to say what its space is: the mind asks it
+      // where an event happened and cannot guess (W1-B4).
+      space: toySpace,
       cognitionDefaults: {
         thinkInterval: { base: 1, scale: 1, weights: [] },
         consolidateInterval: { base: 1, scale: 1, weights: [] },
         memoryHotCapacity: { base: 1, scale: 1, weights: [] },
+        successionWindowTicks: 1,
+        successionRadius: 1,
       },
     });
     const gate = new WorldGate();
@@ -305,10 +311,15 @@ describe('an idea whispered in from outside comes from the HOST', () => {
       actions: [],
       kinds: [],
       time: { ticksPerDay: 1, ticksPerSeason: 1, ticksPerYear: 1, adultAge: 1, seasonAt: () => 'one' },
+      // A half-built world still has to say what its space is: the mind asks it
+      // where an event happened and cannot guess (W1-B4).
+      space: toySpace,
       cognitionDefaults: {
         thinkInterval: { base: 1, scale: 1, weights: [] },
         consolidateInterval: { base: 1, scale: 1, weights: [] },
         memoryHotCapacity: { base: 1, scale: 1, weights: [] },
+        successionWindowTicks: 1,
+        successionRadius: 1,
       },
     });
     const nowhere: ContextRecord = emptyContext(banded);

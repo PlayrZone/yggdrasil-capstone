@@ -1,4 +1,5 @@
 import type { ActionBinding, KindSchema } from './actions.js';
+import type { SpaceOps } from './space.js';
 import type { ActionId, ContextFeatureId, ContextRecord, DriveId, EventId, KindId } from './ids.js';
 import type { MindOutput, RelationshipRecord, ThinkInput, Traits } from './types.js';
 
@@ -42,6 +43,17 @@ export interface DriveSchema {
    * would put one half of a tie-break in each file.
    */
   readonly actsAt: number;
+  /**
+   * HOW A PROMPT NAMES THIS PRESSURE, when that is not its id. The needs
+   * paragraph wrote `hunger, rest, safety, social` by hand inside the mind and
+   * indexed the snapshot by those four, so a world with any other drives made
+   * `fmt` THROW rather than degrade (W1-B3 verifier, round 2, backlog 2). The
+   * one place the two disagree is `socialConnection`, which a being reads as
+   * "social". Declared here for the same reason `PromptArgs` is declared beside
+   * an action: it is a statement about this world's prose, and B5 moves all of
+   * it into the lexicon.
+   */
+  readonly promptLabel?: string;
 }
 
 /**
@@ -200,6 +212,17 @@ export interface CognitionDefaults {
   readonly thinkInterval: TraitCurve;
   readonly consolidateInterval: TraitCurve;
   readonly memoryHotCapacity: TraitCurve;
+  /**
+   * HOW CLOSE IN TIME AND IN SPACE TWO THINGS HAVE TO BE for one to look like
+   * the cause of the other. Both were constants inside `SuccessionMiner` — 600
+   * ticks, which is a quarter of a forager day, and 8, which is eight of this
+   * world's units — so the mind held a duration and a DISTANCE of one world's
+   * (W1-B3 verifier, what B4 inherits). A world that measures in streets says
+   * so here; the miner asks `space.within` and never sees either number's
+   * meaning.
+   */
+  readonly successionWindowTicks: number;
+  readonly successionRadius: number;
 }
 
 export interface WorldAdapter {
@@ -236,6 +259,13 @@ export interface WorldAdapter {
    */
   readonly strictArgs?: boolean;
   readonly time: TimeOps;
+  /**
+   * WHERE THINGS ARE, AND THE ONLY WAY TO ASK (W1-B4). A mind holds opaque
+   * `PlaceRef`s and this answers the two questions it has about them. There is
+   * deliberately no "give me the coordinate" here: a world that cannot answer
+   * "how far" and "which way" for its own places has not described its space.
+   */
+  readonly space: SpaceOps;
   readonly cognitionDefaults: CognitionDefaults;
   /** The world's own survival instinct, until W1-D. Absent is legal. */
   readonly reflexPolicy?: ReflexPolicyFactory;
@@ -245,8 +275,6 @@ export interface WorldAdapter {
    * shape now would pre-empt the step that owns them, and `unknown` cannot be
    * read by accident. See docs/rework/W1-B-worldadapter.md for each step.
    */
-  /** B4 — distance, direction and place refs, replacing every x/y in the mind. */
-  readonly space?: unknown;
   /** B5 — every word a being could say or read. */
   readonly lexicon?: unknown;
   /** B6 — declared regularities. INSTRUMENT ONLY; no mind may read it. */

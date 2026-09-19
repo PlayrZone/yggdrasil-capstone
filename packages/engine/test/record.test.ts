@@ -38,6 +38,7 @@ import type {
   ThinkInput,
   Traits,
 } from '../src/index.js';
+import { at, pointOf } from '../src/worlds/forager/space.js';
 import { fingerprintOf } from './fingerprint.js';
 import { CTX, mem, resetIds } from './helpers.js';
 
@@ -130,8 +131,7 @@ describe('lossless cognition record — replay', () => {
         needs: { hunger: 72.5, rest: 10.25, safety: 5, socialConnection: 10 },
         health: 90.5,
         sick: true,
-        x: 123.25,
-        y: 456.5,
+        place: at(123.25, 456.5),
         inventory: { berry: 2, wood: 1 },
         context: CTX,
       },
@@ -161,14 +161,14 @@ describe('lossless cognition record — replay', () => {
         tick: 500,
         night: false,
         season: 'autumn',
-        agents: [{ id: 4, x: 5, y: 6 }],
-        resources: [{ id: 9, kind: 'berryBush', x: 1, y: 2, stock: 5 }],
-        structures: [{ id: 11, kind: 'shelter', x: 3, y: 4 }],
+        agents: [{ id: 4, place: at(5, 6) }],
+        resources: [{ id: 9, kind: 'berryBush', place: at(1, 2), stock: 5 }],
+        structures: [{ id: 11, kind: 'shelter', place: at(3, 4) }],
       },
       goals: [{ id: 0, description: 'find water', need: 'hunger', createdTick: 0 }],
       trigger: 'needCritical',
-      sacredPlace: { x: 900, y: 120 },
-      tragedyPlaces: [{ x: 10, y: 20 }],
+      sacredPlace: at(900, 120),
+      tragedyPlaces: [at(10, 20)],
       stories: [{ id: 'slew:9:1', text: 'Nine slew a bear in the forest', firsthand: false }],
       mostTold: 'Nine slew a bear in the forest',
       kin: [{ name: 'Oru', relation: 'parent' }],
@@ -177,12 +177,12 @@ describe('lossless cognition record — replay', () => {
     };
 
     const stored = wire(serializeThinkInput(input));
-    const replayed = buildThinkPrompt(deserializeThinkInput(stored));
+    const replayed = buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter));
     const original = buildThinkPrompt(input);
     expect(replayed.system).toBe(original.system);
     expect(replayed.user).toBe(original.user);
     // …and the typed array survives the trip, which JSON alone would flatten.
-    expect(deserializeThinkInput(stored).recalledMemories[1]!.embedding).toEqual(Float32Array.from([0.5, -0.25]));
+    expect(deserializeThinkInput(stored, foragerAdapter).recalledMemories[1]!.embedding).toEqual(Float32Array.from([0.5, -0.25]));
   });
 
   it('replays every row of a real run', async () => {
@@ -199,7 +199,7 @@ describe('lossless cognition record — replay', () => {
 
     expect(sink.records.length).toBeGreaterThanOrEqual(4);
     for (const row of sink.records) {
-      const prompt = buildThinkPrompt(deserializeThinkInput(row.thinkInput));
+      const prompt = buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerAdapter));
       expect(prompt.system).toBe(row.prompt.system);
       expect(prompt.user).toBe(row.prompt.user);
     }
@@ -248,7 +248,7 @@ describe('lossless cognition record — replay', () => {
     exp.endRecording();
 
     const row = sink.records.find((r) => r.beingId === being)!;
-    const prompt = buildThinkPrompt(deserializeThinkInput(row.thinkInput));
+    const prompt = buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerAdapter));
     expect(prompt.user).toBe(row.prompt.user);
     expect(prompt.system).toBe(row.prompt.system);
     // The row holds the belief as the model saw it, not as it ended up.
@@ -642,7 +642,7 @@ describe('nothing goes missing quietly', () => {
     expect(row.attempts).toEqual([]);
     expect(row.appliedTick).toBeNull();
     expect(row.prompt.user).toContain('NEEDS'); // still fully replayable
-    expect(buildThinkPrompt(deserializeThinkInput(row.thinkInput)).user).toBe(row.prompt.user);
+    expect(buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerAdapter)).user).toBe(row.prompt.user);
     const counts = sink.summary!.counts;
     expect(counts.promptsSent).toBe(counts.recordsWritten + counts.recordsDropped);
     expect(counts.unanswered).toBe(1);
@@ -724,7 +724,7 @@ describe('retried acts', () => {
 
     const row = sink.records.find((r) => r.parse.retried)!;
     expect(row.attempts).toHaveLength(2);
-    const base = buildThinkPrompt(deserializeThinkInput(row.thinkInput));
+    const base = buildThinkPrompt(deserializeThinkInput(row.thinkInput, foragerAdapter));
     // The first attempt was sent the base prompt, so it stores no delta at all.
     expect(row.attempts[0]!.promptDelta).toBeUndefined();
     expect(attemptPrompt(row, row.attempts[0]!)).toEqual(base);
@@ -875,8 +875,7 @@ describe('a non-finite number replays to the bytes that were sent', () => {
       needs: { hunger: 10, rest: 20, safety: 30, socialConnection: 40, ...over.needs },
       health: over.health ?? 88,
       sick: false,
-      x: over.x ?? 5,
-      y: over.y ?? 7,
+      place: at(over.x ?? 5, over.y ?? 7),
       inventory: over.inventory ?? { berry: 2 },
       context: CTX,
     },
@@ -902,7 +901,7 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     worldView: { tick: 1, night: false, season: 'spring', agents: [], resources: [], structures: [] },
     goals: [],
     trigger: 'periodic',
-    ...(over.sacredPlace ? { sacredPlace: over.sacredPlace } : {}),
+    ...(over.sacredPlace ? { sacredPlace: at(over.sacredPlace.x, over.sacredPlace.y) } : {}),
   });
 
   /** Every rendered number the prompt builder formats, all non-finite at once. */
@@ -928,7 +927,7 @@ describe('a non-finite number replays to the bytes that were sent', () => {
     expect(sent.user).toContain('about NaN away (toward NaN,3)');
     expect(sent.system).toContain('curiosity -Infinity');
 
-    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input))));
+    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input)), foragerAdapter));
     expect(replayed.user).toBe(sent.user);
     expect(replayed.system).toBe(sent.system);
   });
@@ -960,48 +959,48 @@ describe('a non-finite number replays to the bytes that were sent', () => {
       { path: '$.snapshot.x', value: '-0' },
       { path: '$.snapshot.y', value: '-0' },
     ]);
-    const replayed = deserializeThinkInput(stored); // …so the row carries it
-    expect(Object.is(replayed.snapshot.x, -0)).toBe(true);
-    expect(Object.is(replayed.snapshot.y, -0)).toBe(true);
+    const replayed = deserializeThinkInput(stored, foragerAdapter); // …so the row carries it
+    expect(Object.is(pointOf(replayed.snapshot.place).x, -0)).toBe(true);
+    expect(Object.is(pointOf(replayed.snapshot.place).y, -0)).toBe(true);
 
     expect(wire(serializeThinkInput(nonFiniteInput())).nonFinite).toBeUndefined();
   });
 
   it('leaves the stored row untouched, so the same row replays twice', () => {
     const stored = wire(serializeThinkInput(everyNonFinite()));
-    const first = buildThinkPrompt(deserializeThinkInput(stored));
+    const first = buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter));
     expect(stored.snapshot.needs.hunger).toBe(0); // still the placeholder
-    expect(buildThinkPrompt(deserializeThinkInput(stored)).user).toBe(first.user);
+    expect(buildThinkPrompt(deserializeThinkInput(stored, foragerAdapter)).user).toBe(first.user);
   });
 
   it('refuses a row whose number was LOST, naming the field, and accepts one that was restored', () => {
     const clean = wire(serializeThinkInput(nonFiniteInput()));
     // What a row looks like after JSON dropped a number outright.
     const lost = { ...clean, snapshot: { ...clean.snapshot, health: null as unknown as number } };
-    expect(() => deserializeThinkInput(lost)).toThrow(/snapshot\.health is null/);
+    expect(() => deserializeThinkInput(lost, foragerAdapter)).toThrow(/snapshot\.health is null/);
     const gone = { ...clean, snapshot: { ...clean.snapshot, health: undefined as unknown as number } };
-    expect(() => deserializeThinkInput(gone)).toThrow(/snapshot\.health is undefined/);
+    expect(() => deserializeThinkInput(gone, foragerAdapter)).toThrow(/snapshot\.health is undefined/);
     const lostConfidence = {
       ...clean,
       knowledge: [{ ...clean.knowledge[0]!, confidence: null as unknown as number }],
     };
-    expect(() => deserializeThinkInput(lostConfidence)).toThrow(/knowledge\[1\]\.confidence/);
+    expect(() => deserializeThinkInput(lostConfidence, foragerAdapter)).toThrow(/knowledge\[1\]\.confidence/);
     const lostCount = {
       ...clean,
       snapshot: { ...clean.snapshot, inventory: { berry: null as unknown as number } },
     };
-    expect(() => deserializeThinkInput(lostCount)).toThrow(/snapshot\.inventory\.berry/);
+    expect(() => deserializeThinkInput(lostCount, foragerAdapter)).toThrow(/snapshot\.inventory\.berry/);
 
     // …while a faithfully restored NaN is the value the prompt was built from.
-    expect(() => deserializeThinkInput(wire(serializeThinkInput(everyNonFinite())))).not.toThrow();
+    expect(() => deserializeThinkInput(wire(serializeThinkInput(everyNonFinite())), foragerAdapter)).not.toThrow();
   });
 
   it('refuses a side-channel that disagrees with the row rather than writing elsewhere', () => {
     const stored = wire(serializeThinkInput(nonFiniteInput({ health: NaN })));
     const misnamed = { ...stored, nonFinite: [{ path: '$.snapshot.needs.nope', value: 'NaN' as const }] };
-    expect(() => deserializeThinkInput(misnamed)).toThrow(/does not name a substituted number/);
+    expect(() => deserializeThinkInput(misnamed, foragerAdapter)).toThrow(/does not name a substituted number/);
     const notAPlaceholder = { ...stored, snapshot: { ...stored.snapshot, health: 42 } };
-    expect(() => deserializeThinkInput(notAPlaceholder)).toThrow(/does not name a substituted number/);
+    expect(() => deserializeThinkInput(notAPlaceholder, foragerAdapter)).toThrow(/does not name a substituted number/);
   });
 });
 
@@ -1078,7 +1077,7 @@ describe('a row does not carry bookkeeping the prompt never read', () => {
 
   it('replays byte-for-byte from the stripped row', () => {
     const input = inputWith(believer(12));
-    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input))));
+    const replayed = buildThinkPrompt(deserializeThinkInput(wire(serializeThinkInput(input)), foragerAdapter));
     const sent = buildThinkPrompt(input);
     expect(replayed.user).toBe(sent.user);
     expect(replayed.system).toBe(sent.system);

@@ -7,6 +7,7 @@ import {
   MockMindBackend,
   ReflexMind,
   buildThinkPrompt as buildThinkPromptIn,
+  encodeIntent,
   foragerAdapter,
   parseMindOutput as parseMindOutputIn,
 } from '../src/index.js';
@@ -115,7 +116,10 @@ describe('schema parser', () => {
     // It parsed as a legal Build with `buildKind` dropped, and a shelter went up.
     expect(reasonOf('{"plan":[{"kind":"Build","buildKind":"tower","x":1,"y":2}]}')).toBe('bad-arg');
     expect(reasonOf('{"plan":[{"kind":"Eat","objectKind":"plutonium"}]}')).toBe('bad-arg');
-    expect(parseMindOutput('{"plan":[{"kind":"Build","buildKind":"wall","x":1,"y":2}]}').plan[0]).toEqual({ kind: 'Build', buildKind: 'wall', x: 1, y: 2 });
+    // W1-B4: the parsed step carries an opaque place; what the wire said — and
+    // what the body is handed — is still the two fields it always was.
+    const step = parseMindOutput('{"plan":[{"kind":"Build","buildKind":"wall","x":1,"y":2}]}').plan[0]!;
+    expect(encodeIntent(foragerAdapter, step)).toEqual({ kind: 'Build', buildKind: 'wall', x: 1, y: 2 });
   });
 
   it('refuses an over-long plan rather than silently running the first eight', () => {

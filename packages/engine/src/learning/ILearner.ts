@@ -73,8 +73,7 @@ export function snapshotOf(memory: MemoryRecord): EvidenceSnapshot {
     // Aliased, not copied: a stored MemoryRecord is never mutated, and this
     // keeps a two-element array alive rather than the record behind it.
     subjects: memory.subjects,
-    x: memory.x,
-    y: memory.y,
+    place: memory.place,
     importance: memory.importance,
   };
 }

@@ -1,6 +1,7 @@
 import { kindsFor, planArguments } from '../contract/actions.js';
 import type { ParamSchema } from '../contract/actions.js';
 import type { WorldAdapter } from '../contract/adapter.js';
+import type { SpaceOps } from '../contract/space.js';
 import type { Goal, Intent, MindOutput, SpeechAct, Utterance } from '../contract/types.js';
 
 /**
@@ -129,6 +130,13 @@ interface PlanArg {
   readonly allowed?: ReadonlySet<string>;
   /** The clause a refusal ends with, after the action's own name. */
   readonly hint?: string;
+  /**
+   * Present for a PLACE (W1-B4): the wire fields this world writes one as, in
+   * the order written, each read exactly as an argument of its own type would
+   * be — so `x` then `y` on the forager plane, with the same `bad-number`
+   * naming the same field. What is BUILT from them is one opaque handle.
+   */
+  readonly fields?: readonly PlanArg[];
 }
 
 interface Vocabulary {
@@ -141,6 +149,8 @@ interface Vocabulary {
   readonly args: readonly PlanArg[];
   readonly needs: ReadonlySet<string>;
   readonly needHint: string;
+  /** The only thing that can turn this world's fields into a place. */
+  readonly space: SpaceOps;
 }
 
 const VOCABULARIES = new WeakMap<WorldAdapter, Vocabulary>();
@@ -153,12 +163,16 @@ function vocabularyOf(world: WorldAdapter): Vocabulary {
     args: planArguments(world).map((param) => planArg(world, param)),
     needs: new Set(world.drives.map((drive) => drive.id)),
     needHint: `a goal serves one of ${world.drives.map((drive) => drive.id).join(', ')}`,
+    space: world.space,
   };
   VOCABULARIES.set(world, built);
   return built;
 }
 
 function planArg(world: WorldAdapter, param: ParamSchema): PlanArg {
+  if (param.type === 'place') {
+    return { id: param.id, fields: world.space.fields.map((field) => planArg(world, field)) };
+  }
   if (param.type === 'kind' || param.type === 'enum') {
     const values = param.type === 'kind' ? kindsFor(world, param) : [...param.values];
     return {
@@ -450,15 +464,37 @@ function parsePlan(value: unknown, vocab: Vocabulary): Intent[] {
     // keeps the field order it has always had on the wire.
     const intent = { kind } as Intent & Record<string, unknown>;
     for (const arg of vocab.args) {
-      const read = arg.allowed
-        ? readEnum(o, arg.id, arg.allowed, `${kind} ${arg.hint}`)
-        : readNumber(o, arg.id);
+      const read = readArg(o, arg, kind, vocab);
       if (read !== undefined) intent[arg.id] = read;
     }
     plan.push(intent);
   }
   if (plan.length > PLAN_LIMIT) throw tooLong('plan-too-long', 'plan', plan.length, PLAN_LIMIT);
   return plan;
+}
+
+/**
+ * ONE ARGUMENT, READ THE WAY THIS WORLD WRITES IT. A place is its own fields,
+ * read in the world's order and assembled into one opaque handle: the same
+ * numbers, refused for the same reasons, naming the same field — and a HALF of
+ * one is kept, because `{"kind":"MoveTo","x":5}` with no `y` is a thing a model
+ * writes and the body has always been the one to answer for it.
+ */
+function readArg(
+  o: Record<string, unknown>,
+  arg: PlanArg,
+  kind: string,
+  vocab: Vocabulary,
+): unknown {
+  if (arg.fields) {
+    const written: Record<string, unknown> = {};
+    for (const field of arg.fields) {
+      const read = readArg(o, field, kind, vocab);
+      if (read !== undefined) written[field.id] = read;
+    }
+    return vocab.space.decode(written);
+  }
+  return arg.allowed ? readEnum(o, arg.id, arg.allowed, `${kind} ${arg.hint}`) : readNumber(o, arg.id);
 }
 
 function parseUtterances(value: unknown): Utterance[] {

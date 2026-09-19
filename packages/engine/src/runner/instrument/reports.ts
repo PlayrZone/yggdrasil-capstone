@@ -1,4 +1,5 @@
 import { TICKS_PER_SEASON } from '../../body/Climate.js';
+import { pointOf } from '../../worlds/forager/space.js';
 import type { KnowledgeRule } from '../../contract/types.js';
 import { analyzeDiffusion, analyzeBeliefAccuracy } from '../../analysis/diffusion.js';
 import type { BeliefAccuracy, BeliefCluster } from '../../analysis/diffusion.js';
@@ -116,7 +117,9 @@ export function sacredPlaces(view: RuntimeView): SacredPlacesReport {
     if (!mind) continue;
     for (const n of mind.narratives.all()) {
       let s = sites.get(n.id);
-      if (!s) sites.set(n.id, (s = { x: n.x, y: n.y, kind: n.id.slice(0, n.id.indexOf(':')), text: n.text, holders: 0 }));
+      // As in `beliefBehavior`: the instrument may open a place, a mind may not.
+      const site = pointOf(n.place);
+      if (!s) sites.set(n.id, (s = { x: site.x, y: site.y, kind: n.id.slice(0, n.id.indexOf(':')), text: n.text, holders: 0 }));
       s.holders++;
     }
   }

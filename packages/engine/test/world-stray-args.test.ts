@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { foragerAdapter } from '../src/index.js';
+import { wireFieldsOf } from '../src/contract/actions.js';
 import { COHORT_ACTIONS, runStrayArgCohort, strayArgCases } from './fixtures/strayArgCohort.js';
 import type { StrayArgTrace } from './fixtures/strayArgCohort.js';
 
@@ -53,7 +54,13 @@ describe('a stray argument behaves as it did before the edge moved', () => {
   it('is scripted against the acts this world actually declares', () => {
     expect(COHORT_ACTIONS.map(([id]) => id)).toEqual(foragerAdapter.actions.map((a) => a.id));
     for (const [id, args] of COHORT_ACTIONS) {
-      const declared = foragerAdapter.actionById.get(id)!.params.filter((p) => p.type !== 'speech');
+      // AS THE WIRE WRITES THEM. The cohort emits JSON, so what it must agree
+      // with is the fields a model writes — and since W1-B4 the mind's one
+      // opaque `place` is written as this world's own `x`,`y`.
+      const declared = foragerAdapter.actionById
+        .get(id)!
+        .params.filter((p) => p.type !== 'speech')
+        .flatMap((p) => wireFieldsOf(foragerAdapter, p));
       expect(args, id).toEqual(declared.map((p) => p.id));
     }
   });

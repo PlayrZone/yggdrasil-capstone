@@ -1236,7 +1236,9 @@ async function realThinkInputs(): Promise<ThinkInput[]> {
     await new Promise<void>((r) => setTimeout(r, 0));
   }
   exp.endRecording();
-  return records.map((r) => deserializeThinkInput(r.thinkInput));
+  // With the world, so the stored place fields come back as opaque places — the
+  // shape a mind is actually handed (W1-B4).
+  return records.map((r) => deserializeThinkInput(r.thinkInput, foragerAdapter));
 }
 
 /**

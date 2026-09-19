@@ -8,6 +8,9 @@ import type {
   ThinkInput,
 } from '../../contract/types.js';
 import type { DriveId, KindId } from '../../contract/ids.js';
+import type { PlaceRef } from '../../contract/space.js';
+import { at, pointOf } from './space.js';
+import type { Point } from './space.js';
 
 /**
  * W1-B3 MOVED THIS FILE; IT DID NOT REWRITE IT. Every line below stood in
@@ -22,6 +25,12 @@ import type { DriveId, KindId } from '../../contract/ids.js';
  * over LEARNED affordances and skills. Until then the kinds below are spelled
  * out, and that is now legitimate: this is world code, and `kinds.ts` declares
  * every name it uses (`test/world-tables-transcribed.test.ts` holds it to that).
+ *
+ * W1-B4 changed only its EDGES. Coordinates are this world's own business, so
+ * the arithmetic below is untouched — operation for operation, so every
+ * comparison lands on the same side of every boundary it ever did — but what
+ * arrives from a mind and what leaves for one is an opaque `PlaceRef`, opened
+ * and closed by `pointOf`/`at` at the edge of each function.
  */
 
 // Things an agent might TRY to eat (nutritious + poisonous). The reflex only
@@ -69,36 +78,36 @@ export class ReflexMind implements ReflexPolicy {
       } else {
         const node = nearestFoodNode(input, knowledge);
         if (node) {
-          plan.push({ kind: 'MoveTo', targetId: node.id, x: node.x, y: node.y });
+          plan.push({ kind: 'MoveTo', targetId: node.id, place: node.place });
           plan.push({ kind: 'Gather', targetId: node.id });
         } else {
           // No food in sight — head back to where food was last found
           // (foraging memory, an instinct), else roam to discover some.
           const remembered = rememberedFoodSpot(input);
-          plan.push(remembered ? { kind: 'MoveTo', x: remembered.x, y: remembered.y } : wander(input));
+          plan.push(remembered ? { kind: 'MoveTo', place: remembered } : wander(input));
         }
       }
     } else if (need === 'rest') {
       goals.push(goal(input, 'sleep', 'rest'));
       const shelter = nearestStructure(input, 'shelter');
-      if (shelter) plan.push({ kind: 'MoveTo', targetId: shelter.id, x: shelter.x, y: shelter.y });
+      if (shelter) plan.push({ kind: 'MoveTo', targetId: shelter.id, place: shelter.place });
       plan.push({ kind: 'Sleep', durationTicks: 200 });
     } else if (need === 'safety') {
       goals.push(goal(input, 'get to safety', 'safety'));
       const threat = nearestFearedAgent(input);
       if (threat) {
-        plan.push({ kind: 'Flee', x: threat.x, y: threat.y });
+        plan.push({ kind: 'Flee', place: threat.place });
       } else {
         const shelter = nearestStructure(input, 'shelter');
         if (shelter) {
-          plan.push({ kind: 'MoveTo', targetId: shelter.id, x: shelter.x, y: shelter.y });
+          plan.push({ kind: 'MoveTo', targetId: shelter.id, place: shelter.place });
           plan.push({ kind: 'Idle', durationTicks: 100 });
         } else if ((snapshot.inventory.wood ?? 0) >= 3) {
-          plan.push({ kind: 'Build', buildKind: 'shelter', x: snapshot.x, y: snapshot.y });
+          plan.push({ kind: 'Build', buildKind: 'shelter', place: snapshot.place });
         } else {
           const tree = nearestNode(input, 'tree');
           if (tree) {
-            plan.push({ kind: 'MoveTo', targetId: tree.id, x: tree.x, y: tree.y });
+            plan.push({ kind: 'MoveTo', targetId: tree.id, place: tree.place });
             plan.push({ kind: 'Gather', targetId: tree.id });
           } else {
             plan.push(wander(input));
@@ -111,7 +120,7 @@ export class ReflexMind implements ReflexPolicy {
       // company is about who, not proximity.
       const other = preferredAgent(input) ?? nearestAgent(input);
       if (other) {
-        plan.push({ kind: 'MoveTo', x: other.x, y: other.y });
+        plan.push({ kind: 'MoveTo', place: other.place });
         // Compassionate agents pass their best knowledge along — the
         // testimony channel exists from the first reflex generation.
         const best = knowledge[0];
@@ -150,15 +159,18 @@ export class ReflexMind implements ReflexPolicy {
       // enough (~40% of the cycle) that the journey to a distant site can finish
       // before survival reclaims the being; otherwise it drifts toward kin.
       const sacred = input.sacredPlace;
-      const onPilgrimage = !!sacred && input.worldView.tick % 1600 < 640 && Math.hypot(sacred.x - snapshot.x, sacred.y - snapshot.y) > 6;
+      const onPilgrimage =
+        !!sacred &&
+        input.worldView.tick % 1600 < 640 &&
+        this.world.space.distance(snapshot.place, sacred) > 6;
       const friend = preferredAgent(input);
       if (onPilgrimage) {
         goals.push(goal(input, 'return to the place of the story', undefined));
-        plan.push({ kind: 'MoveTo', x: sacred!.x, y: sacred!.y });
+        plan.push({ kind: 'MoveTo', place: sacred! });
         plan.push({ kind: 'Idle', durationTicks: 40 });
       } else if (friend && snapshot.traits.loyalty >= 35) {
         goals.push(goal(input, 'stay near kin & friends', undefined));
-        plan.push({ kind: 'MoveTo', x: friend.x, y: friend.y });
+        plan.push({ kind: 'MoveTo', place: friend.place });
         // DIRECTED TEACHING: pass knowledge to your bonded individual. Social
         // gravity keeps you together across many meetings, and the belief
         // taught rotates through your whole repertoire — so over time a child
@@ -243,16 +255,15 @@ function lowerFirst(s: string): string {
 }
 
 /** Most recent place this agent successfully gathered edible food (memory). */
-function rememberedFoodSpot(input: ThinkInput): { x: number; y: number } | undefined {
+function rememberedFoodSpot(input: ThinkInput): PlaceRef | undefined {
   for (let i = input.recalledMemories.length - 1; i >= 0; i--) {
     const m = input.recalledMemories[i]!;
     if (
       m.type === 'GatherSucceeded' &&
       (m.objectKind === 'berry' || m.objectKind === 'tuber') &&
-      m.x !== undefined &&
-      m.y !== undefined
+      m.place !== undefined
     ) {
-      return { x: m.x, y: m.y };
+      return m.place;
     }
   }
   return undefined;
@@ -304,7 +315,7 @@ function craftPlan(
     const node = nearestNode(input, nodeKind);
     if (node) {
       return [
-        { kind: 'MoveTo', targetId: node.id, x: node.x, y: node.y },
+        { kind: 'MoveTo', targetId: node.id, place: node.place },
         { kind: 'Gather', targetId: node.id },
       ];
     }
@@ -393,10 +404,12 @@ function affinityToward(input: ThinkInput, id: number): number {
 function preferredAgent(input: ThinkInput) {
   let best: (typeof input.worldView.agents)[number] | undefined;
   let bestScore = 0;
+  const self = pointOf(input.snapshot.place);
   for (const a of input.worldView.agents) {
     const aff = affinityToward(input, a.id);
     if (aff <= 0) continue;
-    const d = Math.hypot(a.x - input.snapshot.x, a.y - input.snapshot.y) || 1;
+    const at = pointOf(a.place);
+    const d = Math.hypot(at.x - self.x, at.y - self.y) || 1;
     const score = aff - d * 0.1;
     if (score > bestScore) {
       bestScore = score;
@@ -411,16 +424,23 @@ function nearestFearedAgent(input: ThinkInput) {
   return nearest(input, feared);
 }
 
-function nearest<T extends { x: number; y: number; id?: number }>(
+/**
+ * The closest of a set of seen things. World code, so it opens the handles and
+ * compares squares exactly as it always has — `nearestOf` is deliberately NOT
+ * on `SpaceOps`, because no part of the mind asks this question and an op
+ * nothing needs is surface a later world has to implement for nothing.
+ */
+function nearest<T extends { place: PlaceRef; id?: number }>(
   input: ThinkInput,
   items: T[],
 ): T | undefined {
-  const { x, y } = input.snapshot;
+  const { x, y } = pointOf(input.snapshot.place);
   let best: T | undefined;
   let bestD = Infinity;
   for (const item of items) {
-    const dx = item.x - x;
-    const dy = item.y - y;
+    const at = pointOf(item.place);
+    const dx = at.x - x;
+    const dy = at.y - y;
     const d = dx * dx + dy * dy;
     if (d < bestD) {
       best = item;
@@ -435,7 +455,8 @@ function nearest<T extends { x: number; y: number; id?: number }>(
  * identical runs take identical walks; curiosity stretches the stride.
  */
 function wander(input: ThinkInput): Intent {
-  const { id, traits, x, y } = input.snapshot;
+  const { id, traits } = input.snapshot;
+  const { x, y }: Point = pointOf(input.snapshot.place);
   // Persist a heading across a stretch of ticks (hash by a coarse time bucket)
   // so roaming actually traverses ground to find sparse food, rather than
   // jittering in place. Curiosity lengthens the stride.
@@ -446,7 +467,8 @@ function wander(input: ThinkInput): Intent {
   let ty = y + Math.sin(angle) * stride;
   // Shun the places where tragedy is remembered — belief steering avoidance.
   if (input.tragedyPlaces) {
-    for (const t of input.tragedyPlaces) {
+    for (const place of input.tragedyPlaces) {
+      const t = pointOf(place);
       if ((tx - t.x) ** 2 + (ty - t.y) ** 2 < 35 * 35) {
         angle += Math.PI * 0.8;
         tx = x + Math.cos(angle) * stride;
@@ -455,7 +477,7 @@ function wander(input: ThinkInput): Intent {
       }
     }
   }
-  return { kind: 'MoveTo', x: tx, y: ty };
+  return { kind: 'MoveTo', place: at(tx, ty) };
 }
 
 function hash2(a: number, b: number): number {

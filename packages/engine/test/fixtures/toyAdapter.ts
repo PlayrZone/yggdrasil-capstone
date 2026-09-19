@@ -1,5 +1,6 @@
 import { defineWorld } from '../../src/contract/adapter.js';
 import type { WorldAdapter } from '../../src/contract/adapter.js';
+import { toySpace } from './toySpace.js';
 
 /**
  * A WHOLE WORLD IN TWENTY LINES — two drives, three events, one context
@@ -56,7 +57,10 @@ export function makeToyWorld(id: string, salience: number): WorldAdapter {
     // refuse `Gather`; a prompt built for it must offer these and not those.
     // `Snaffle` is the only REQUIRED param anywhere in the repo.
     actions: [
-      { id: 'Shuffle', core: 'Move', params: [{ id: 'x', type: 'number' }, { id: 'y', type: 'number' }] },
+      // ONE place param, written as ONE named spot — where the forager
+      // continent writes two numbers. Same mind, same `Intent.place`, nothing
+      // shared on the wire (W1-B4).
+      { id: 'Shuffle', core: 'Move', params: [{ id: 'place', type: 'place' }] },
       { id: 'Snaffle', core: 'Take', params: [{ id: 'targetId', type: 'ref', required: true }] },
       {
         id: 'Nibble',
@@ -80,10 +84,17 @@ export function makeToyWorld(id: string, salience: number): WorldAdapter {
       adultAge: 40,
       seasonAt: () => 'always',
     },
+    // FOUR NAMED SPOTS AND THE WAYS BETWEEN THEM — no plane, no coordinates,
+    // no compass. See `toySpace.ts`.
+    space: toySpace,
     cognitionDefaults: {
       thinkInterval: { base: 7, scale: 1, weights: [] },
       consolidateInterval: { base: 11, scale: 1, weights: [] },
       memoryHotCapacity: { base: 32, scale: 1, weights: [] },
+      // Two ticks and one hop: nothing here shares a unit with the forager's
+      // 600 and 8, so a miner that still held either would show up at once.
+      successionWindowTicks: 2,
+      successionRadius: 1,
     },
   });
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AgentMind, ReflexMind, foragerAdapter } from '../src/index.js';
+import { AgentMind, ReflexMind, at, foragerAdapter } from '../src/index.js';
 import type { KnowledgeRule, ThinkInput } from '../src/index.js';
 import { CTX, mem, resetIds } from './helpers.js';
 
@@ -71,8 +71,7 @@ describe('ReflexMind consuming knowledge', () => {
         needs: { hunger: 70, rest: 10, safety: 5, socialConnection: 10 },
         health: 90,
         sick: false,
-        x: 0,
-        y: 0,
+        place: at(0, 0),
         inventory: {},
         context: CTX,
         ...overrides,

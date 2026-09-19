@@ -1,37 +1,29 @@
-import { hashSeed, mulberry32 } from '../body/prng.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
-import { accessBackend } from './budget.js';
-import type { BackendAccess } from './budget.js';
-import type { BlindTrace, TraceKey } from './types.js';
+import type { OpenedBackend } from './budget.js';
+import type { TracePair } from './pairing.js';
 
 /**
  * THE PAIRWISE JUDGE — blind aliveness A/B (audit 04 §5 #9).
  *
- * A judge is shown two traces, left and right, with no arm label anywhere, and
- * says which one reads like something alive. Three disciplines make the number
- * it produces mean anything:
+ * A judge is shown two traces, left and right, and says which one reads like
+ * something alive. This module contains judges and NOTHING else: it imports no
+ * arm key, no pairing, no world and no door. That is the point — "a judge
+ * cannot read which arm it is looking at" is a claim about what this file can
+ * reach, and round 1's version imported the key to split the groups.
+ *
+ * Three disciplines make the number it produces mean anything, and two of them
+ * live in `aggregate.ts`:
  *
  *   POSITION BIAS IS MEASURED, NOT ASSUMED AWAY. Every pair is judged twice,
- *   once in each order. A judge that simply prefers "left" shows up as a left
- *   rate near 1 and a flip rate near 1, and the aggregate says so beside the
- *   win rate rather than quietly inflating it.
- *   THE INTERVAL SHIPS WITH THE RATE. A 100% win rate over 4 decisions is not a
- *   result; the Wilson interval on it says so.
- *   PER-CRITERION, NOT ONE VIBE. Five criteria, scored separately, because the
- *   campaign rule is that the critic must say WHY — and "does not know what it
- *   should not" is the one this whole instrument exists for.
+ *   once in each order, and the PAIR is the unit of analysis.
+ *   THE INTERVAL SHIPS WITH THE RATE.
+ *   PER-CRITERION, NOT ONE VIBE. Five criteria, scored separately.
  */
 
 export const TRACE_CRITERIA = ['pursues', 'consistent', 'reactive', 'social', 'ignorance'] as const;
 export type TraceCriterion = (typeof TRACE_CRITERIA)[number];
 
 export type Side = 'left' | 'right' | 'tie';
-
-export interface TracePair {
-  pairId: string;
-  left: BlindTrace;
-  right: BlindTrace;
-}
 
 export interface TraceJudgement {
   preference: Side;
@@ -44,55 +36,6 @@ export interface TraceJudgement {
 export interface ITraceJudge {
   readonly id: string;
   compare(pair: TracePair): Promise<TraceJudgement>;
-}
-
-/**
- * Shuffle traces into pairs with seeded randomness, one from each of two
- * groups. Left/right is randomised per pair; the aggregate then judges each
- * pair in BOTH orders anyway, so the randomisation is about which trace a judge
- * meets first, not about cancelling bias.
- */
-export function pairTraces(
-  traces: readonly BlindTrace[],
-  key: readonly TraceKey[],
-  seed: string,
-): TracePair[] {
-  const byId = new Map(traces.map((t) => [t.traceId, t]));
-  const a = key.filter((k) => k.arm === 'A').map((k) => byId.get(k.traceId)).filter(isTrace);
-  const b = key.filter((k) => k.arm === 'B').map((k) => byId.get(k.traceId)).filter(isTrace);
-  const rng = mulberry32(hashSeed(`pair:${seed}`));
-  shuffle(a, rng);
-  shuffle(b, rng);
-  const pairs: TracePair[] = [];
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) {
-    const one = a[i]!;
-    const other = b[i]!;
-    const swap = rng() < 0.5;
-    pairs.push({
-      pairId: `pair-${(i + 1).toString(36).padStart(3, '0')}`,
-      left: swap ? other : one,
-      right: swap ? one : other,
-    });
-  }
-  // A pair carries two traces and nothing else. The arm is read exactly once,
-  // above, to split the two groups; it is not on `TracePair`, so a judge cannot
-  // reach it however it is written.
-  return pairs;
-}
-
-function isTrace(t: BlindTrace | undefined): t is BlindTrace {
-  return t !== undefined;
-}
-
-function shuffle<T>(items: T[], rng: () => number): void {
-  for (let i = items.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    const a = items[i]!;
-    const b = items[j]!;
-    items[i] = b;
-    items[j] = a;
-  }
 }
 
 // ─── The mock judge ──────────────────────────────────────────────────────────
@@ -118,7 +61,6 @@ export interface MockTraceJudgeOptions {
  */
 export class MockTraceJudge implements ITraceJudge {
   readonly id: string;
-  readonly free = true;
   private readonly weights: Record<TraceCriterion, number>;
   private readonly tieBand: number;
 
@@ -162,9 +104,7 @@ export class MockTraceJudge implements ITraceJudge {
       weight += w;
       if (side === 'left') weighted += w;
       else if (side === 'right') weighted -= w;
-      if (side !== 'tie') {
-        reasons.push(`${criterion}: ${side} (${round(left)} vs ${round(right)})`);
-      }
+      if (side !== 'tie') reasons.push(`${criterion}: ${side} (${round(left)} vs ${round(right)})`);
     }
     const preference: Side = weighted > 0 ? 'left' : weighted < 0 ? 'right' : 'tie';
     return Promise.resolve({
@@ -200,18 +140,20 @@ const JUDGE_SYSTEM = [
 ].join('\n');
 
 /**
- * The paid path. It takes a `BackendAccess` and goes through `accessBackend`
- * itself, so a judge cannot reach a provider without a budget however it was
- * constructed. Not exercised anywhere in this repo's tests — the mock judge
- * proves the plumbing.
+ * The paid path. Its constructor asks for an `OpenedBackend` — a type only
+ * `door.ts` can produce — so a judge cannot be built around a client somebody
+ * constructed themselves, budget or no budget.
+ *
+ * `pair.pairId` is deliberately NOT sent: a bookkeeping id in the prompt is one
+ * more thing a reader could correlate with something.
  */
 export class LlmTraceJudge implements ITraceJudge {
   readonly id: string;
   private readonly backend: IMindBackend;
 
-  constructor(access: BackendAccess) {
-    this.backend = accessBackend(access);
-    this.id = `llm-trace-judge:${this.backend.modelId}`;
+  constructor(backend: OpenedBackend) {
+    this.backend = backend;
+    this.id = `llm-trace-judge:${backend.modelId}`;
   }
 
   async compare(pair: TracePair): Promise<TraceJudgement> {
@@ -233,8 +175,9 @@ const EMPTY_INPUT = {
     needs: {},
     health: 100,
     sick: false,
-    x: 0,
-    y: 0,
+    // `PlaceRef` is opaque and weakly branded, so the emptiest legal place is an
+    // empty object. A judge is nowhere, and saying so beats inventing a spot.
+    place: {},
     inventory: {},
     context: {},
   },
@@ -290,3 +233,5 @@ function blankCriteria(): Record<TraceCriterion, Side> {
 function round(v: number): number {
   return Math.round(v * 1000) / 1000;
 }
+
+export type { TracePair };

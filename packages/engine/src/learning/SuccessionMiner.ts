@@ -1,5 +1,6 @@
 import type { WorldAdapter } from '../contract/adapter.js';
 import type { EventId } from '../contract/ids.js';
+import type { PlaceRef } from '../contract/space.js';
 import type { EvidenceSnapshot, MemoryRecord } from '../contract/types.js';
 import type { EvidenceReport, ILearner, ProvenanceLevel } from './ILearner.js';
 import { ProvenanceSample, snapshotOf } from './ILearner.js';
@@ -7,8 +8,7 @@ import { ProvenanceSample, snapshotOf } from './ILearner.js';
 interface PendingCause {
   key: string;
   tick: number;
-  x?: number;
-  y?: number;
+  place?: PlaceRef;
   /** The cause episode itself: an effect can arrive after the memory is gone. */
   memory: EvidenceSnapshot;
   /** Pair keys already credited for this cause instance. */
@@ -16,9 +16,9 @@ interface PendingCause {
 }
 
 export interface SuccessionMinerOptions {
-  /** Effect must occur within this many ticks of the cause. */
+  /** Effect must occur within this many ticks of the cause. Default: the world's. */
   windowTicks?: number;
-  /** When both memories carry coords, they must be this close. */
+  /** When both memories carry a place, they must be this near. Default: the world's. */
   radius?: number;
   /** Overrides the world's own list of events that carry no causal signal. */
   exclude?: EventId[];
@@ -35,6 +35,7 @@ export interface SuccessionMinerOptions {
  * unanswered are the contradictions.
  */
 export class SuccessionMiner implements ILearner {
+  private readonly world: WorldAdapter;
   private readonly window: number;
   private readonly radius: number;
   private readonly exclude: Set<EventId>;
@@ -47,8 +48,13 @@ export class SuccessionMiner implements ILearner {
   private keyParts = new Map<string, { type: EventId; objectKind?: MemoryRecord['objectKind'] }>();
 
   constructor(world: WorldAdapter, options: SuccessionMinerOptions = {}) {
-    this.window = options.windowTicks ?? 600;
-    this.radius = options.radius ?? 8;
+    this.world = world;
+    // How near in time and in space two things have to be to look like cause
+    // and effect is a fact about a WORLD, not about mining: 600 ticks is a
+    // quarter of the forager day and 8 is eight of its units, and both used to
+    // be written here (W1-B3 verifier, what B4 inherits).
+    this.window = options.windowTicks ?? world.cognitionDefaults.successionWindowTicks;
+    this.radius = options.radius ?? world.cognitionDefaults.successionRadius;
     this.exclude = new Set(
       options.exclude ?? world.events.filter((e) => e.causal === false).map((e) => e.id),
     );
@@ -68,15 +74,10 @@ export class SuccessionMiner implements ILearner {
     // This memory is a potential EFFECT of every live pending cause.
     for (const cause of this.pending) {
       if (cause.key === key) continue;
-      if (
-        cause.x !== undefined &&
-        cause.y !== undefined &&
-        memory.x !== undefined &&
-        memory.y !== undefined
-      ) {
-        const dx = cause.x - memory.x;
-        const dy = cause.y - memory.y;
-        if (dx * dx + dy * dy > this.radius * this.radius) continue;
+      // Near the same place, when both are somewhere at all — and WHAT "near"
+      // means is the world's arithmetic, not this file's (W1-B4).
+      if (cause.place !== undefined && memory.place !== undefined) {
+        if (!this.world.space.within(cause.place, memory.place, this.radius)) continue;
       }
       const pairKey = `${cause.key}>${key}`;
       if (cause.matched.has(pairKey)) continue;
@@ -96,8 +97,7 @@ export class SuccessionMiner implements ILearner {
     this.pending.push({
       key,
       tick: memory.tick,
-      x: memory.x,
-      y: memory.y,
+      place: memory.place,
       memory: snapshotOf(memory),
       matched: new Set(),
     });

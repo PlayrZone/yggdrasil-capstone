@@ -3,6 +3,7 @@ import { defineForagerWorld } from './define.js';
 import { FORAGER_ACTIONS } from './actions.js';
 import { FORAGER_KINDS } from './kinds.js';
 import { foragerReflexPolicy } from './reflexPolicy.js';
+import { foragerSpace } from './space.js';
 import { NEED_CRITICAL, NEED_PRESSING } from './types.js';
 import { seasonAt } from '../../body/index.js';
 
@@ -43,11 +44,20 @@ export const foragerAdapter: WorldAdapter = defineForagerWorld({
   // prompt, so referenced rather than copied) + ReflexMind's NEED_THRESHOLD.
   // ORDER IS LOAD BEARING: the reflex policy scans drives in this order and a
   // tie goes to the later one.
+  // `promptLabel` is the word the needs paragraph has always used where it
+  // differs from the id — the paragraph is rendered from this table now rather
+  // than typed out in `prompt.ts` (W1-B3 verifier, round 2, backlog 2).
   drives: [
     { id: 'hunger', pressingAt: NEED_PRESSING, criticalAt: NEED_CRITICAL, actsAt: 48 },
     { id: 'rest', pressingAt: NEED_PRESSING, criticalAt: NEED_CRITICAL, actsAt: 70 },
     { id: 'safety', pressingAt: NEED_PRESSING, criticalAt: NEED_CRITICAL, actsAt: 60 },
-    { id: 'socialConnection', pressingAt: NEED_PRESSING, criticalAt: NEED_CRITICAL, actsAt: 74 },
+    {
+      id: 'socialConnection',
+      pressingAt: NEED_PRESSING,
+      criticalAt: NEED_CRITICAL,
+      actsAt: 74,
+      promptLabel: 'social',
+    },
   ],
 
   // learning/ContextMiner.ts + learning/OutcomeMiner.ts FEATURES, with the
@@ -102,7 +112,15 @@ export const foragerAdapter: WorldAdapter = defineForagerWorld({
         ['ambition', 0.5],
       ],
     },
+    // learning/SuccessionMiner.ts's own defaults — a quarter of this world's
+    // day, and eight of this world's units. Both were constants in the mind
+    // (W1-B3 verifier, what B4 inherits); the miner now asks the world.
+    successionWindowTicks: 600,
+    successionRadius: 8,
   },
+
+  // The plane this continent is, and the only way anything may ask about it.
+  space: foragerSpace,
 
   /**
    * `salience` — memory/importance.ts BASE.

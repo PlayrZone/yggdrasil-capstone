@@ -1,6 +1,7 @@
 import { actionVocabulary, argumentShapes } from '../contract/actions.js';
 import type { WorldAdapter } from '../contract/adapter.js';
 import type { DriveLevels } from '../contract/ids.js';
+import type { PlaceRef } from '../contract/space.js';
 import type { KnowledgeRecord, ThinkInput } from '../contract/types.js';
 import { narrativeRefOf } from '../narrative/NarrativeStore.js';
 
@@ -50,7 +51,7 @@ export function buildThinkPrompt(input: ThinkInput, world: WorldAdapter): ThinkP
   const needs = snapshot.needs;
   const intentVocab = actionVocabulary(world);
   const argShapes = argumentShapes(world);
-  // The header quotes one pair of thresholds for all four drives, which is what
+  // The header quotes one pair of thresholds for all the drives, which is what
   // this world's four share. B5 renders the paragraph per drive from the
   // lexicon; until then the first drive's numbers are the ones it always was.
   const pressing = world.drives[0]?.pressingAt ?? 0;
@@ -99,7 +100,7 @@ export function buildThinkPrompt(input: ThinkInput, world: WorldAdapter): ThinkP
     `Why you are thinking now: ${trigger}.`,
     ``,
     `NEEDS (0 satisfied, 100 desperate — ${pressing}+ pressing, ${critical}+ critical):`,
-    `  hunger ${fmt(pressure(needs, 'hunger'))}, rest ${fmt(pressure(needs, 'rest'))}, safety ${fmt(pressure(needs, 'safety'))}, social ${fmt(pressure(needs, 'socialConnection'))}`,
+    `  ${pressuresText(world, needs)}`,
     `HEALTH ${fmt(snapshot.health)}${snapshot.sick ? ' (SICK)' : ''}. It is ${worldView.season}, ${worldView.night ? 'night' : 'day'}.`,
     `INVENTORY: ${inventoryText(snapshot.inventory)}`,
     ``,
@@ -117,7 +118,7 @@ export function buildThinkPrompt(input: ThinkInput, world: WorldAdapter): ThinkP
       : ``,
     `STORIES YOU CARRY (the tales your people tell — some you saw, some you were told):`,
     storiesText(input.stories),
-    placeText(input.sacredPlace, snapshot.x, snapshot.y),
+    placeText(world, input.sacredPlace, snapshot.place),
     ``,
     `WHAT YOU SEE (within range):`,
     perceptionText(worldView),
@@ -173,18 +174,21 @@ function storiesText(stories: ThinkInput['stories']): string {
     .join('\n');
 }
 
-/** A place a carried story pulls the being toward — rendered as a felt pull, never "sacred". */
-function placeText(place: { x: number; y: number } | undefined, x: number, y: number): string {
-  if (!place) return '';
-  const dist = Math.round(Math.hypot(place.x - x, place.y - y));
-  const dir = compass(place.x - x, place.y - y);
-  return `\nA place from the stories you carry pulls at you — it lies ${dir}, about ${dist} away (toward ${Math.round(place.x)},${Math.round(place.y)}). Whether you go, and what it means to you, is yours to decide.`;
-}
-
-function compass(dx: number, dy: number): string {
-  const ns = dy < -4 ? 'north' : dy > 4 ? 'south' : '';
-  const ew = dx > 4 ? 'east' : dx < -4 ? 'west' : '';
-  return `${ns}${ew}` || 'near here';
+/**
+ * A place a carried story pulls the being toward — rendered as a felt pull,
+ * never "sacred".
+ *
+ * NOT ONE NUMBER OF IT IS THIS FILE'S ANY MORE (W1-B4). How far, which way, and
+ * how a place is written down are three questions put to the world; the
+ * SENTENCE around the answers is still prose, and that is B5's. The forager
+ * continent answers them with the expressions that used to stand here, so these
+ * bytes are the bytes they always were.
+ */
+function placeText(world: WorldAdapter, place: PlaceRef | undefined, self: PlaceRef | undefined): string {
+  if (!place || !self) return '';
+  const dist = Math.round(world.space.distance(self, place));
+  const dir = world.space.direction(self, place);
+  return `\nA place from the stories you carry pulls at you — it lies ${dir}, about ${dist} away (toward ${world.space.label(place)}). Whether you go, and what it means to you, is yours to decide.`;
 }
 
 function fmt(n: number): string {
@@ -192,13 +196,23 @@ function fmt(n: number): string {
 }
 
 /**
- * One drive's pressure out of a snapshot. The four this paragraph names are the
- * four this world declares, so the slot is always there; the narrowing is here
- * rather than over the whole record so that it disappears with the paragraph at
- * B5 rather than hiding in a cast at the top of the function.
+ * EVERY PRESSURE THIS WORLD DECLARES, in its declared order, each named as the
+ * world names it.
+ *
+ * It used to be four drives typed out here and the snapshot indexed by them, so
+ * a world with any other drives yielded `undefined` and `fmt` THREW — the
+ * prompt could not be built at all (W1-B3 verifier, round 2, backlog 2). A
+ * pressure the body reports nothing for now reads `?`: the drive exists here,
+ * this being has no reading of it, and saying `0` would be claiming the one
+ * thing the prompt does not know.
  */
-function pressure(needs: DriveLevels, drive: string): number {
-  return needs[drive] as number;
+function pressuresText(world: WorldAdapter, needs: DriveLevels): string {
+  return world.drives
+    .map((drive) => {
+      const pressure = needs[drive.id];
+      return `${drive.promptLabel ?? drive.id} ${typeof pressure === 'number' ? fmt(pressure) : '?'}`;
+    })
+    .join(', ');
 }
 
 function inventoryText(inv: ThinkInput['snapshot']['inventory']): string {

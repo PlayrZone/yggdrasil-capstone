@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AgentMind, LlmMind, MockMindBackend, ReflexMind, buildThinkPrompt, foragerAdapter, narrativeRefOf } from '../src/index.js';
+import { AgentMind, LlmMind, MockMindBackend, ReflexMind, at, buildThinkPrompt, foragerAdapter, narrativeRefOf } from '../src/index.js';
 import type { IMind, KnowledgeRule, MindOutput, ThinkInput, Utterance } from '../src/index.js';
 import { CTX, mem, resetIds } from './helpers.js';
 
@@ -49,8 +49,8 @@ function speakerMind(mind?: IMind): AgentMind {
     { rule: BERRY_NEAR_WATER, confidence: 0.8, evidenceCount: 6, contradictionCount: 0, sourceMemoryIds: [] },
     10,
   );
-  agent.narratives.remember(STORY_ID, STORY_TEXT, 12, 34, 5, true);
-  agent.narratives.seed(SEEDED_ID, SEEDED_TEXT, 0, 0, 1, 6);
+  agent.narratives.remember(STORY_ID, STORY_TEXT, at(12, 34), 5, true);
+  agent.narratives.seed(SEEDED_ID, SEEDED_TEXT, at(0, 0), 1, 6);
   return agent;
 }
 
@@ -64,15 +64,14 @@ function thinkInput(agent: AgentMind): ThinkInput {
       needs: { hunger: 10, rest: 10, safety: 5, socialConnection: 80 },
       health: 90,
       sick: false,
-      x: 0,
-      y: 0,
+      place: at(0, 0),
       inventory: {},
       context: CTX,
     },
     recalledMemories: [],
     knowledge: agent.knowledge.held(),
     relationships: new Map(),
-    worldView: { tick: 500, night: false, season: 'spring', agents: [{ id: LISTENER, x: 2, y: 0 }], resources: [], structures: [] },
+    worldView: { tick: 500, night: false, season: 'spring', agents: [{ id: LISTENER, place: at(2, 0) }], resources: [], structures: [] },
     goals: [],
     trigger: 'periodic',
     stories: agent.narratives.all().map((n) => ({ id: n.id, text: n.text, firsthand: n.firsthand })),

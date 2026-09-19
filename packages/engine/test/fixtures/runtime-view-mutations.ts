@@ -1,5 +1,6 @@
 /* eslint-disable */
 import type { RuntimeView } from '../../src/runner/RuntimeView.js';
+import { at } from '../../src/worlds/forager/space.js';
 
 /**
  * NOT A RUNTIME TEST — a type-level one. `runner-view-readonly.test.ts`
@@ -82,9 +83,9 @@ export function mutations(view: RuntimeView): void {
 
   // 17–19: narratives.
   // @ts-expect-error a report may not put a story in a head
-  mind.narratives.remember('a', 'b', 0, 0, 0, true);
+  mind.narratives.remember('a', 'b', at(0, 0), 0, true);
   // @ts-expect-error …nor seed one
-  mind.narratives.seed('a', 'b', 0, 0, 0, 1);
+  mind.narratives.seed('a', 'b', at(0, 0), 0, 1);
   // @ts-expect-error …nor rewrite the words of one
   mind.narratives.all()[0]!.text = 'x';
 

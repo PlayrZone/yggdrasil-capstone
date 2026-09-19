@@ -9,6 +9,7 @@ import type {
   SimEvent,
   WorldView,
 } from './contract.js';
+import { at } from '../worlds/forager/space.js';
 import { isNight } from './WorldRegularities.js';
 import { seasonAt } from './Climate.js';
 import { CLASSIC_SCALE } from '../world/geography.js';
@@ -83,19 +84,19 @@ export class PerceptionSystem {
       if (entity.id === agentEntity.id) continue;
       if (!(entity.components['GahallianBody'] as GahallianBody).alive) continue;
       const t = entity.components['Transform2D'] as Transform2D;
-      view.agents.push({ id: entity.id, x: t.x, y: t.y });
+      view.agents.push({ id: entity.id, place: at(t.x, t.y) });
     }
     for (const entity of world.spatial.within('ResourceNode', self.x, self.y, r)) {
       if (entity.id === agentEntity.id) continue;
       const node = entity.components['ResourceNode'] as ResourceNode;
       const t = entity.components['Transform2D'] as Transform2D;
-      view.resources.push({ id: entity.id, kind: node.kind, x: t.x, y: t.y, stock: node.stock });
+      view.resources.push({ id: entity.id, kind: node.kind, place: at(t.x, t.y), stock: node.stock });
     }
     for (const entity of world.spatial.within('Structure', self.x, self.y, r)) {
       if (entity.id === agentEntity.id) continue;
       const structure = entity.components['Structure'] as Structure;
       const t = entity.components['Transform2D'] as Transform2D;
-      view.structures.push({ id: entity.id, kind: structure.kind, x: t.x, y: t.y });
+      view.structures.push({ id: entity.id, kind: structure.kind, place: at(t.x, t.y) });
     }
     return view;
   }
@@ -111,8 +112,10 @@ export class PerceptionSystem {
       needs: { ...body.needs },
       health: body.health,
       sick: body.sickUntil > tick,
-      x: t.x,
-      y: t.y,
+      // THE BODY STILL KNOWS WHERE IT IS (W1-B4) — it is this world's physics.
+      // What crosses to a mind is a handle this world minted; the mind can ask
+      // `SpaceOps` about it and can read nothing off it.
+      place: at(t.x, t.y),
       inventory: { ...body.inventory },
       context: this.contextAt(world, t.x, t.y, tick),
     };

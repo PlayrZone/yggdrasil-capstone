@@ -1,4 +1,15 @@
-import type { KnowledgeRecord, MemoryRecord, ThinkInput } from '../contract/types.js';
+import type { WorldAdapter } from '../contract/adapter.js';
+import { inlinePlace, liftPlace } from '../contract/wire.js';
+import type {
+  AgentSnapshot,
+  KnowledgeRecord,
+  MemoryRecord,
+  ObservedAgent,
+  ObservedResource,
+  ObservedStructure,
+  ThinkInput,
+  WorldView,
+} from '../contract/types.js';
 import type {
   AttemptPromptDelta,
   CognitionAttempt,
@@ -34,31 +45,94 @@ export function serializeThinkInput(input: ThinkInput): SerializedThinkInput {
   const nonFinite: NonFiniteSubstitution[] = [];
   const frozen = freezeJson(
     {
-      ...rest,
+      // EVERY PLACE WRITTEN BACK AS THE WORLD'S OWN FIELDS, where they have
+      // always been (W1-B4). A `PlaceRef`'s runtime value IS those fields, so
+      // this needs no adapter and the row is byte-identical to one recorded
+      // before the mind stopped holding coordinates — `COGNITION_SCHEMA_VERSION`
+      // is unchanged because a v3 row still means exactly one thing.
+      // `sacredPlace`/`tragedyPlaces` are places themselves rather than records
+      // carrying one, so they store as they always did, untouched.
+      //
+      // WRITTEN IN THE INPUT'S OWN KEY ORDER, which is why this walks `rest`
+      // rather than naming the two fields it rewrites: pulling `snapshot` out
+      // and putting it back would move it to the end of the row, and a row's
+      // key order is part of what "byte-identical" means.
+      ...withPlacesWritten(rest),
       knowledge: knowledge.map(serializeKnowledge),
       relationships: [...relationships.entries()],
       recalledMemories: recalledMemories.map(serializeMemory),
-    },
+    } as unknown as SerializedThinkInput,
     (substitution) => nonFinite.push(substitution),
   );
   return nonFinite.length > 0 ? { ...frozen, nonFinite } : frozen;
 }
 
-/** The inverse — what a replay hands back to `buildThinkPrompt`. */
-export function deserializeThinkInput(stored: SerializedThinkInput): ThinkInput {
+/**
+ * The inverse — what a replay hands back to `buildThinkPrompt`.
+ *
+ * `world` is what turns the stored fields back into opaque places, and only it
+ * knows which fields those were. It is OPTIONAL for one reason, written down
+ * rather than left to be discovered: a caller that only reads what a being was
+ * shown — its needs, its knowledge, what it perceived — does not need a place
+ * at all, and requiring an adapter would break every such caller for nothing.
+ * Without one the input carries no places and `buildThinkPrompt` renders no
+ * pull toward a story's site; with one the replay is byte-identical.
+ */
+export function deserializeThinkInput(stored: SerializedThinkInput, world?: WorldAdapter): ThinkInput {
   // Substitutions are written back in place, so a row that carries any is copied
   // first: a caller's stored record must not be mutated, and replaying the same
   // row twice must find its placeholders where it left them.
   const source = stored.nonFinite && stored.nonFinite.length > 0 ? snapshotJson(stored) : stored;
   const restored = restoreNonFinite(source);
+  assertReplayable(source, restored, world);
   const { relationships, recalledMemories, nonFinite: _nonFinite, ...rest } = source;
-  const input: ThinkInput = {
-    ...rest,
+  const lift = <T>(row: Record<string, unknown>): T => (world ? liftPlace<T>(world, row) : (row as T));
+  return {
+    // Key order kept, as on the way out: a row read and written again is the
+    // same row.
+    ...(withPlacesLifted(rest, lift) as unknown as Omit<ThinkInput, 'relationships' | 'recalledMemories'>),
     relationships: new Map(relationships.map(([id, r]) => [id, { ...r }])),
-    recalledMemories: recalledMemories.map(deserializeMemory),
+    recalledMemories: recalledMemories.map((m) => deserializeMemory(m, lift)),
   };
-  assertReplayable(input, restored);
-  return input;
+}
+
+/** The records of a think input that CARRY a place, with it written out. */
+function withPlacesWritten(rest: Omit<ThinkInput, 'relationships' | 'recalledMemories' | 'knowledge'>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(rest)) {
+    if (key === 'snapshot') out[key] = inlinePlace(value as AgentSnapshot);
+    else if (key === 'worldView') {
+      const seen = value as WorldView;
+      out[key] = {
+        ...seen,
+        agents: seen.agents.map(inlinePlace),
+        resources: seen.resources.map(inlinePlace),
+        structures: seen.structures.map(inlinePlace),
+      };
+    } else out[key] = value;
+  }
+  return out;
+}
+
+/** …and back. */
+function withPlacesLifted(
+  rest: Record<string, unknown>,
+  lift: <T>(row: Record<string, unknown>) => T,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(rest)) {
+    if (key === 'snapshot') out[key] = lift<AgentSnapshot>(value as Record<string, unknown>);
+    else if (key === 'worldView') {
+      const seen = value as { agents: unknown[]; resources: unknown[]; structures: unknown[] };
+      out[key] = {
+        ...seen,
+        agents: seen.agents.map((a) => lift<ObservedAgent>(a as Record<string, unknown>)),
+        resources: seen.resources.map((r) => lift<ObservedResource>(r as Record<string, unknown>)),
+        structures: seen.structures.map((s) => lift<ObservedStructure>(s as Record<string, unknown>)),
+      };
+    } else out[key] = value;
+  }
+  return out;
 }
 
 /**
@@ -112,12 +186,18 @@ function serializeKnowledge(k: KnowledgeRecord): SerializedKnowledgeRecord {
 
 function serializeMemory(m: MemoryRecord): SerializedMemoryRecord {
   const { embedding, ...rest } = m;
-  return embedding ? { ...rest, embedding: Array.from(embedding) } : { ...rest };
+  const written = inlinePlace(rest);
+  if (embedding) written['embedding'] = Array.from(embedding);
+  return written as unknown as SerializedMemoryRecord;
 }
 
-function deserializeMemory(m: SerializedMemoryRecord): MemoryRecord {
+function deserializeMemory(
+  m: SerializedMemoryRecord,
+  lift: <T>(row: Record<string, unknown>) => T,
+): MemoryRecord {
   const { embedding, ...rest } = m;
-  return embedding ? { ...rest, embedding: Float32Array.from(embedding) } : { ...rest };
+  const record = lift<MemoryRecord>(rest as Record<string, unknown>);
+  return embedding ? { ...record, embedding: Float32Array.from(embedding as number[]) } : record;
 }
 
 const NON_FINITE: Record<NonFiniteToken, number> = {
@@ -220,30 +300,44 @@ function resolvePath(root: object, path: string): { holder: Record<string, numbe
  * would refuse the very rows this record exists to preserve. Only a number that
  * was genuinely lost — stored `null`, or a field that is not there at all — is.
  */
-function assertReplayable(input: ThinkInput, restored: ReadonlySet<string>): void {
+function assertReplayable(
+  stored: SerializedThinkInput,
+  restored: ReadonlySet<string>,
+  world: WorldAdapter | undefined,
+): void {
   const num = (v: unknown, path: string, label = path.slice(2)): void => {
     if (typeof v === 'number' && (Number.isFinite(v) || restored.has(path))) return;
     throw new Error(`cognition record: ${label} is ${String(v)}, not a finite number — the row cannot be replayed`);
   };
-  const s = input.snapshot;
-  num(s.x, '$.snapshot.x');
-  num(s.y, '$.snapshot.y');
-  num(s.health, '$.snapshot.health');
-  num(s.ageTicks, '$.snapshot.ageTicks');
-  for (const key of ['hunger', 'rest', 'safety', 'socialConnection'] as const) {
-    num(s.needs?.[key], `$.snapshot.needs.${key}`);
+  // WHICH FIELDS A PLACE IS, AND THEIR ORDER, ARE THE WORLD'S (W1-B4) — the
+  // paths are unchanged for the forager plane (`$.snapshot.x`, `$.sacredPlace.y`)
+  // because those are the fields it writes a place with. Checked as STORED,
+  // because that is the form `nonFinite` names and the form a row is read from.
+  const numbersIn = (row: Record<string, unknown> | undefined, at: string): void => {
+    if (!row || !world) return;
+    for (const field of world.space.fields) num(row[field.id], `${at}.${field.id}`);
+  };
+  const s = stored.snapshot as unknown as Record<string, unknown>;
+  numbersIn(s, '$.snapshot');
+  num(s['health'], '$.snapshot.health');
+  num(s['ageTicks'], '$.snapshot.ageTicks');
+  // Every pressure this world declares. The four named by hand here were the
+  // forager's, and a world with others simply went unchecked.
+  for (const drive of world?.drives ?? []) {
+    num((s['needs'] as Record<string, unknown> | undefined)?.[drive.id], `$.snapshot.needs.${drive.id}`);
   }
-  for (const [key, value] of Object.entries(s.traits ?? {})) num(value, `$.snapshot.traits.${key}`);
+  for (const [key, value] of Object.entries((s['traits'] ?? {}) as Record<string, unknown>)) {
+    num(value, `$.snapshot.traits.${key}`);
+  }
   // An inventory count renders too, and a lost one drops the item from the line
   // silently rather than throwing — the quietest way for a replay to differ.
-  for (const [key, value] of Object.entries(s.inventory ?? {})) num(value, `$.snapshot.inventory.${key}`);
-  num(input.worldView?.tick, '$.worldView.tick');
-  input.knowledge.forEach((k, i) => {
+  for (const [key, value] of Object.entries((s['inventory'] ?? {}) as Record<string, unknown>)) {
+    num(value, `$.snapshot.inventory.${key}`);
+  }
+  num(stored.worldView?.tick, '$.worldView.tick');
+  stored.knowledge.forEach((k, i) => {
     num(k.confidence, `$.knowledge[${i}].confidence`, `knowledge[${k.id}].confidence`);
     num(k.evidenceCount, `$.knowledge[${i}].evidenceCount`, `knowledge[${k.id}].evidenceCount`);
   });
-  if (input.sacredPlace) {
-    num(input.sacredPlace.x, '$.sacredPlace.x');
-    num(input.sacredPlace.y, '$.sacredPlace.y');
-  }
+  numbersIn(stored.sacredPlace as Record<string, unknown> | undefined, '$.sacredPlace');
 }

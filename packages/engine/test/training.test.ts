@@ -11,6 +11,7 @@ import {
   buildThinkPrompt as buildThinkPromptIn,
   cognitionToExample,
   curateCorpus,
+  encodeIntent,
   evalJsonValidity,
   foragerAdapter,
   leakTrapBattery,
@@ -266,11 +267,16 @@ describe('validity: the gate bites past the execution caps', () => {
   });
 
   it('keeps a number that is merely odd — absent, null and wrong-typed stay ignored', () => {
-    expect(parseMindOutput('{"plan":[{"kind":"MoveTo","x":null,"y":5}]}').plan[0]).toEqual({ kind: 'MoveTo', y: 5 });
-    expect(parseMindOutput('{"plan":[{"kind":"MoveTo","x":"far","y":5}]}').plan[0]).toEqual({ kind: 'MoveTo', y: 5 });
+    // W1-B4: compared as the WIRE writes them, which is the form the body is
+    // handed and a row stores. Half a place is still half a place — the model
+    // offered one coordinate and the other never existed.
+    const wire = (raw: string): Record<string, unknown> =>
+      encodeIntent(foragerAdapter, parseMindOutput(raw).plan[0]!);
+    expect(wire('{"plan":[{"kind":"MoveTo","x":null,"y":5}]}')).toEqual({ kind: 'MoveTo', y: 5 });
+    expect(wire('{"plan":[{"kind":"MoveTo","x":"far","y":5}]}')).toEqual({ kind: 'MoveTo', y: 5 });
     // -0 is finite and exact: it is kept as the model wrote it, not rounded away.
-    const negZero = parseMindOutput('{"plan":[{"kind":"MoveTo","x":-0,"y":0}]}').plan[0]!;
-    expect(Object.is(negZero.x, -0)).toBe(true);
+    const negZero = wire('{"plan":[{"kind":"MoveTo","x":-0,"y":0}]}');
+    expect(Object.is(negZero['x'], -0)).toBe(true);
     expect(parseMindOutput('{"plan":[{"kind":"Gather","targetId":9007199254740991}]}').plan[0]!.targetId).toBe(9007199254740991);
   });
 

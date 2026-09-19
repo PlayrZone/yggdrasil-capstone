@@ -87,13 +87,22 @@ export interface KindSchema {
  * which one a model is told about is observable, so the order is a stated rule
  * (`PARAM_TYPE_ORDER`) rather than whichever table happened to be written first.
  *
- * `number` carries `x`/`y` today. B4 replaces both with a single `place`, at
- * which point no coordinate reaches a mind at all.
+ * `place` is the one type whose WIRE FORM is world data rather than a single
+ * field: it is written as `SpaceOps.fields`, which is `x,y` on the forager
+ * plane and a named spot in a world that has no coordinates (W1-B4).
  */
-export type ParamType = 'number' | 'ref' | 'kind' | 'enum' | 'duration' | 'speech';
+export type ParamType = 'place' | 'number' | 'ref' | 'kind' | 'enum' | 'duration' | 'speech';
 
-/** Arguments are read type by type, in this order. See `ParamType`. */
+/**
+ * Arguments are read type by type, in this order. See `ParamType`.
+ *
+ * `place` leads because the two coordinates it replaced led: which of two
+ * illegal arguments a model is told about is decided here, and `{"kind":"Eat",
+ * "objectKind":"plutonium","x":1e999}` has always been answered `bad-number`
+ * about `x` rather than `bad-arg` about the plutonium.
+ */
 export const PARAM_TYPE_ORDER: readonly ParamType[] = [
+  'place',
   'number',
   'ref',
   'kind',
@@ -125,6 +134,17 @@ export interface RefParam extends ParamBase {
   readonly type: 'ref';
 }
 
+/**
+ * WHERE THE ACT IS AIMED. The mind carries one opaque `PlaceRef` here; the wire
+ * carries whatever `SpaceOps.fields` says this world writes a place as, in that
+ * order — `x`,`y` on the forager plane, a spot id in a world with no plane.
+ * The codec between the two is `contract/wire.ts`, at the parser edge and at
+ * the body edge, and nowhere in between.
+ */
+export interface PlaceParam extends ParamBase {
+  readonly type: 'place';
+}
+
 /** One of the world's kinds, optionally only those carrying a tag. */
 export interface KindParam extends ParamBase {
   readonly type: 'kind';
@@ -149,7 +169,17 @@ export interface SpeechParam extends ParamBase {
   readonly type: 'speech';
 }
 
-export type ParamSchema = NumberParam | RefParam | KindParam | EnumParam | SpeechParam;
+export type ParamSchema = PlaceParam | NumberParam | RefParam | KindParam | EnumParam | SpeechParam;
+
+/**
+ * THE FIELDS ONE ARGUMENT IS WRITTEN AS ON THE WIRE. Every param is its own
+ * single field except a place, which is as many fields as this world writes a
+ * place with — so the parser, the prompt's argument paragraph and the body all
+ * agree about `x,y` without any of them containing the letters.
+ */
+export function wireFieldsOf(world: WorldAdapter, param: ParamSchema): readonly ParamSchema[] {
+  return param.type === 'place' ? world.space.fields : [param];
+}
 
 /**
  * HOW AN ACT IS WRITTEN IN THE PROMPT'S ARGUMENT PARAGRAPH (W1-B3 verifier,
@@ -205,7 +235,13 @@ export function argumentShapes(world: WorldAdapter): string[] {
   for (const action of world.actions) {
     const how = action.promptArgs;
     if (how === undefined) continue;
-    const shape = how.shape ?? action.params.filter((p) => p.type !== 'speech').map((p) => p.id).join(',');
+    const shape =
+      how.shape ??
+      action.params
+        .filter((p) => p.type !== 'speech')
+        .flatMap((p) => wireFieldsOf(world, p))
+        .map((p) => p.id)
+        .join(',');
     written.push({
       at: how.at,
       text: `${action.id}{${shape}}${how.gloss === undefined ? '' : ` ${how.gloss}`}`,
@@ -307,6 +343,10 @@ export function checkIntent(world: WorldAdapter, intent: Intent): IntentRefusal 
 
 function paramAccepts(world: WorldAdapter, param: ParamSchema, value: unknown): boolean {
   switch (param.type) {
+    // Only this world can say whether a place is one of its own, and it is
+    // asked about the HANDLE, never about the fields it was written with.
+    case 'place':
+      return world.space.isPlace(value);
     case 'number':
     case 'duration':
     case 'ref': {

@@ -1,11 +1,10 @@
 import { actionForCore, kindsWithTag } from '../contract/actions.js';
 import type { ActionBinding } from '../contract/actions.js';
 import type { WorldAdapter } from '../contract/adapter.js';
-import type { Intent, MindOutput, ThinkInput, Utterance } from '../contract/types.js';
+import type { Intent, MindOutput, ObservedResource, ThinkInput, Utterance } from '../contract/types.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { ThinkPrompt } from '../consciousness/prompt.js';
 import { isInterview, questionIn } from './interview.js';
-import type { FreeBackend } from './budget.js';
 
 /**
  * TWO MOCK MINDS, SO THE INSTRUMENT CAN BE PROVEN WITHOUT SPENDING ANYTHING.
@@ -26,7 +25,6 @@ import type { FreeBackend } from './budget.js';
  */
 
 abstract class ScriptedBackend implements IMindBackend {
-  readonly free = true as const;
   abstract readonly modelId: string;
   protected readonly world: WorldAdapter;
 
@@ -73,7 +71,7 @@ function carriedFood(world: WorldAdapter, input: ThinkInput): string | undefined
 }
 
 /** The first perceived thing this world tags as a place food comes from. */
-function foodSourceInSight(world: WorldAdapter, input: ThinkInput): { id: number; kind: string; x: number; y: number } | undefined {
+function foodSourceInSight(world: WorldAdapter, input: ThinkInput): ObservedResource | undefined {
   const sources = new Set(kindsWithTag(world, 'foodSource'));
   return input.worldView.resources.find((r) => sources.has(r.kind));
 }
@@ -91,7 +89,7 @@ function intentFor(action: ActionBinding | undefined, args: Partial<Intent>): In
 
 // ─── Faithful ────────────────────────────────────────────────────────────────
 
-export class FaithfulMockBackend extends ScriptedBackend implements FreeBackend {
+export class FaithfulMockBackend extends ScriptedBackend {
   readonly modelId = 'mock/faithful';
 
   protected decide(input: ThinkInput): MindOutput {
@@ -112,7 +110,7 @@ export class FaithfulMockBackend extends ScriptedBackend implements FreeBackend 
       return {
         goals: [{ id: 1, description: `ease ${drive}`, need: drive, createdTick: input.worldView.tick }],
         plan: [
-          ...intentFor(actionForCore(this.world, 'Move'), { x: source.x, y: source.y }),
+          ...intentFor(actionForCore(this.world, 'Move'), { place: source.place }),
           ...intentFor(actionForCore(this.world, 'Take'), { targetId: source.id }),
         ],
         utterances,
@@ -182,7 +180,7 @@ const LEAKY_THOUGHTS: readonly string[] = [
   'The others will pay me coins at the market for what I bring.',
 ];
 
-export class OmniscientMockBackend extends ScriptedBackend implements FreeBackend {
+export class OmniscientMockBackend extends ScriptedBackend {
   readonly modelId = 'mock/omniscient';
   private turn = 0;
 
@@ -218,7 +216,11 @@ export class OmniscientMockBackend extends ScriptedBackend implements FreeBacken
       return 'Disease spreads by contagion — tiny germs pass between people, so wash your hands and boil the water.';
     }
     if (has('walked', 'beyond', 'furthest')) {
-      return 'Past the plains there are oceans, deserts and great mountain ranges, and other peoples living in cities there.';
+      // Every omniscient answer has to carry its leak in words the QUESTION did
+      // not supply, now that the echo is stripped before detection. A pretrained
+      // model reaches for exactly these, so the fixture is not made harder by
+      // saying them — it is made honest.
+      return 'Past the plains there are oceans, deserts and great mountain ranges, where kings rule cities and merchants trade at markets.';
     }
     if (has('tokens', 'swapped')) {
       return 'Those are coins. Money has a price for everything, and merchants buy and sell at a market with it.';
@@ -227,7 +229,7 @@ export class OmniscientMockBackend extends ScriptedBackend implements FreeBacken
       return 'That is writing. Scribes set down laws and records in letters so that a king may be obeyed long after.';
     }
     if (has('cold', 'year')) {
-      return 'The earth is tilted, so when it is winter here it is summer on the far side of the world.';
+      return 'The earth is tilted on its axis, so the seasons return in the same order every twelve months, and their winter is our summer.';
     }
     if (has('fire')) {
       return 'You strike flint on iron into dry tinder, catch the spark, and feed the flame with kindling until it burns.';

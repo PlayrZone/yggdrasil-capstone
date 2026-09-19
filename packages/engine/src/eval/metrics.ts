@@ -68,12 +68,10 @@ export interface ArmMetrics {
   fallbackRate: number;
 }
 
-export interface PairedDiff {
+/** One comparable scalar out of an arm's metrics, named. */
+export interface MetricValue {
   metric: string;
-  a: number;
-  b: number;
-  /** a − b. Positive means arm A is higher; whether higher is better is the metric's business. */
-  delta: number;
+  value: number;
 }
 
 /** Ticks within which a reply counts as an answer to a request. */
@@ -171,40 +169,40 @@ function speechMetrics(records: readonly CognitionRecordV2[]): ArmMetrics['speec
   return { spoken: said.length, requests: requests.length, answered, answerRate: rate(answered, requests.length) };
 }
 
-/** The seed-paired difference table. One row per comparable metric. */
-export function pairMetrics(a: ArmMetrics, b: ArmMetrics): PairedDiff[] {
-  const rows: [string, number, number][] = [
-    ['cohortSurvival', a.cohortSurvival, b.cohortSurvival],
-    ['survivalRate', a.survivalRate, b.survivalRate],
-    ['births', a.population.births, b.population.births],
-    ['deaths', a.population.deaths, b.population.deaths],
-    ['thinks', a.thinks, b.thinks],
-    ['planSuccessRate', a.plans.successRate, b.plans.successRate],
-    ['planStepsRejected', a.plans.rejected, b.plans.rejected],
-    ['behaviourEntropy', a.behaviour.shapeEntropy, b.behaviour.shapeEntropy],
-    ['distinctPlanShapes', a.behaviour.distinctShapes, b.behaviour.distinctShapes],
-    ['dietBreadth', a.dietBreadth, b.dietBreadth],
-    ['dispersalMean', a.dispersal.meanUnits, b.dispersal.meanUnits],
-    ['dispersalP90', a.dispersal.p90Units, b.dispersal.p90Units],
-    ['speechAnswerRate', a.speech.answerRate, b.speech.answerRate],
-    ['unparsedRate', a.unparsedRate, b.unparsedRate],
-    ['fallbackRate', a.fallbackRate, b.fallbackRate],
+/**
+ * One arm's comparable scalars, flat and named.
+ *
+ * It returns VALUES, not a difference. Round 1's `pairMetrics(a, b)` subtracted
+ * two already-pooled numbers from ONE seed and called the result "seed-paired";
+ * a paired difference is one difference PER SEED, so the subtraction belongs
+ * where the seeds are known (`ab.ts` → `stats.pairedBootstrap`) and not here.
+ *
+ * Knowledge is deliberately absent: both arms' BODIES mine beliefs and only the
+ * Yggdrasil arm's MIND is shown them, so a head-to-head number would be
+ * measuring the body twice. It is reported per arm with its own flag instead.
+ */
+export function metricValues(m: ArmMetrics): MetricValue[] {
+  const rows: MetricValue[] = [
+    { metric: 'cohortSurvival', value: m.cohortSurvival },
+    { metric: 'survivalRate', value: m.survivalRate },
+    { metric: 'births', value: m.population.births },
+    { metric: 'deaths', value: m.population.deaths },
+    { metric: 'thinks', value: m.thinks },
+    { metric: 'planSuccessRate', value: m.plans.successRate },
+    { metric: 'planStepsRejected', value: m.plans.rejected },
+    { metric: 'behaviourEntropy', value: m.behaviour.shapeEntropy },
+    { metric: 'distinctPlanShapes', value: m.behaviour.distinctShapes },
+    { metric: 'dietBreadth', value: m.dietBreadth },
+    { metric: 'dispersalMean', value: m.dispersal.meanUnits },
+    { metric: 'dispersalP90', value: m.dispersal.p90Units },
+    { metric: 'speechAnswerRate', value: m.speech.answerRate },
+    { metric: 'unparsedRate', value: m.unparsedRate },
+    { metric: 'fallbackRate', value: m.fallbackRate },
   ];
-  const paired = rows.map(([metric, av, bv]) => ({ metric, a: av, b: bv, delta: round(av - bv) }));
-  // Knowledge is reported, never paired: only one arm's mind can read it.
-  for (const cause of causes(a, b)) {
-    paired.push({
-      metric: `deaths:${cause}`,
-      a: a.population.deathsByCause[cause] ?? 0,
-      b: b.population.deathsByCause[cause] ?? 0,
-      delta: (a.population.deathsByCause[cause] ?? 0) - (b.population.deathsByCause[cause] ?? 0),
-    });
+  for (const [cause, n] of Object.entries(m.population.deathsByCause).sort((x, y) => (x[0] < y[0] ? -1 : 1))) {
+    rows.push({ metric: `deaths:${cause}`, value: n });
   }
-  return paired;
-}
-
-function causes(a: ArmMetrics, b: ArmMetrics): string[] {
-  return [...new Set([...Object.keys(a.population.deathsByCause), ...Object.keys(b.population.deathsByCause)])].sort();
+  return rows;
 }
 
 function mean(values: readonly number[]): number {

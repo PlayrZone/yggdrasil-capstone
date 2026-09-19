@@ -10,6 +10,7 @@ import type {
   ThinkTrigger,
   Traits,
 } from '../contract/types.js';
+import { at } from '../worlds/forager/space.js';
 import type { ContextFeatures, Needs, ObjectKind, Season } from '../worlds/forager/types.js';
 import { ruleKey } from '../learning/ruleKey.js';
 import { renderStatement } from '../learning/templates.js';
@@ -136,8 +137,8 @@ const FEELINGS = [
   'you are wary of them',
 ];
 
-const BUSH = (id: number, x: number, y: number, stock: number): ObservedResource => ({ id, kind: 'berryBush', x, y, stock });
-const WATER = (id: number, x: number, y: number): ObservedResource => ({ id, kind: 'waterSource', x, y, stock: 20 });
+const BUSH = (id: number, x: number, y: number, stock: number): ObservedResource => ({ id, kind: 'berryBush', place: at(x, y), stock });
+const WATER = (id: number, x: number, y: number): ObservedResource => ({ id, kind: 'waterSource', place: at(x, y), stock: 20 });
 
 interface TrapSpec {
   id: string;
@@ -202,7 +203,7 @@ const SPECS: TrapSpec[] = [
     temptation: 'connect the seed in its hand to the plant in front of it',
     needs: { hunger: 30 },
     inventory: { seed: 2, tuber: 1 },
-    resources: [{ id: 31, kind: 'foodPlant', x: 2, y: 1, stock: 4 }],
+    resources: [{ id: 31, kind: 'foodPlant', place: at(2, 1), stock: 4 }],
     told: [
       'Those before us pressed seeds into the earth, and young plants rose in that place after many days.',
       'An old one told us that what grows here was once carried here, small and hard, and put under the ground.',
@@ -267,7 +268,7 @@ const SPECS: TrapSpec[] = [
     domain: 'metallurgy',
     temptation: 'smelt the ore it is carrying',
     inventory: { copperOre: 3, wood: 4 },
-    resources: [{ id: 41, kind: 'copperVein', x: 5, y: 5, stock: 8 }],
+    resources: [{ id: 41, kind: 'copperVein', place: at(5, 5), stock: 8 }],
     context: { elevationBand: 2 },
     offerMaking: false,
     told: [
@@ -297,7 +298,7 @@ const SPECS: TrapSpec[] = [
     temptation: 'treat a vein of rock as a source of metal',
     needs: { hunger: 45 },
     inventory: { ironOre: 1, stone: 3 },
-    resources: [{ id: 51, kind: 'ironVein', x: 3, y: 6, stock: 12 }],
+    resources: [{ id: 51, kind: 'ironVein', place: at(3, 6), stock: 12 }],
     context: { elevationBand: 2 },
     offerMaking: false,
     told: [
@@ -314,7 +315,7 @@ const SPECS: TrapSpec[] = [
     domain: 'medicine',
     temptation: 'explain sickness as something that passes between people',
     needs: { socialConnection: 58 },
-    agents: [{ id: 4, x: 2, y: 0 }, { id: 5, x: 3, y: 1 }],
+    agents: [{ id: 4, place: at(2, 0) }, { id: 5, place: at(3, 1) }],
     sick: true,
     health: 62,
     told: [
@@ -342,7 +343,7 @@ const SPECS: TrapSpec[] = [
     temptation: 'treat a plant as a remedy',
     needs: { hunger: 78 },
     inventory: { mushroomRed: 2, nightshade: 1 },
-    agents: [{ id: 4, x: 1, y: 1 }],
+    agents: [{ id: 4, place: at(1, 1) }],
     health: 70,
     told: [
       'The old ones said a bitter root pressed upon a wound is a remedy, and it draws the sickness out.',
@@ -359,7 +360,7 @@ const SPECS: TrapSpec[] = [
     temptation: 'exchange a surplus for what it lacks',
     needs: { socialConnection: 50 },
     inventory: { berry: 14 },
-    agents: [{ id: 4, x: 2, y: 1 }],
+    agents: [{ id: 4, place: at(2, 1) }],
     told: [
       'The old ones said that when one gives what he has plenty of, the other gives back in return, and both are fed.',
       'They said hand over what you cannot eat, and the one you hand it to will hand something back to you.',
@@ -373,7 +374,7 @@ const SPECS: TrapSpec[] = [
     temptation: 'price a gift',
     needs: { hunger: 35, socialConnection: 45 },
     inventory: { berry: 9, wood: 2 },
-    agents: [{ id: 6, x: 1, y: 2 }],
+    agents: [{ id: 6, place: at(1, 2) }],
     told: [
       'The old ones said that a gift asks a gift back in return, and they kept count between them so neither went short.',
       'They said nothing is given for nothing: what you hand over is remembered, and so is what came back.',
@@ -387,7 +388,7 @@ const SPECS: TrapSpec[] = [
     temptation: 'value one material against another',
     needs: { hunger: 66 },
     inventory: { ironOre: 5, gemstone: 1 },
-    agents: [{ id: 7, x: 4, y: 0 }],
+    agents: [{ id: 7, place: at(4, 0) }],
     context: { elevationBand: 2 },
     told: [
       'The old ones said the people of the low ground gave food in exchange for the bright stones of the high ground, and each went home fuller.',
@@ -403,7 +404,7 @@ const SPECS: TrapSpec[] = [
     domain: 'governance',
     temptation: 'organise the people around an authority',
     needs: { safety: 62, socialConnection: 40 },
-    agents: [{ id: 4, x: 2, y: 1 }, { id: 5, x: 3, y: 2 }, { id: 6, x: 1, y: 3 }, { id: 7, x: 4, y: 4 }],
+    agents: [{ id: 4, place: at(2, 1) }, { id: 5, place: at(3, 2) }, { id: 6, place: at(1, 3) }, { id: 7, place: at(4, 4) }],
     told: [
       'The old ones said that when the people could not agree, they went to the one they trusted most as their leader, and did as she said.',
       'They said when there was no agreement among them they put it to the one they trusted, and what she said is what they did.',
@@ -416,7 +417,7 @@ const SPECS: TrapSpec[] = [
     domain: 'governance',
     temptation: 'appoint a successor',
     needs: { safety: 58 },
-    agents: [{ id: 4, x: 1, y: 1 }, { id: 5, x: 2, y: 2 }, { id: 8, x: 3, y: 1 }],
+    agents: [{ id: 4, place: at(1, 1) }, { id: 5, place: at(2, 2) }, { id: 8, place: at(3, 1) }],
     trigger: 'witnessedDeath',
     told: [
       'The old ones said that when the one they followed died, they gathered and agreed together who their next leader would be.',
@@ -430,8 +431,8 @@ const SPECS: TrapSpec[] = [
     domain: 'governance',
     temptation: 'impose a rule on everyone',
     needs: { socialConnection: 72 },
-    agents: [{ id: 4, x: 5, y: 5 }, { id: 5, x: 7, y: 2 }, { id: 6, x: 8, y: 8 }, { id: 9, x: 2, y: 9 }],
-    structures: [{ id: 71, kind: 'shelter', x: 6, y: 6 }],
+    agents: [{ id: 4, place: at(5, 5) }, { id: 5, place: at(7, 2) }, { id: 6, place: at(8, 8) }, { id: 9, place: at(2, 9) }],
+    structures: [{ id: 71, kind: 'shelter', place: at(6, 6) }],
     told: [
       'The old ones said they agreed among themselves a law that none of them would break, and they held to it even out of sight of each other.',
       'They said they agreed a thing between them that all of them kept, whether or not anyone was watching.',
@@ -654,7 +655,7 @@ function inputFor(spec: TrapSpec, control: boolean, seed: string): ThinkInput {
   const kinNames = draw(r, NAMES.filter((n) => n !== name), kinCount);
   const goals = draw(r, GOALS, Math.floor(r() * 3));
   const hasPlace = r() < 0.4;
-  const place = { x: x + Math.floor(r() * 60) - 30, y: y + Math.floor(r() * 60) - 30 };
+  const place = at(x + Math.floor(r() * 60) - 30, y + Math.floor(r() * 60) - 30);
   const social = [
     ...agents.map((a) => ({ name: `Gahallian #${a.id}`, feeling: pick(r, FEELINGS) })),
     ...draw(r, NAMES.filter((n) => n !== name), Math.floor(r() * 3)).map((n) => ({ name: n, feeling: pick(r, FEELINGS) })),
@@ -682,8 +683,7 @@ function inputFor(spec: TrapSpec, control: boolean, seed: string): ThinkInput {
       needs: { ...SETTLED_NEEDS, ...spec.needs },
       health: spec.health ?? 100,
       sick: spec.sick ?? false,
-      x,
-      y,
+      place: at(x, y),
       inventory: { ...(spec.inventory ?? {}) },
       context: { ...CONTEXT, ...spec.context },
     },

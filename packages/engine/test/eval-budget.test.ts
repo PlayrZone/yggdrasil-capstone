@@ -2,205 +2,358 @@ import { describe, expect, it } from 'vitest';
 import {
   BudgetExhaustedError,
   CallBudget,
+  CONSTANT_CEILING,
   DEFAULT_CALL_BUDGET,
-  FaithfulMockBackend,
-  FireworksMindBackend,
+  HARD_CALL_CEILING,
   MemoryBudgetStore,
-  MockMindBackend,
-  OmniscientMockBackend,
   PaidCallRefused,
-  accessBackend,
-  accessLeakJudge,
+  RunHalt,
   foragerAdapter,
-  isDeclaredFree,
+  openBackend,
+  openLeakJudge,
+  openTraceJudge,
   runAb,
   runIgnoranceProbe,
   yggdrasilInterviewee,
 } from '../src/index.js';
-import type { IBudgetStore, IMindBackend, ThinkInput, ThinkPrompt } from '../src/index.js';
+import type { ArmSpec, BudgetSpec, IBudgetStore, ThinkInput, ThinkPrompt } from '../src/index.js';
 
 /**
- * DECISION D1, TESTED AS CODE.
+ * DECISION D1, TESTED AS AN ATTACK.
  *
- * Three claims, and each is a separate failure if it stops holding:
- *   1. the cap is hard and SURVIVES A PROCESS — a restart resumes the count;
- *   2. raising it above 2,000 needs a written override, which is persisted and
- *      logged;
- *   3. nothing in `eval/**` can reach a paid backend without a budget, however
- *      the backend is constructed or handed in.
+ * Round 1 passed its own tests and lost both halves of the guard:
+ *
+ *   THE CAP WAS PER-INSTANCE. `spend()` tested and mutated a private copy and
+ *   never re-read the store. Measured: cap 10, two `CallBudget`s over one
+ *   store → 20 calls made, counter said 10. No attack was needed — the MCP
+ *   server is async and opens a fresh budget per tool call, so two overlapping
+ *   `run_ab` calls in ONE process overspent by construction.
+ *
+ *   THE DOOR OPENED FOR A WRAPPED PROVIDER. The guard asked a backend whether
+ *   it was free; a ten-line wrapper holding a real `FireworksMindBackend` and
+ *   declaring `free = true` came back unwrapped and unbudgeted.
+ *
+ *   AN AGENT COULD RAISE ITS OWN CAP. `ownerOverride` was free text and any
+ *   non-empty string bought a million calls — and the raised ceiling persisted,
+ *   so every later open needed no override at all.
+ *
+ *   EXHAUSTION WAS SILENT. Cap 3 produced a full metric table over a population
+ *   that had stopped thinking after three calls and was running on reflexes.
+ *
+ * Every test below fails on that code.
  */
 
-/** A backend that looks exactly like a provider client to everything but the guard. */
-class PretendPaidBackend implements IMindBackend {
-  readonly modelId = 'accounts/fireworks/models/gpt-oss-120b';
-  calls = 0;
-  complete(_prompt: ThinkPrompt, _input: ThinkInput): Promise<string> {
-    this.calls++;
-    return Promise.resolve('{"goals":[],"plan":[],"utterances":[]}');
-  }
+const world = foragerAdapter;
+const EMPTY_PROMPT: ThinkPrompt = { system: '', user: '' };
+/** The emptiest legal situation. Enough shape that a judge prompt can be built over it. */
+const EMPTY_INPUT = {
+  snapshot: { id: 1, name: '', inventory: {}, needs: {}, health: 100, sick: false, place: {}, context: {} },
+  recalledMemories: [],
+  knowledge: [],
+  relationships: new Map(),
+  worldView: { tick: 0, night: false, season: 'spring', agents: [], resources: [], structures: [] },
+  goals: [],
+  trigger: 'periodic',
+} as unknown as ThinkInput;
+const spec = (id: string, limit?: number): BudgetSpec => ({
+  id,
+  purpose: 'p',
+  runId: 'r',
+  ...(limit !== undefined ? { limit } : {}),
+});
+
+/** A fetch that answers like Fireworks and never touches a network. */
+function fakeFireworks(body = '{"goals":[],"plan":[],"utterances":[]}'): { fetch: typeof fetch; calls: () => number } {
+  let calls = 0;
+  const impl = (): Promise<Response> => {
+    calls++;
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ choices: [{ message: { content: body } }] }),
+      text: () => Promise.resolve(''),
+      statusText: 'OK',
+    } as unknown as Response);
+  };
+  return { fetch: impl as unknown as typeof fetch, calls: () => calls };
 }
 
-const EMPTY_PROMPT: ThinkPrompt = { system: '', user: '' };
-const EMPTY_INPUT = { snapshot: { id: 1 } } as unknown as ThinkInput;
+function paidSpec(fetchImpl: typeof fetch): ArmSpec['backend'] {
+  return { kind: 'test-fetch', model: 'accounts/fireworks/models/gpt-oss-120b', fetch: fetchImpl };
+}
 
-describe('W1-E · the spend guard (decision D1)', () => {
-  it('defaults to 2,000 calls and refuses more without an owner override', () => {
+// ─── The store is the only authority ─────────────────────────────────────────
+
+describe('W1-E · the cap belongs to the STORE, not to an object in this process', () => {
+  it('holds one cap across N budget handles over one store', () => {
     const store = new MemoryBudgetStore();
-    expect(CallBudget.open(store, { id: 'pilot', purpose: 'p', runId: 'r' }).limit).toBe(DEFAULT_CALL_BUDGET);
-    expect(CallBudget.open(store, { id: 'small', purpose: 'p', runId: 'r', limit: 50 }).limit).toBe(50);
-    expect(() => CallBudget.open(store, { id: 'big', purpose: 'p', runId: 'r', limit: 5000 })).toThrow(PaidCallRefused);
+    const handles = Array.from({ length: 5 }, (_, i) => CallBudget.open(store, spec('shared', 10) as BudgetSpec & { runId: string }));
+    let landed = 0;
+    let refused = 0;
+    // Round-robin, 5 handles × 6 attempts = 30 attempts against a cap of 10.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      for (const handle of handles) {
+        try {
+          handle.spend(1);
+          landed++;
+        } catch (err) {
+          expect(err).toBeInstanceOf(BudgetExhaustedError);
+          refused++;
+        }
+      }
+    }
+    // Round 1: 30 landed, counter 10.
+    expect(landed).toBe(10);
+    expect(refused).toBe(20);
+    expect(store.read('shared')?.spent).toBe(10);
+    for (const handle of handles) expect(handle.remaining).toBe(0);
   });
 
-  it('logs the override that raised the cap, and keeps it on the persisted state', () => {
+  it('stops two OVERLAPPING async tool calls from overspending in one process', async () => {
     const store = new MemoryBudgetStore();
-    const budget = CallBudget.open(store, {
-      id: 'big',
-      purpose: 'pilot',
-      runId: 'r1',
-      limit: 5000,
-      ownerOverride: 'Hakim said 5k on 2026-09-19',
-    });
-    budget.spend(3);
-    budget.closeRun();
-    expect(store.read('big')?.ownerOverride).toBe('Hakim said 5k on 2026-09-19');
-    expect(store.spend[0]?.ownerOverride).toBe('Hakim said 5k on 2026-09-19');
-    expect(store.spend[0]).toMatchObject({ budgetId: 'big', runId: 'r1', purpose: 'pilot', calls: 3, limit: 5000 });
-  });
+    const { fetch: impl, calls } = fakeFireworks();
+    // Exactly the MCP server's shape: a fresh budget handle per tool call,
+    // both live at once, both awaiting between charges.
+    const one = openBackend(paidSpec(impl), { world, budget: CallBudget.open(store, spec('overlap', 6)) });
+    const two = openBackend(paidSpec(impl), { world, budget: CallBudget.open(store, spec('overlap', 6)) });
 
-  it('holds the cap across two processes-worth of state', () => {
-    const disk = new MemoryBudgetStore();
-    // "Process one" spends most of a small budget and dies without closing it.
-    const first = CallBudget.open(disk, { id: 'pilot', purpose: 'p', runId: 'run-1', limit: 10 });
-    first.spend(8);
-    expect(first.remaining).toBe(2);
-
-    // "Process two" opens the same id from the same store and inherits the count.
-    const second = CallBudget.open(disk, { id: 'pilot', purpose: 'p', runId: 'run-2', limit: 10 });
-    expect(second.spent).toBe(8);
-    expect(second.remaining).toBe(2);
-    second.spend(2);
-    expect(() => second.spend(1)).toThrow(BudgetExhaustedError);
-    expect(disk.read('pilot')?.spent).toBe(10);
-  });
-
-  it('cannot be reset by reopening with a bigger number', () => {
-    const disk = new MemoryBudgetStore();
-    CallBudget.open(disk, { id: 'pilot', purpose: 'p', runId: 'r', limit: 5 }).spend(5);
-    const reopened = CallBudget.open(disk, { id: 'pilot', purpose: 'p', runId: 'r', limit: 2000 });
-    expect(reopened.spent).toBe(5);
-    expect(() => CallBudget.open(disk, { id: 'pilot', purpose: 'p', runId: 'r', limit: 2001 })).toThrow(PaidCallRefused);
-  });
-
-  it('charges before the call, so a failed call still counts', async () => {
-    const store = new MemoryBudgetStore();
-    const budget = CallBudget.open(store, { id: 'b', purpose: 'p', runId: 'r', limit: 2 });
-    const exploding: IMindBackend = {
-      modelId: 'accounts/fireworks/models/whatever',
-      complete: () => Promise.reject(new Error('transport died')),
+    const attempt = async (backend: { complete: (p: ThinkPrompt, i: ThinkInput) => Promise<string> }): Promise<number> => {
+      let landed = 0;
+      for (let i = 0; i < 5; i++) {
+        try {
+          await backend.complete(EMPTY_PROMPT, EMPTY_INPUT);
+          landed++;
+        } catch (err) {
+          if (!(err instanceof BudgetExhaustedError)) throw err;
+        }
+      }
+      return landed;
     };
-    const guarded = accessBackend({ backend: exploding, budget });
+    const [a, b] = await Promise.all([attempt(one), attempt(two)]);
+
+    // Round 1 measured 8 made against a counter of 4 on this exact shape.
+    expect(a + b).toBe(6);
+    expect(calls()).toBe(6);
+    expect(store.read('overlap')?.spent).toBe(6);
+  });
+
+  it('never lowers the persisted count, however a budget is reopened', () => {
+    const store = new MemoryBudgetStore();
+    CallBudget.open(store, spec('pilot', 5)).spend(5);
+    const reopened = CallBudget.open(store, spec('pilot', DEFAULT_CALL_BUDGET));
+    expect(reopened.spent).toBe(5);
+    // A SMALLER cap is legal and still cannot forgive what was spent.
+    const smaller = CallBudget.open(store, spec('pilot', 2));
+    expect(smaller.spent).toBe(5);
+    expect(smaller.remaining).toBe(0);
+    expect(() => smaller.spend(1)).toThrow(BudgetExhaustedError);
+  });
+
+  it('charges before the call, so a failed call still counts, and charges every retry', async () => {
+    const store = new MemoryBudgetStore();
+    const budget = CallBudget.open(store, spec('b', 2));
+    const exploding = (): Promise<Response> => Promise.reject(new Error('transport died'));
+    const halt = new RunHalt();
+    const guarded = openBackend(paidSpec(exploding as unknown as typeof fetch), { world, budget, halt });
     await expect(guarded.complete(EMPTY_PROMPT, EMPTY_INPUT)).rejects.toThrow('transport died');
     expect(budget.spent).toBe(1);
     expect(store.read('b')?.spent).toBe(1);
+    // A transport error is SURFACED on the halt, not folded into behaviour.
+    expect(halt.backendErrors).toHaveLength(1);
+    expect(halt.stopped).toBe(false);
   });
 
-  it('records reported usage and says when none was reported', () => {
-    const store = new MemoryBudgetStore();
-    const budget = CallBudget.open(store, { id: 'u', purpose: 'p', runId: 'r' });
-    budget.spend(1);
-    budget.recordUsage('model-x', undefined);
-    expect(budget.closeRun().usageReported).toBe(false);
-
-    const withUsage = CallBudget.open(store, { id: 'u2', purpose: 'p', runId: 'r' });
-    withUsage.spend(1);
-    withUsage.recordUsage('model-x', { promptTokens: 40, completionTokens: 7 });
-    const entry = withUsage.closeRun();
-    expect(entry).toMatchObject({ usageReported: true, tokensIn: 40, tokensOut: 7, modelId: 'model-x' });
-  });
-
-  it('a store that cannot be read is not a fresh allowance', () => {
+  it('a store that cannot be read is never a fresh allowance', () => {
     const broken: IBudgetStore = {
+      ceiling: () => CONSTANT_CEILING,
       read: () => {
         throw new Error('budget file is corrupt');
       },
-      write: () => {},
+      open: () => {
+        throw new Error('budget file is corrupt');
+      },
+      charge: () => {
+        throw new Error('budget file is corrupt');
+      },
+      addUsage: () => {
+        throw new Error('budget file is corrupt');
+      },
       appendSpend: () => {},
     };
-    expect(() => CallBudget.open(broken, { id: 'x', purpose: 'p', runId: 'r' })).toThrow('corrupt');
+    expect(() => CallBudget.open(broken, spec('x'))).toThrow('corrupt');
   });
 });
 
-describe('W1-E · the guard cannot be walked around', () => {
-  it('refuses a backend that is not declared free and brought no budget', () => {
-    expect(() => accessBackend({ backend: new PretendPaidBackend() })).toThrow(PaidCallRefused);
+// ─── The door takes a description, never an object ───────────────────────────
+
+describe('W1-E · a paid client cannot exist at the API boundary', () => {
+  it('refuses every paid spec that brought no budget', () => {
+    const { fetch: impl } = fakeFireworks();
+    expect(() => openBackend({ kind: 'fireworks' }, { world })).toThrow(PaidCallRefused);
+    expect(() => openBackend(paidSpec(impl), { world })).toThrow(PaidCallRefused);
+    // …and a fireworks spec WITH a budget still needs a key, which the engine
+    // never reads for itself.
+    const budget = CallBudget.open(new MemoryBudgetStore(), spec('k', 5));
+    expect(() => openBackend({ kind: 'fireworks' }, { world, budget })).toThrow(/no key/);
   });
 
-  it('refuses a real provider client even when it claims to be free', () => {
-    const lying = Object.assign(new FireworksMindBackend({ apiKey: 'not-used', model: 'm' }), { free: true });
-    expect(isDeclaredFree(lying)).toBe(false);
-    expect(() => accessBackend({ backend: lying })).toThrow(PaidCallRefused);
-  });
-
-  it('lets the declared-free mocks through and never charges them', () => {
-    expect(isDeclaredFree(new FaithfulMockBackend(foragerAdapter))).toBe(true);
-    expect(isDeclaredFree(new MockMindBackend({ world: foragerAdapter }))).toBe(false);
-    expect(() => accessBackend({ backend: new OmniscientMockBackend(foragerAdapter) })).not.toThrow();
-  });
-
-  it('never wraps twice, so a composed instrument is charged once per call', async () => {
+  it('lets the free scripted minds through and never charges them', async () => {
     const store = new MemoryBudgetStore();
-    const budget = CallBudget.open(store, { id: 'once', purpose: 'p', runId: 'r', limit: 5 });
-    const inner = new PretendPaidBackend();
-    const once = accessBackend({ backend: inner, budget });
-    const twice = accessBackend({ backend: once, budget });
-    await twice.complete(EMPTY_PROMPT, EMPTY_INPUT);
-    expect(inner.calls).toBe(1);
+    const budget = CallBudget.open(store, spec('free', 5));
+    const mock = openBackend({ kind: 'mock', mind: 'faithful' }, { world, budget });
+    await mock.complete(EMPTY_PROMPT, EMPTY_INPUT);
+    expect(budget.spent).toBe(0);
+  });
+
+  it('charges a judge once per judgement, not once per wrapping layer', async () => {
+    const store = new MemoryBudgetStore();
+    const budget = CallBudget.open(store, spec('judge', 4));
+    const { fetch: impl, calls } = fakeFireworks('{"verdict":"clean"}');
+    const judge = openLeakJudge({ kind: 'llm', backend: paidSpec(impl) }, { world, budget });
+    await judge.judge({
+      domain: 'fire',
+      temptation: 't',
+      input: EMPTY_INPUT,
+      output: { goals: [], plan: [], utterances: [] },
+      raw: '',
+    });
+    // Round 1's `accessLeakJudge` left no marker, so a double-wrapped judge
+    // charged 2 for one judgement.
     expect(budget.spent).toBe(1);
+    expect(calls()).toBe(1);
+  });
+
+  it('refuses a trace judge and an interviewee that brought no budget', () => {
+    const { fetch: impl } = fakeFireworks();
+    expect(() => openTraceJudge({ kind: 'llm', backend: paidSpec(impl) }, { world })).toThrow(PaidCallRefused);
+    expect(() => yggdrasilInterviewee(openBackend(paidSpec(impl), { world }), world)).toThrow(PaidCallRefused);
   });
 
   it('refuses through the A/B entry point, not only at construction', async () => {
+    const { fetch: impl } = fakeFireworks();
     await expect(
       runAb(
-        { seed: 'guard', ticks: 10, cohortSize: 1, agentCount: 4 },
-        { a: { backend: new PretendPaidBackend() }, b: { backend: new FaithfulMockBackend(foragerAdapter) } },
+        { seeds: ['guard'], ticks: 10, cohortSize: 1, agentCount: 4 },
+        { arms: [{ id: 'A', backend: paidSpec(impl) }, { id: 'B', backend: { kind: 'mock', mind: 'faithful' } }] },
       ),
     ).rejects.toThrow(PaidCallRefused);
   });
+});
 
-  it('refuses through the interviewee an ignorance probe would use', () => {
-    expect(() => yggdrasilInterviewee({ backend: new PretendPaidBackend() }, foragerAdapter)).toThrow(PaidCallRefused);
+// ─── The ceiling is a constant no argument can move ──────────────────────────
+
+describe('W1-E · the cap cannot be raised by anything an agent can pass', () => {
+  it('is a constant, and a bigger number is simply refused', () => {
+    const store = new MemoryBudgetStore();
+    expect(HARD_CALL_CEILING).toBe(2000);
+    expect(CallBudget.open(store, spec('pilot')).limit).toBe(DEFAULT_CALL_BUDGET);
+    expect(CallBudget.open(store, spec('small', 50)).limit).toBe(50);
+    expect(() => CallBudget.open(store, spec('big', HARD_CALL_CEILING + 1))).toThrow(PaidCallRefused);
+    expect(() => CallBudget.open(store, spec('big', 1_000_000))).toThrow(PaidCallRefused);
   });
 
-  it('refuses a leak judge with no budget, and charges one that has it', async () => {
-    const paidJudge = { id: 'llm-judge:x', judge: () => Promise.resolve({ judgement: 'clean' as const }) };
-    expect(() => accessLeakJudge({ judge: paidJudge })).toThrow(PaidCallRefused);
+  it('ignores an ownerOverride smuggled in through a cast — the parameter no longer exists', () => {
     const store = new MemoryBudgetStore();
-    const budget = CallBudget.open(store, { id: 'j', purpose: 'p', runId: 'r', limit: 1 });
-    const guarded = accessLeakJudge({ judge: paidJudge, budget });
-    await guarded.judge({ domain: 'fire', temptation: 't', input: EMPTY_INPUT, output: { goals: [], plan: [], utterances: [] }, raw: '' });
-    expect(budget.spent).toBe(1);
+    const smuggled = { id: 'big', purpose: 'p', runId: 'r', limit: 1_000_000, ownerOverride: 'ok' } as unknown as BudgetSpec;
+    // Round 1: any non-empty string bought a million-call cap, and the raised
+    // ceiling persisted so the next open needed nothing at all.
+    expect(() => CallBudget.open(store, smuggled)).toThrow(PaidCallRefused);
+    expect(store.read('big')).toBeUndefined();
+    // …and no ceiling was raised on the way past.
+    expect(CallBudget.open(store, spec('big', HARD_CALL_CEILING)).limit).toBe(HARD_CALL_CEILING);
+    expect(() => CallBudget.open(store, spec('big', HARD_CALL_CEILING + 1))).toThrow(PaidCallRefused);
   });
 
-  it('stops an ignorance probe dead when the budget runs out mid-run', async () => {
+  it('raises only for a human-created override, and reports it in the state and the spend log', () => {
+    const note = '{"limit":2500,"reason":"Hakim approved a 2,500-call replication on 2026-09-19"}';
+    const store = new MemoryBudgetStore({ overrideCeiling: { limit: 2500, note, path: '<home>/eval/ALLOW-ABOVE-CAP.json' } });
+    const budget = CallBudget.open(store, spec('raised', 2500));
+    expect(budget.limit).toBe(2500);
+    expect(budget.ceiling.source).toBe('override-file');
+    expect(budget.ceiling.note).toBe(note);
+    budget.spend(2);
+    budget.closeRun();
+    expect(store.read('raised')?.ceiling.source).toBe('override-file');
+    expect(store.spend[0]?.ceiling).toMatchObject({ limit: 2500, source: 'override-file', note });
+    // Even a raised ceiling is a ceiling.
+    expect(() => CallBudget.open(store, spec('raised', 2501))).toThrow(PaidCallRefused);
+  });
+
+  it('writes the spend line once, and writes it even when the run threw', () => {
     const store = new MemoryBudgetStore();
-    const budget = CallBudget.open(store, { id: 'tiny', purpose: 'p', runId: 'r', limit: 2 });
-    const inner = new PretendPaidBackend();
-    const interviewee = yggdrasilInterviewee({ backend: inner, budget }, foragerAdapter);
-    const input = await smallThinkInput();
-    await expect(
-      runIgnoranceProbe([{ beingId: 1, input, interviewee }], { limit: 4 }),
-    ).rejects.toThrow(BudgetExhaustedError);
-    expect(inner.calls).toBe(2);
+    const budget = CallBudget.open(store, spec('once', 5));
+    budget.spend(2);
+    budget.recordUsage('accounts/fireworks/models/gpt-oss-120b', { promptTokens: 40, completionTokens: 7 });
+    const entry = budget.closeRun();
+    expect(entry).toMatchObject({ calls: 2, tokensIn: 40, tokensOut: 7, usageReported: true, spentAfter: 2, limit: 5 });
+    expect(entry?.ceiling).toMatchObject({ limit: HARD_CALL_CEILING, source: 'constant' });
+    // Idempotent, because the caller is required to put it in a `finally`.
+    expect(budget.closeRun()).toBeNull();
+    expect(store.spend).toHaveLength(1);
   });
 });
 
-/** A real ThinkInput, taken from a two-tick run — cheaper than hand-building one. */
-async function smallThinkInput(): Promise<ThinkInput> {
+// ─── Exhaustion mid-run is loud ──────────────────────────────────────────────
+
+describe('W1-E · a run that runs out of money produces no verdict', () => {
+  it('stops, flags itself unusable, and emits NO metric table at all', async () => {
+    const store = new MemoryBudgetStore();
+    const budget = CallBudget.open(store, spec('tiny', 3));
+    const { fetch: impl, calls } = fakeFireworks();
+    const result = await runAb(
+      { seeds: ['exhaust'], ticks: 900, cohortSize: 4, agentCount: 12 },
+      {
+        arms: [
+          { id: 'A', backend: paidSpec(impl) },
+          { id: 'B', backend: paidSpec(impl) },
+        ],
+        budget,
+      },
+    );
+
+    // Round 1: this completed normally with a full metric table — plan success
+    // 0.4091 over 6 traces — of a population running on reflexes.
+    expect(result.usable).toBe(false);
+    if (result.usable) throw new Error('unreachable');
+    expect(result.reason).toBe('budget-exhausted');
+    expect(result.detail).toContain('exhausted');
+    // No verdict fields. Not a flag beside a table; no table.
+    expect('perSeed' in result).toBe(false);
+    expect('contrasts' in result).toBe(false);
+    expect('traces' in result).toBe(false);
+    expect('subjects' in result).toBe(false);
+    // The manifest and the spend record survive, which is the point of them.
+    expect(result.manifest.budget).toMatchObject({ id: 'tiny', limit: 3 });
+    expect(calls()).toBeLessThanOrEqual(3);
+    expect(store.read('tiny')?.spent).toBe(3);
+  }, 120_000);
+
+  it('stops an ignorance probe dead rather than interviewing on credit', async () => {
+    const store = new MemoryBudgetStore();
+    const budget = CallBudget.open(store, spec('probe-tiny', 2));
+    const { fetch: impl, calls } = fakeFireworks('I do not know.');
+    const interviewee = yggdrasilInterviewee(openBackend(paidSpec(impl), { world, budget }), world);
+    const input = await someThinkInput();
+    await expect(runIgnoranceProbe([{ beingId: 1, input, interviewee }], { world, limit: 4 })).rejects.toThrow(
+      BudgetExhaustedError,
+    );
+    expect(calls()).toBe(2);
+  }, 120_000);
+});
+
+/** A real ThinkInput, taken from a short mock run — cheaper than hand-building one. */
+async function someThinkInput(): Promise<ThinkInput> {
   const result = await runAb(
-    { seed: 'probe-input', ticks: 220, cohortSize: 1, agentCount: 6 },
-    { a: { backend: new FaithfulMockBackend(foragerAdapter) }, b: { backend: new FaithfulMockBackend(foragerAdapter) } },
+    { seeds: ['probe-input'], ticks: 300, cohortSize: 1, agentCount: 6 },
+    {
+      arms: [
+        { id: 'A', backend: { kind: 'mock', mind: 'faithful' } },
+        { id: 'B', backend: { kind: 'mock', mind: 'faithful' } },
+      ],
+    },
   );
-  const subject = result.subjects.A[0];
+  if (!result.usable) throw new Error(result.reason);
+  const subject = result.subjects.A?.[0];
   if (!subject) throw new Error('no subject produced');
   return subject.input;
 }

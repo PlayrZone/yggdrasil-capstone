@@ -99,8 +99,11 @@ export function memoryFromEvent(
     context,
     needDeltas: deltas,
     outcome: schema.outcome ?? 'neutral',
-    x: event.x,
-    y: event.y,
+    // WHERE IT HAPPENED, WITHOUT KNOWING WHERE (W1-B4). The event is the
+    // world's own carrier and only the world can read its geometry off it; what
+    // comes back is a handle this file can store and compare through nothing
+    // but `SpaceOps`.
+    place: world.space.placeOf(event),
     summaryText: describeEpisode(type, subjects, objectKind, causedBy),
     importance: importanceOf(world, type, deltas),
     origin,

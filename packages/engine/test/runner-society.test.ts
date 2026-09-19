@@ -6,6 +6,7 @@ import type { GahallianBody } from '../src/body/GahallianBody.js';
 import { identityAt } from '../src/body/identities.js';
 import { AgentMind } from '../src/agent/AgentMind.js';
 import { foragerAdapter } from '../src/worlds/forager/adapter.js';
+import { at, pointOf } from '../src/worlds/forager/space.js';
 import type { SimEvent, Traits } from '../src/contract/types.js';
 import type { BirthRecord } from '../src/runner/RuntimeView.js';
 import type { SocietyHost } from '../src/runner/society/SocietySystem.js';
@@ -104,7 +105,7 @@ describe('CoPresenceSystem', () => {
     const host = new TestHost();
     const a = host.spawn(100, 100);
     const b = host.spawn(103, 100);
-    host.minds.get(a)!.narratives.seed('slew:7:0', 'Aro slew a wolf in the forest', 20, 20, 0, 3);
+    host.minds.get(a)!.narratives.seed('slew:7:0', 'Aro slew a wolf in the forest', at(20, 20), 0, 3);
     const system = new CoPresenceSystem(host);
 
     const offParity = (300 + a + b) % 3 === 0 ? 301 : 300;
@@ -231,7 +232,7 @@ describe('ForagerNarrator', () => {
     const a = narrator.storyFor(event('KilledPredator', { predator: 'bear' }))!;
     const b = narrator.storyFor(event('KilledPredator', { predator: 'bear' }))!;
     expect(a).toEqual(b);
-    expect(a.x).toBe(40);
+    expect(pointOf(a.place).x).toBe(40);
     expect(a.text).toContain('Being#7');
     expect(a.text).toContain('bear');
   });

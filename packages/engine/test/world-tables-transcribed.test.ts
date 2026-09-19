@@ -8,6 +8,7 @@ import { seasonAt } from '../src/body/Climate.js';
 import { AgentMind } from '../src/agent/AgentMind.js';
 import { RuleIntern } from '../src/knowledge/KnowledgeStore.js';
 import { featureActive, traitCurveValue } from '../src/contract/adapter.js';
+import { inlinePlace } from '../src/contract/wire.js';
 import type { MemoryRecord, SimEvent, Traits } from '../src/contract/types.js';
 import type { ContextFeatureKey, ContextFeatures, SimEventType } from '../src/worlds/forager/types.js';
 import { importanceOf } from '../src/memory/importance.js';
@@ -225,7 +226,12 @@ describe('the perspective switch became data without changing', () => {
         const event: SimEvent = { tick: 42, type, actorId: 1, targetIds: [2], x: 5, y: 6, payload };
         for (const selfId of [1, 2, 3]) {
           const was = wasMemoryFromEvent(event, selfId, CONTEXT);
-          const now = memoryFromEvent(foragerAdapter, event, selfId, CONTEXT);
+          const built = memoryFromEvent(foragerAdapter, event, selfId, CONTEXT);
+          // W1-B4: the memory holds an opaque place where it held `x`/`y`, and
+          // the place IS those two fields — so what is compared is the memory
+          // as it WRITES (`inlinePlace`), which is the form a corpus row and a
+          // digest have always seen. Same bytes, same slot, same order.
+          const now = built === undefined ? undefined : inlinePlace(built);
           if (JSON.stringify(was) !== JSON.stringify(now)) {
             divergences.push(`${type}/self=${selfId}/${JSON.stringify(payload)}`);
           }

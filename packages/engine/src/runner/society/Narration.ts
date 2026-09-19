@@ -1,4 +1,5 @@
 import type { SimEvent } from '../../contract/types.js';
+import { at as placeAt } from '../../worlds/forager/space.js';
 import { classicGeography } from '../../world/geography.js';
 import type { WorldGeography } from '../../world/geography.js';
 import type { AuthoredStory, NarrativeAuthor } from './SocietySystem.js';
@@ -25,7 +26,7 @@ export class ForagerNarrator implements NarrativeAuthor {
     const bucket = Math.floor(event.tick / 300);
     const region = this.geography.regionAt(event.x, event.y);
     const who = this.host.nameOf(event.actorId);
-    const at = { x: event.x, y: event.y };
+    const at = { place: placeAt(event.x, event.y) };
     switch (event.type) {
       case 'KilledPredator':
         return { id: `slew:${event.actorId}:${bucket}`, text: `${who} slew a ${event.payload['predator'] ?? 'beast'} in the ${region}`, ...at };

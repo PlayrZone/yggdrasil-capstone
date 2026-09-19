@@ -9,16 +9,18 @@ import {
   checkIntent,
   foragerAdapter,
   kindsFor,
+  at,
   kindsWithTag,
   planArguments,
 } from '../src/index.js';
-import type { CoreVerb, Intent } from '../src/index.js';
-import { argumentShapes } from '../src/contract/actions.js';
+import type { CoreVerb, Intent, PlaceRef } from '../src/index.js';
+import { argumentShapes, wireFieldsOf } from '../src/contract/actions.js';
 // Not through the barrel: `KindParam` is not one of its exports (and adding it
 // belongs to whoever needs it from outside the package, not to a test).
 import type { KindParam } from '../src/contract/actions.js';
 import { WorldGate } from '../src/contract/gate.js';
 import { toyWorld } from './fixtures/toyAdapter.js';
+import { spot } from './fixtures/toySpace.js';
 import {
   WAS_ARG_ORDER,
   WAS_BUILD_KIND_LIST,
@@ -82,8 +84,14 @@ describe('the forager verbs, as they stood before the move', () => {
 
   /** Exactly what `YggdrasilSystem`'s switch reads for each act. */
   it('gives each verb the arguments the body reads for it', () => {
+    // AS THE BODY READS THEM, which is as the WIRE writes them (W1-B4): the
+    // mind's one opaque `place` param is expanded into the fields this world
+    // writes a place with, and they are the two the body has always read.
     const shapes = Object.fromEntries(
-      foragerAdapter.actions.map((a) => [a.id, a.params.map((p) => `${p.id}:${p.type}`)]),
+      foragerAdapter.actions.map((a) => [
+        a.id,
+        a.params.flatMap((p) => wireFieldsOf(foragerAdapter, p)).map((p) => `${p.id}:${p.type}`),
+      ]),
     );
     expect(shapes).toEqual({
       MoveTo: ['x:number', 'y:number', 'targetId:ref'],
@@ -138,7 +146,11 @@ describe('the forager verbs, as they stood before the move', () => {
     for (const action of foragerAdapter.actions) {
       if (action.promptArgs === undefined || action.promptArgs.shape !== undefined) continue;
       // Speech is never written: a mind cannot put an utterance in a plan.
-      const written = action.params.filter((p) => p.type !== 'speech').map((p) => p.id).join(',');
+      const written = action.params
+        .filter((p) => p.type !== 'speech')
+        .flatMap((p) => wireFieldsOf(foragerAdapter, p))
+        .map((p) => p.id)
+        .join(',');
       expect(paragraph, action.id).toContain(`${action.id}{${written}}`);
     }
   });
@@ -158,7 +170,23 @@ describe('the forager verbs, as they stood before the move', () => {
   });
 
   it('reads an intent’s arguments in the order the parser read them', () => {
-    expect(planArguments(foragerAdapter).map((p) => p.id)).toEqual(WAS_ARG_ORDER);
+    expect(
+      planArguments(foragerAdapter)
+        .flatMap((p) => wireFieldsOf(foragerAdapter, p))
+        .map((p) => p.id),
+    ).toEqual(WAS_ARG_ORDER);
+  });
+
+  /**
+   * …AND THE MIND SEES ONE OPAQUE ARGUMENT WHERE THE WIRE HAS TWO (W1-B4). The
+   * three acts that are aimed somewhere declare a `place`; nothing in this
+   * world's action tables names a coordinate any more.
+   */
+  it('declares a place, not a pair of numbers', () => {
+    const aimed = foragerAdapter.actions.filter((a) => a.params.some((p) => p.type === 'place'));
+    expect(aimed.map((a) => a.id)).toEqual(['MoveTo', 'Build', 'Flee']);
+    expect(foragerAdapter.actions.flatMap((a) => a.params).map((p) => p.id)).not.toContain('x');
+    expect(foragerAdapter.space.fields.map((f) => `${f.id}:${f.type}`)).toEqual(['x:number', 'y:number']);
   });
 
   it('draws each enumerated argument from exactly the old closed list', () => {
@@ -227,15 +255,15 @@ describe('an intent is held to what the world declares', () => {
 
   it('admits every act this world’s policy and parser can produce', () => {
     const legal: Intent[] = [
-      { kind: 'MoveTo', x: 1, y: 2 },
-      { kind: 'MoveTo', targetId: 4, x: 1, y: 2 },
+      { kind: 'MoveTo', place: at(1, 2) },
+      { kind: 'MoveTo', targetId: 4, place: at(1, 2) },
       { kind: 'Gather', targetId: 9 },
       { kind: 'Dig' },
       { kind: 'Eat', objectKind: 'berry' },
       { kind: 'Sleep', durationTicks: 200 },
-      { kind: 'Build', buildKind: 'shelter', x: 0, y: 0 },
+      { kind: 'Build', buildKind: 'shelter', place: at(0, 0) },
       { kind: 'Craft' },
-      { kind: 'Flee', x: -3, y: 4 },
+      { kind: 'Flee', place: at(-3, 4) },
       { kind: 'Idle', durationTicks: 40 },
       { kind: 'Speak', utterance: { speechAct: 'inform', text: 'hello' } },
       { kind: 'Give', targetId: 2, objectKind: 'meat' },
@@ -259,7 +287,7 @@ describe('an intent is held to what the world declares', () => {
     expect(every({ kind: 'Build', buildKind: 'tower' })).toBe('bad-param');
     // A node kind is a kind — but not one an `object` argument may name.
     expect(every({ kind: 'Eat', objectKind: 'berryBush' })).toBe('bad-param');
-    expect(every({ kind: 'MoveTo', x: Number.NaN, y: 0 })).toBe('bad-param');
+    expect(every({ kind: 'MoveTo', place: { x: Number.NaN, y: 0 } as unknown as PlaceRef })).toBe('bad-param');
     expect(every({ kind: 'Idle', durationTicks: Number.POSITIVE_INFINITY })).toBe('bad-param');
     expect(every({ kind: 'Speak', utterance: undefined })).toBeNull(); // absent is not wrong
   });
@@ -302,9 +330,9 @@ describe('the edge refuses an act, and defers an argument', () => {
     const gate = new WorldGate();
     const strays: Intent[] = [
       { kind: 'Eat', targetId: 4 },
-      { kind: 'MoveTo', x: 1, y: 2, targetId: 3, objectKind: 'berry', buildKind: 'shelter', durationTicks: 5 },
+      { kind: 'MoveTo', place: at(1, 2), targetId: 3, objectKind: 'berry', buildKind: 'shelter', durationTicks: 5 },
       { kind: 'Sleep', objectKind: 'berry' },
-      { kind: 'Gather', x: 1, y: 2 },
+      { kind: 'Gather', place: at(1, 2) },
       { kind: 'Idle', buildKind: 'shelter' },
       // A key this world has never heard of at all, which the parser would
       // have dropped — the reflex path and a host can still write one.
@@ -317,11 +345,11 @@ describe('the edge refuses an act, and defers an argument', () => {
 
   it('leaves the step exactly as it was — same fields, same order', () => {
     const gate = new WorldGate();
-    const intent = { kind: 'Eat', x: 1, targetId: 4, objectKind: 'berry' } as unknown as Intent;
+    const intent = { kind: 'Eat', place: at(1, 2), targetId: 4, objectKind: 'berry' } as unknown as Intent;
     const before = Object.keys(intent);
     expect(gate.admitIntent(foragerAdapter, intent)).toBe(true);
     expect(Object.keys(intent)).toEqual(before);
-    expect(intent).toEqual({ kind: 'Eat', x: 1, targetId: 4, objectKind: 'berry' });
+    expect(intent).toEqual({ kind: 'Eat', place: at(1, 2), targetId: 4, objectKind: 'berry' });
   });
 
   it('refuses the very same steps in a world that asked its edge to', () => {
@@ -334,7 +362,7 @@ describe('the edge refuses an act, and defers an argument', () => {
       { kind: 'Snaffle' },
       { kind: 'Dawdle', durationTicks: 100 },
       { kind: 'Nibble', objectKind: 'lever' },
-      { kind: 'Shuffle', x: 1, y: 2, targetId: 3 },
+      { kind: 'Shuffle', place: spot('ridge'), targetId: 3 },
     ];
     for (const intent of refused) expect(gate.admitIntent(toyWorld, intent), intent.kind).toBe(false);
     expect(gate.counts.badParam).toBe(refused.length);

@@ -33,6 +33,7 @@ import type {
   ItemCounts,
   KindId,
 } from './ids.js';
+import type { PlaceRef } from './space.js';
 
 // ─── Traits ──────────────────────────────────────────────────────────────────
 
@@ -57,13 +58,18 @@ export interface Traits {
  *
  * The arguments below are the ones the engine carries; which of them an action
  * actually takes is `ActionBinding.params`, and `checkIntent` is where a plan
- * is held to it (`contract/actions.ts`). B4 replaces `x`/`y` with a `PlaceRef`.
+ * is held to it (`contract/actions.ts`).
+ *
+ * W1-B4: the pair of coordinates is one opaque `place`. The WIRE is unchanged —
+ * a model still writes `{"kind":"MoveTo","x":…,"y":…}` and the forager body
+ * still receives those two fields — because the encoding of a place is the
+ * WORLD's (`SpaceOps.fields`) and the codec sits at the two edges, in
+ * `contract/wire.ts`.
  */
 export interface Intent {
   kind: ActionId;
-  /** Target position for MoveTo / Flee-from / Build / Deposit-on-ground. */
-  x?: number;
-  y?: number;
+  /** Where the act is aimed: a destination, a site to build on, a thing to flee. */
+  place?: PlaceRef;
   /** Target entity (resource node, agent, container) where relevant. */
   targetId?: number;
   /** Item kind for Eat / Deposit / Withdraw / Give. */
@@ -147,9 +153,8 @@ export interface MemoryRecord {
   /** Need pressure deltas this event caused (negative = relief). */
   needDeltas: DriveDeltas;
   outcome: 'success' | 'failure' | 'neutral';
-  /** Where it happened (world units) — succession mining matches locality. */
-  x?: number;
-  y?: number;
+  /** Where it happened — succession mining asks the world whether two are near. */
+  place?: PlaceRef;
   summaryText: string;
   /** Deterministic heuristic (event-type base × magnitude). Never LLM-set. */
   importance: number;
@@ -252,8 +257,7 @@ export interface EvidenceSnapshot {
   causedBy: number | undefined;
   /** The others it involved, excluding the rememberer. */
   subjects: readonly number[];
-  x: number | undefined;
-  y: number | undefined;
+  place: PlaceRef | undefined;
   /** The engine's deterministic salience for the episode. */
   importance: number;
 }
@@ -299,31 +303,28 @@ export interface AgentSnapshot {
   needs: DriveLevels;
   health: number;
   sick: boolean;
-  x: number;
-  y: number;
+  /** Where the being is. Opaque: only `SpaceOps` can say anything about it. */
+  place: PlaceRef;
   inventory: ItemCounts;
   context: ContextRecord;
 }
 
 export interface ObservedAgent {
   id: number;
-  x: number;
-  y: number;
+  place: PlaceRef;
 }
 
 export interface ObservedResource {
   id: number;
   kind: KindId;
-  x: number;
-  y: number;
+  place: PlaceRef;
   stock: number;
 }
 
 export interface ObservedStructure {
   id: number;
   kind: KindId;
-  x: number;
-  y: number;
+  place: PlaceRef;
 }
 
 /** What the agent can currently perceive. */
@@ -396,9 +397,9 @@ export interface ThinkInput {
   goals: Goal[];
   trigger: ThinkTrigger;
   /** A place a held story draws this being to (a founder/hero site) — belief steering behaviour. */
-  sacredPlace?: { x: number; y: number };
+  sacredPlace?: PlaceRef;
   /** Places a held tragedy makes this being shun. */
-  tragedyPlaces?: { x: number; y: number }[];
+  tragedyPlaces?: PlaceRef[];
   // ─── Phase 2: the culture a conscious being is born into (LLM path only) ───
   /** Stories/myths this being carries (most-told first). */
   stories?: KnownStory[];

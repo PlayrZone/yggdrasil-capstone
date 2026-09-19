@@ -1,6 +1,7 @@
 import type { WorldAdapter } from '../contract/adapter.js';
 import { WorldGate } from '../contract/gate.js';
 import type { ContextRecord, EventId } from '../contract/ids.js';
+import type { PlaceRef } from '../contract/space.js';
 import type {
   AgentSnapshot,
   Goal,
@@ -153,17 +154,18 @@ export class AgentMind {
     if (stored.utterance?.speechAct === 'share-episode' && stored.utterance.narrativeId && stored.utterance.narrativeText) {
       // The LLM share path carries no location; reflex retelling (coPresencePass)
       // carries the real place. First write wins, so this only matters when an
-      // LLM hears a story it has no other source for. The age comes from the
-      // teller's copy — a tale heard today may be generations old — but only
-      // when that claim is a real tick; otherwise the tale is dated from the
-      // moment it was heard rather than being refused by the store.
+      // LLM hears a story it has no other source for. WHERE a tale with no site
+      // is filed is the world's to say (`SpaceOps.unplaced`) — this used to
+      // write the origin of a plane it was not supposed to know it had. The age
+      // comes from the teller's copy — a tale heard today may be generations
+      // old — but only when that claim is a real tick; otherwise the tale is
+      // dated from the moment it was heard rather than being refused.
       const claimed = stored.utterance.narrativeFirstTick;
       const origin = claimed !== undefined && Number.isFinite(claimed) && claimed >= 0 ? claimed : stored.tick;
       this.narratives.remember(
         stored.utterance.narrativeId,
         stored.utterance.narrativeText,
-        0,
-        0,
+        this.world.space.unplaced,
         origin,
         false,
       );
@@ -243,9 +245,9 @@ export class AgentMind {
     // only heard of, which is the clean test of belief steering behaviour.
     // Tragedy places are likewise ones it only heard of. Selection uses intrinsic
     // story properties only (age, firsthand) — never an analysis label.
-    let sacredPlace: { x: number; y: number } | undefined;
+    let sacredPlace: PlaceRef | undefined;
     let oldest = Infinity;
-    const tragedyPlaces: { x: number; y: number }[] = [];
+    const tragedyPlaces: PlaceRef[] = [];
     if (this.mythBehavior) {
       for (const n of this.narratives.all()) {
         if (n.firsthand) continue; // a place you witnessed is not a place you make pilgrimage to
@@ -253,10 +255,10 @@ export class AgentMind {
         if (kind === 'home' || kind === 'slew') {
           if (n.firstTick < oldest) {
             oldest = n.firstTick;
-            sacredPlace = { x: n.x, y: n.y };
+            sacredPlace = n.place;
           }
         } else if ((kind === 'fell' || kind === 'attack') && tragedyPlaces.length < 4) {
-          tragedyPlaces.push({ x: n.x, y: n.y });
+          tragedyPlaces.push(n.place);
         }
       }
     }

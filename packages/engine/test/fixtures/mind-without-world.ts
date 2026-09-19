@@ -82,6 +82,11 @@ export function inhabit(): number {
     learners.length +
     ruleKey(rule).length +
     importanceOf(world, 'AteFood', {}) +
+    // The mind asks the world about its places and never opens one: how far,
+    // which way, and whether two are the same place (W1-B4).
+    world.space.distance(world.space.unplaced, world.space.unplaced) +
+    world.space.direction(world.space.unplaced, world.space.unplaced).length +
+    (world.space.equal(world.space.unplaced, world.space.unplaced) ? 1 : 0) +
     mind.gate.counts.undeclaredEvent +
     llm.modelId.length +
     parsed.plan.length +
@@ -98,8 +103,9 @@ function snapshotOf(): Parameters<AgentMind['buildThinkInput']>[0] {
     needs: { hunger: 0, rest: 0 },
     health: 100,
     sick: false,
-    x: 0,
-    y: 0,
+    // A place in a world this compiler cannot see, minted by that world. The
+    // mind holds it and can read nothing off it (W1-B4).
+    place: world.space.unplaced,
     inventory: {},
     context: {},
   };

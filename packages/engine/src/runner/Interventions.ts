@@ -2,6 +2,7 @@ import { CRAFT_RECIPES } from '../body/index.js';
 import { emptyContext, heardEvent } from '../contract/adapter.js';
 import type { WorldGate } from '../contract/gate.js';
 import type { SimEvent } from '../contract/types.js';
+import { at } from '../worlds/forager/space.js';
 import type { Needs, ObjectKind } from '../worlds/forager/types.js';
 import type { SimRuntime } from './Runtime.js';
 
@@ -154,14 +155,18 @@ export class Interventions {
     const rt = this.rt;
     const id = opts.id ?? 'seed:myth';
     // A myth with no site is anchored at the world's own beginning — the
-    // middle of the classic plane, the founding valley on the continent.
+    // middle of the classic plane, the founding valley on the continent. The
+    // scenario's geography says where that is; a host may still name a site,
+    // and it names it in this world's own coordinates (W1-B4: the HOST may,
+    // the mind may not).
     const x = opts.x ?? rt.geography.origin.x;
     const y = opts.y ?? rt.geography.origin.y;
     const timesHeard = opts.timesHeard ?? 6;
     const ids = opts.toAgentIds ?? rt.agentIds;
+    const place = at(x, y);
     for (const aid of ids) {
       const mind = rt.minds.get(aid);
-      if (mind) mind.narratives.seed(id, text, x, y, rt.tick, timesHeard);
+      if (mind) mind.narratives.seed(id, text, place, rt.tick, timesHeard);
     }
     rt.scaffold.seededMyth(id, text, ids, rt.tick);
   }

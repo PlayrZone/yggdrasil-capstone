@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Experiment } from '../src/runner/Experiment.js';
-import { MockMindBackend, foragerAdapter } from '../src/index.js';
+import { MockMindBackend, at, foragerAdapter } from '../src/index.js';
 
 describe('Experiment (headless host)', () => {
   it('spawns the requested population and reports it', () => {
@@ -144,7 +144,7 @@ describe('Experiment (headless host)', () => {
     const tellers = [circle[0]!, circle[2]!, circle[4]!];
     const listeners = [circle[1]!, circle[3]!, circle[5]!];
     for (const id of tellers) {
-      exp.minds.get(id)!.narratives.remember(STORY, 'Nine slew a bear in the forest', 500, 1900, ORIGIN, true);
+      exp.minds.get(id)!.narratives.remember(STORY, 'Nine slew a bear in the forest', at(500, 1900), ORIGIN, true);
     }
     exp.advance(150); // up to the co-presence pass
     const put = (id: number, x: number, y: number): void => {

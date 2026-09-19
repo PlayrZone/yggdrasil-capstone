@@ -82,7 +82,7 @@ export function installEventPipeline(host: EventPipelineHost, opts: EventPipelin
       const memory = memoryFromEvent(opts.world, event, witnessId, context, mind.gate);
       if (memory) mind.observe(memory);
       // A memorable event becomes a STORY the witness carries.
-      if (story) mind.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
+      if (story) mind.narratives.remember(story.id, story.text, story.place, event.tick, true);
       // PRESTIGE (Cycle 13): seeing a being do something the WORLD counts as
       // competence earns it respect. Nothing assigns a leader; respect simply
       // accrues to the visibly capable, and (via the social pull) others come
@@ -94,7 +94,7 @@ export function installEventPipeline(host: EventPipelineHost, opts: EventPipelin
         }
       }
     }
-    if (story) host.minds.get(event.actorId)?.narratives.remember(story.id, story.text, story.x, story.y, event.tick, true);
+    if (story) host.minds.get(event.actorId)?.narratives.remember(story.id, story.text, story.place, event.tick, true);
   });
 
   if (opts.recorder) host.bus.on(opts.recorder.observeAfter);

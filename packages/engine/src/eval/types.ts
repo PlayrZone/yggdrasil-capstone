@@ -11,7 +11,20 @@ import type { ThinkPrompt } from '../consciousness/prompt.js';
  * which from anything but the behaviour.
  */
 
-export type ArmId = 'A' | 'B';
+/**
+ * THE FOUR ARMS. Round 1 had two, and the difference between them was the
+ * architecture AND one sentence of prompt at the same time, so no result could
+ * tell those two things apart (`epistemic.ts` has the full argument).
+ *
+ *   A    Yggdrasil mind, epistemic instruction present
+ *   A−   Yggdrasil mind, epistemic instruction REMOVED
+ *   B    plain LLM agent, no instruction
+ *   B+   plain LLM agent, the SAME instruction added
+ */
+export type ArmId = 'A' | 'A-' | 'B' | 'B+';
+
+/** Which family an arm belongs to — what its mind IS, apart from the prompt. */
+export type ArmFamily = 'yggdrasil' | 'baseline';
 
 /** Whole-population arms, or matched beings inside one run. */
 export type AbMode = 'population' | 'mixed';

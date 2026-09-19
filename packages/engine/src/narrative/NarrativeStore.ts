@@ -6,12 +6,14 @@
  * become a group's identity. Each narrative has a stable id so retellings of the
  * same event cluster, no matter who tells it.
  */
+import type { PlaceRef } from '../contract/space.js';
+
 export interface Narrative {
   id: string;
   text: string;
-  /** Where the event happened — so a story can draw beings to, or away from, a place. */
-  x: number;
-  y: number;
+  /** Where the event happened — so a story can draw beings to, or away from, a
+   *  place. Opaque: a story knows it has a site, never where the site is. */
+  place: PlaceRef;
   /** When the story ENTERED THE WORLD — the event's own tick (or a seeding).
    *  A property of the story, not of this copy: it travels with every
    *  retelling, so a tale does not become young again each time it is passed
@@ -111,7 +113,7 @@ export class NarrativeStore {
    * from, and an origin of 0 or NaN would silently make it the oldest myth
    * alive. Every engine path supplies a real tick, so this only bites hearsay.
    */
-  remember(id: string, text: string, x: number, y: number, firstTick: number, firsthand: boolean): void {
+  remember(id: string, text: string, place: PlaceRef, firstTick: number, firsthand: boolean): void {
     if (!Number.isFinite(firstTick) || firstTick < 0) return;
     const existing = this.stories.get(id);
     if (existing) {
@@ -121,7 +123,7 @@ export class NarrativeStore {
       if (firstTick < existing.firstTick) existing.firstTick = firstTick;
       return;
     }
-    this.stories.set(id, { id, text, x, y, firstTick, firsthand, timesHeard: 1, retellable: 0 });
+    this.stories.set(id, { id, text, place, firstTick, firsthand, timesHeard: 1, retellable: 0 });
   }
 
   /**
@@ -130,13 +132,13 @@ export class NarrativeStore {
    * its familiarity). The seeded story is a cultural artifact the minds then
    * interpret; it carries no behavioural instruction.
    */
-  seed(id: string, text: string, x: number, y: number, tick: number, timesHeard: number): void {
+  seed(id: string, text: string, place: PlaceRef, tick: number, timesHeard: number): void {
     // Seeding never makes a tale YOUNGER: a story already carried from further
     // back keeps its own origin, or re-seeding mid-run would reset its age and
     // hand the researcher's hand an artificially new myth.
     const existing = this.stories.get(id);
     const firstTick = existing ? Math.min(existing.firstTick, tick) : tick;
-    this.stories.set(id, { id, text, x, y, firstTick, firsthand: false, timesHeard, retellable: 0 });
+    this.stories.set(id, { id, text, place, firstTick, firsthand: false, timesHeard, retellable: 0 });
   }
 
   has(id: string): boolean {

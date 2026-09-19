@@ -1,4 +1,5 @@
 import { CLASSIC_SCALE } from '../../world/geography.js';
+import { pointOf } from '../../worlds/forager/space.js';
 import type { RuntimeView } from '../RuntimeView.js';
 
 interface SiteMeasure {
@@ -45,7 +46,11 @@ export function beliefBehavior(view: RuntimeView): BeliefBehaviorReport {
     if (!mind) continue;
     for (const n of mind.narratives.all()) {
       let s = sites.get(n.id);
-      if (!s) sites.set(n.id, (s = { x: n.x, y: n.y, kind: n.id.slice(0, n.id.indexOf(':')), text: n.text, holderPos: [] }));
+      // The instrument reads THIS world's geometry off a story's place, which
+      // is the instrument's privilege and not a mind's. B6 gives each world its
+      // own instrument; until then it opens the handle here.
+      const site = pointOf(n.place);
+      if (!s) sites.set(n.id, (s = { x: site.x, y: site.y, kind: n.id.slice(0, n.id.indexOf(':')), text: n.text, holderPos: [] }));
       s.holderPos.push(pos);
     }
   }

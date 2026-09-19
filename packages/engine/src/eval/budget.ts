@@ -1,8 +1,6 @@
-import { FireworksMindBackend } from '../consciousness/FireworksMindBackend.js';
-import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { ThinkInput } from '../contract/types.js';
+import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { ThinkPrompt } from '../consciousness/prompt.js';
-import type { ILeakJudge, LeakJudgeRequest, LeakJudgeVerdict } from '../training/leakJudge.js';
 
 /**
  * DECISION D1, IN CODE (docs/rework/CAMPAIGN.md → "Decisions delegated").
@@ -11,26 +9,58 @@ import type { ILeakJudge, LeakJudgeRequest, LeakJudgeVerdict } from '../training
  *  Then ONE hard-capped pilot: ≤ 2,000 calls total on the slow-mind model, call
  *  count enforced in code, spend logged."
  *
- * Three rules follow from that sentence and are implemented here:
+ * Four rules follow from that sentence. The first three are here; the fourth is
+ * `door.ts`.
  *
- *   1. A CAP THAT OUTLIVES THE PROCESS. A budget is identified by a string and
- *      its counter is written through to a store on every call, so a crashed run
- *      or a second process resumes the same count rather than starting at zero.
- *      The store is an interface because the engine writes no files (see
- *      `record/types.ts`, `ICognitionSink`); `packages/mcp` supplies the one
- *      that lives under the shared home.
- *   2. RAISING THE CAP IS AN EVENT. Anything above `DEFAULT_CALL_BUDGET`, or
- *      above whatever this budget id was last opened with, needs a written
- *      `ownerOverride` and that string is persisted and logged.
- *   3. THE PAID PATH CANNOT BE REACHED WITHOUT ONE. `accessBackend` is the only
- *      way an eval instrument gets a backend, and a backend that is not
- *      DECLARED free is refused unless a budget came with it. Declaring is
- *      explicit (`free: true`) and a real provider client is refused even when
- *      it lies about being free.
+ *   1. THE STORE IS THE AUTHORITY, NOT THE OBJECT IN THIS PROCESS. Every charge
+ *      is an atomic check-and-increment against the PERSISTED counter, taken
+ *      under the store's lock. A `CallBudget` holds no allowance of its own: N
+ *      instances, two overlapping MCP tool calls and two operating-system
+ *      processes all queue behind one counter. (Round 1 tested and mutated an
+ *      in-memory copy: cap 10, two instances → 20 calls made, counter 10.)
+ *   2. THE CEILING IS A CONSTANT, AND NO ARGUMENT CAN RAISE IT. `HARD_CALL_CEILING`
+ *      is 2,000. A caller may ask for LESS. Asking for more is refused, full
+ *      stop — there is no `ownerOverride` parameter on any function here, on any
+ *      eval API, or on any MCP tool. Raising it takes a file a HUMAN creates
+ *      under the shared home, which this code only ever READS, and whose
+ *      presence and contents are copied into the spend log and the run manifest.
+ *   3. SPENT NEVER GOES DOWN. Re-opening a budget resumes its count; a lower
+ *      limit is honoured; nothing anywhere writes a smaller `spent`.
  */
 
-/** The pilot's ceiling. A budget may be smaller; larger needs an owner override. */
-export const DEFAULT_CALL_BUDGET = 2000;
+/**
+ * A backend that came out of `door.ts`. The brand is a symbol nothing declares a
+ * value for, so the only way to hold one of these is to have called
+ * `openBackend` — which means a judge whose constructor asks for one cannot be
+ * handed a client somebody built themselves.
+ */
+declare const OPENED_BY_THE_DOOR: unique symbol;
+export interface OpenedBackend extends IMindBackend {
+  readonly [OPENED_BY_THE_DOOR]: true;
+}
+
+/** The ceiling. A constant, on purpose: a number no argument can move. */
+export const HARD_CALL_CEILING = 2000;
+
+/** What a budget gets when it asks for nothing in particular. */
+export const DEFAULT_CALL_BUDGET = HARD_CALL_CEILING;
+
+/**
+ * How the ceiling in force was decided. Copied onto the budget state, into
+ * every spend-log line and into the run manifest, so a reader of either can see
+ * that a run was capped at 2,000 by the constant — or that a human file raised
+ * it, and what that file said.
+ */
+export interface CeilingRuling {
+  limit: number;
+  source: 'constant' | 'override-file';
+  /** Where the override was read from. Present only with `override-file`. */
+  path?: string;
+  /** The override file's own words, verbatim. Present only with `override-file`. */
+  note?: string;
+}
+
+export const CONSTANT_CEILING: CeilingRuling = Object.freeze({ limit: HARD_CALL_CEILING, source: 'constant' as const });
 
 export interface BudgetState {
   id: string;
@@ -38,8 +68,8 @@ export interface BudgetState {
   spent: number;
   tokensIn: number;
   tokensOut: number;
-  /** The last override that raised this budget's ceiling, if any. */
-  ownerOverride?: string;
+  /** The ceiling this budget was last opened under. */
+  ceiling: CeilingRuling;
 }
 
 /** One run's spend, appended when the run closes. */
@@ -55,42 +85,46 @@ export interface SpendLogEntry {
   usageReported: boolean;
   spentAfter: number;
   limit: number;
-  ownerOverride?: string;
+  /** The ceiling in force, and whether a human file raised it. */
+  ceiling: CeilingRuling;
+  /** Set when the run stopped because the cap was reached. */
+  haltedBy?: string;
 }
 
 /**
- * Where a budget's counter lives. Synchronous on purpose: a spend must be
- * durable BEFORE the call goes out, and an async write would let a process die
- * between the two with the money gone and the counter unmoved.
+ * Where a budget's counter lives, and the only thing allowed to decide whether
+ * a call may go out.
+ *
+ * Synchronous on purpose, twice over: a spend must be durable BEFORE the call
+ * goes out, and an `await` inside a check-and-increment is exactly the window
+ * two overlapping tool calls in one process slipped through.
  */
 export interface IBudgetStore {
+  /**
+   * The ceiling in force. Read from a human-created file where one exists;
+   * NOTHING in this repo writes that file.
+   */
+  ceiling(): CeilingRuling;
   read(id: string): BudgetState | undefined;
-  write(state: BudgetState): void;
+  /** Create or resume, under the lock. Never lowers `spent`. Refuses above the ceiling. */
+  open(id: string, limit: number): BudgetState;
+  /** ATOMIC check-and-increment against the persisted counter. Throws at the cap. */
+  charge(id: string, calls: number): BudgetState;
+  /** Atomic merge of what the provider said it billed. */
+  addUsage(id: string, tokensIn: number, tokensOut: number): BudgetState;
   appendSpend(entry: SpendLogEntry): void;
 }
 
-/** A store in memory. Two `CallBudget`s over ONE of these are two processes over one file. */
-export class MemoryBudgetStore implements IBudgetStore {
-  private readonly states = new Map<string, BudgetState>();
-  readonly spend: SpendLogEntry[] = [];
-
-  read(id: string): BudgetState | undefined {
-    const state = this.states.get(id);
-    return state ? { ...state } : undefined;
-  }
-  write(state: BudgetState): void {
-    this.states.set(state.id, { ...state });
-  }
-  appendSpend(entry: SpendLogEntry): void {
-    this.spend.push({ ...entry });
-  }
-}
-
 export class BudgetExhaustedError extends Error {
-  constructor(readonly budgetId: string, readonly limit: number, readonly spent: number, readonly wanted: number) {
+  constructor(
+    readonly budgetId: string,
+    readonly limit: number,
+    readonly spent: number,
+    readonly wanted: number,
+  ) {
     super(
       `budget "${budgetId}" is exhausted: ${spent} of ${limit} calls already spent, ${wanted} more asked for. ` +
-        `Open a budget with a higher limit and an explicit ownerOverride, or stop here.`,
+        `The run stops here and its result is not usable for a verdict.`,
     );
     this.name = 'BudgetExhaustedError';
   }
@@ -103,6 +137,137 @@ export class PaidCallRefused extends Error {
   }
 }
 
+/**
+ * The shared half of every store: the check-and-increment itself, written once
+ * so that a store which only knows how to read a file, write a file and take a
+ * lock cannot get the arithmetic wrong.
+ */
+export abstract class BudgetStoreBase implements IBudgetStore {
+  protected abstract load(id: string): BudgetState | undefined;
+  protected abstract save(state: BudgetState): void;
+  /** Run `body` with exclusive access to this budget id, across processes. */
+  protected abstract withLock<T>(id: string, body: () => T): T;
+
+  abstract ceiling(): CeilingRuling;
+  abstract appendSpend(entry: SpendLogEntry): void;
+
+  read(id: string): BudgetState | undefined {
+    return this.load(id);
+  }
+
+  open(id: string, limit: number): BudgetState {
+    if (!Number.isInteger(limit) || limit < 0) {
+      throw new PaidCallRefused(`a call budget must be a non-negative whole number of calls, not ${String(limit)}`);
+    }
+    const ceiling = this.ceiling();
+    if (limit > ceiling.limit) {
+      throw new PaidCallRefused(
+        `refused: budget "${id}" asks for ${limit} calls and the ceiling is ${ceiling.limit} ` +
+          `(decision D1). No argument raises it: a smaller cap may be requested, and a larger one needs a file ` +
+          `a human creates under the lab home. See eval/README.md → "Raising the cap".`,
+      );
+    }
+    return this.withLock(id, () => {
+      const previous = this.load(id);
+      const state: BudgetState = {
+        id,
+        limit,
+        // Never lowered. A reopen resumes; it does not forgive.
+        spent: previous?.spent ?? 0,
+        tokensIn: previous?.tokensIn ?? 0,
+        tokensOut: previous?.tokensOut ?? 0,
+        ceiling,
+      };
+      this.save(state);
+      return state;
+    });
+  }
+
+  charge(id: string, calls: number): BudgetState {
+    if (!Number.isInteger(calls) || calls <= 0) {
+      throw new PaidCallRefused(`a charge must be a positive whole number of calls, not ${String(calls)}`);
+    }
+    return this.withLock(id, () => {
+      // RE-READ UNDER THE LOCK. This line is the whole fix: the counter on disk,
+      // not the copy this process opened with, decides.
+      const state = this.load(id);
+      if (!state) {
+        throw new PaidCallRefused(`refused: budget "${id}" has no counter on record; open it before charging it.`);
+      }
+      if (state.spent + calls > state.limit) {
+        throw new BudgetExhaustedError(id, state.limit, state.spent, calls);
+      }
+      const next: BudgetState = { ...state, spent: state.spent + calls };
+      this.save(next);
+      return next;
+    });
+  }
+
+  addUsage(id: string, tokensIn: number, tokensOut: number): BudgetState {
+    return this.withLock(id, () => {
+      const state = this.load(id);
+      if (!state) throw new PaidCallRefused(`refused: budget "${id}" has no counter on record.`);
+      const next: BudgetState = {
+        ...state,
+        tokensIn: state.tokensIn + Math.max(0, tokensIn),
+        tokensOut: state.tokensOut + Math.max(0, tokensOut),
+      };
+      this.save(next);
+      return next;
+    });
+  }
+}
+
+export interface MemoryBudgetStoreOptions {
+  /**
+   * Stand in for the human-created override file. Test-only: the real store
+   * reads a file on disk that nothing in this repo can write.
+   */
+  overrideCeiling?: { limit: number; note: string; path?: string };
+}
+
+/**
+ * A store in memory. Two `CallBudget`s over ONE of these are two processes over
+ * one file — and now that is true rather than aspirational, because both of
+ * them charge through `BudgetStoreBase.charge`.
+ */
+export class MemoryBudgetStore extends BudgetStoreBase {
+  private readonly states = new Map<string, BudgetState>();
+  readonly spend: SpendLogEntry[] = [];
+  private readonly override: MemoryBudgetStoreOptions['overrideCeiling'];
+
+  constructor(options: MemoryBudgetStoreOptions = {}) {
+    super();
+    this.override = options.overrideCeiling;
+  }
+
+  ceiling(): CeilingRuling {
+    if (!this.override) return CONSTANT_CEILING;
+    return {
+      limit: this.override.limit,
+      source: 'override-file',
+      path: this.override.path ?? '(memory store)',
+      note: this.override.note,
+    };
+  }
+
+  protected load(id: string): BudgetState | undefined {
+    const state = this.states.get(id);
+    return state ? { ...state } : undefined;
+  }
+  protected save(state: BudgetState): void {
+    this.states.set(state.id, { ...state });
+  }
+  protected withLock<T>(_id: string, body: () => T): T {
+    // One thread, and every operation on this store is synchronous, so the
+    // body cannot be interleaved with another. The lock is the call stack.
+    return body();
+  }
+  appendSpend(entry: SpendLogEntry): void {
+    this.spend.push({ ...entry });
+  }
+}
+
 export interface BudgetSpec {
   /** Stable across processes — this is what the persisted counter is keyed by. */
   id: string;
@@ -110,10 +275,12 @@ export interface BudgetSpec {
   purpose: string;
   /** This run's id, so one budget's log says which runs spent it. */
   runId: string;
-  /** Default `DEFAULT_CALL_BUDGET`. Lower is free; higher needs `ownerOverride`. */
+  /**
+   * Calls this budget may spend. Defaults to `DEFAULT_CALL_BUDGET`; LOWER is
+   * free. Higher is refused — there is deliberately no second parameter that
+   * would let a caller talk its way past the ceiling.
+   */
   limit?: number;
-  /** The owner saying, in writing, that a larger cap is intended. Persisted and logged. */
-  ownerOverride?: string;
 }
 
 /** A backend that reports what the provider billed. Optional — most do not. */
@@ -125,68 +292,60 @@ function reportsUsage(value: object): value is UsageReporting {
   return typeof (value as Partial<UsageReporting>).lastUsage === 'function';
 }
 
+/**
+ * A handle on a budget. It holds NO allowance: `spend` asks the store, and the
+ * store's answer is the only answer. What it does hold is this run's share of
+ * the spending, so the spend log can say which run spent what.
+ */
 export class CallBudget {
-  private state: BudgetState;
   private callsThisRun = 0;
   private tokensInThisRun = 0;
   private tokensOutThisRun = 0;
   private usageSeen = false;
-  private models = new Set<string>();
+  private closed = false;
+  private readonly models = new Set<string>();
+  private snapshot: BudgetState;
 
   private constructor(
     private readonly store: IBudgetStore,
     private readonly spec: BudgetSpec,
     state: BudgetState,
   ) {
-    this.state = state;
+    this.snapshot = state;
   }
 
-  /**
-   * Open (or resume) a budget. Resuming keeps the spend already on record — the
-   * whole point of persisting it — and only an explicit override may raise the
-   * ceiling, either above the default or above what this id was opened with.
-   */
+  /** Open (or resume) a budget. Resuming keeps the spend already on record. */
   static open(store: IBudgetStore, spec: BudgetSpec): CallBudget {
-    const wanted = spec.limit ?? DEFAULT_CALL_BUDGET;
-    if (!Number.isInteger(wanted) || wanted < 0) {
-      throw new PaidCallRefused(`a call budget must be a non-negative whole number of calls, not ${String(spec.limit)}`);
-    }
-    const previous = store.read(spec.id);
-    const ceiling = Math.max(DEFAULT_CALL_BUDGET, previous?.limit ?? 0);
-    const override = spec.ownerOverride?.trim();
-    if (wanted > ceiling && !override) {
-      throw new PaidCallRefused(
-        `refused: budget "${spec.id}" asks for ${wanted} calls, above the standing cap of ${ceiling} ` +
-          `(decision D1 sets ${DEFAULT_CALL_BUDGET}). Pass ownerOverride with the owner's reason to raise it.`,
-      );
-    }
-    const state: BudgetState = {
-      id: spec.id,
-      limit: wanted,
-      spent: previous?.spent ?? 0,
-      tokensIn: previous?.tokensIn ?? 0,
-      tokensOut: previous?.tokensOut ?? 0,
-      ...(override ? { ownerOverride: override } : previous?.ownerOverride ? { ownerOverride: previous.ownerOverride } : {}),
-    };
-    store.write(state);
-    return new CallBudget(store, spec, state);
+    const limit = spec.limit ?? DEFAULT_CALL_BUDGET;
+    return new CallBudget(store, spec, store.open(spec.id, limit));
   }
 
   get id(): string {
-    return this.state.id;
+    return this.spec.id;
   }
   get limit(): number {
-    return this.state.limit;
+    return this.current().limit;
   }
+  /** The PERSISTED count, re-read: another instance may have spent since. */
   get spent(): number {
-    return this.state.spent;
+    return this.current().spent;
   }
   get remaining(): number {
-    return Math.max(0, this.state.limit - this.state.spent);
+    const state = this.current();
+    return Math.max(0, state.limit - state.spent);
   }
-  /** Calls this CallBudget instance has spent, as opposed to the persisted total. */
+  get ceiling(): CeilingRuling {
+    return this.current().ceiling;
+  }
+  /** Calls this handle has spent, as opposed to the persisted total. */
   get spentThisRun(): number {
     return this.callsThisRun;
+  }
+
+  private current(): BudgetState {
+    const live = this.store.read(this.spec.id);
+    if (live) this.snapshot = live;
+    return this.snapshot;
   }
 
   /**
@@ -196,12 +355,8 @@ export class CallBudget {
    */
   spend(calls = 1): void {
     if (calls <= 0) return;
-    if (this.state.spent + calls > this.state.limit) {
-      throw new BudgetExhaustedError(this.state.id, this.state.limit, this.state.spent, calls);
-    }
-    this.state = { ...this.state, spent: this.state.spent + calls };
+    this.snapshot = this.store.charge(this.spec.id, calls);
     this.callsThisRun += calls;
-    this.store.write(this.state);
   }
 
   /** What the provider said it billed, when it says. */
@@ -211,18 +366,20 @@ export class CallBudget {
     this.usageSeen = true;
     this.tokensInThisRun += usage.promptTokens;
     this.tokensOutThisRun += usage.completionTokens;
-    this.state = {
-      ...this.state,
-      tokensIn: this.state.tokensIn + usage.promptTokens,
-      tokensOut: this.state.tokensOut + usage.completionTokens,
-    };
-    this.store.write(this.state);
+    this.snapshot = this.store.addUsage(this.spec.id, usage.promptTokens, usage.completionTokens);
   }
 
-  /** Append this run's line to the spend log. Safe to call once per run. */
-  closeRun(): SpendLogEntry {
+  /**
+   * Append this run's line to the spend log. Idempotent, because the caller is
+   * required to put it in a `finally` and a thrown run would otherwise be the
+   * one run that spent money and logged nothing (round 1's D6).
+   */
+  closeRun(halt?: RunHalt): SpendLogEntry | null {
+    if (this.closed) return null;
+    this.closed = true;
+    const state = this.current();
     const entry: SpendLogEntry = {
-      budgetId: this.state.id,
+      budgetId: state.id,
       runId: this.spec.runId,
       purpose: this.spec.purpose,
       modelId: [...this.models].sort().join('+') || 'none',
@@ -230,67 +387,78 @@ export class CallBudget {
       tokensIn: this.tokensInThisRun,
       tokensOut: this.tokensOutThisRun,
       usageReported: this.usageSeen,
-      spentAfter: this.state.spent,
-      limit: this.state.limit,
-      ...(this.state.ownerOverride ? { ownerOverride: this.state.ownerOverride } : {}),
+      spentAfter: state.spent,
+      limit: state.limit,
+      ceiling: state.ceiling,
+      ...(halt?.stopped ? { haltedBy: halt.detail } : {}),
     };
     this.store.appendSpend(entry);
     return entry;
   }
 }
 
-// ─── The guard every paid entry point goes through ───────────────────────────
+// ─── What a run does when the money runs out ─────────────────────────────────
+
+export type HaltReason = 'budget-exhausted';
 
 /**
- * A backend that costs nothing, said out loud. The marker is a literal on the
- * object rather than a name pattern, so "is this free?" is a question about
- * what the author declared and not about how they spelled a model id.
+ * WHY AN ARM MAY NOT SILENTLY BECOME A REFLEX.
+ *
+ * `LlmMind` catches everything its backend throws and carries the being with
+ * the world's hand-written policy. That is right for a flaky transport and
+ * catastrophic for an exhausted budget: round 1 measured a cap of 3 producing a
+ * FULL metric table — plan success 0.4091 over 6 traces — of a population that
+ * had stopped thinking after three calls and was running on reflexes.
+ *
+ * The latch is set inside the guarded door, one line before the error is
+ * thrown, so it is recorded whether or not anything downstream swallows it. The
+ * A/B runner checks it between slices, stops, and emits a result with NO verdict
+ * fields at all.
  */
-export interface FreeBackend extends IMindBackend {
-  readonly free: true;
-}
+export class RunHalt {
+  private stopped_: { reason: HaltReason; detail: string } | null = null;
+  private readonly errors_: { at: string; message: string }[] = [];
 
-export interface BackendAccess {
-  backend: IMindBackend;
-  /** Absent only for a declared-free backend. */
-  budget?: CallBudget;
-}
-
-/** Is this object declaring itself free of charge? */
-export function isDeclaredFree(backend: IMindBackend): boolean {
-  // A real provider client is never free, whatever it says about itself. This
-  // is the one bypass worth closing by name: everything else that reaches a
-  // network in this repo goes through `FireworksMindBackend`.
-  if (backend instanceof FireworksMindBackend) return false;
-  return (backend as Partial<FreeBackend>).free === true;
-}
-
-/**
- * THE ONLY DOOR. Every instrument in `eval/**` takes its backend from here, so
- * there is one place where "this will cost money" is decided, and constructing
- * a backend and handing it straight to `runAb`/`runIgnoranceProbe`/`judgeTraces`
- * cannot reach a provider without a budget attached.
- */
-export function accessBackend(access: BackendAccess): IMindBackend {
-  // Already through the door. Composition is the normal case here — `runAb`
-  // hands its budgeted backend to the baseline agent, which hands it to an
-  // interviewee — and wrapping twice would charge twice for one call.
-  if (access.backend instanceof BudgetedBackend) return access.backend;
-  if (!access.budget) {
-    if (isDeclaredFree(access.backend)) return access.backend;
-    throw new PaidCallRefused(
-      `refused: "${access.backend.modelId}" is not a declared-free backend and no CallBudget came with it. ` +
-        'Open a budget (decision D1: ≤ 2,000 calls) and pass it, or use a free mock.',
-    );
+  halt(reason: HaltReason, detail: string): void {
+    this.stopped_ ??= { reason, detail };
   }
-  return new BudgetedBackend(access.backend, access.budget);
+
+  /** A backend error that is NOT the cap. Recorded, never hidden, never fatal. */
+  noteError(at: string, message: string): void {
+    this.errors_.push({ at, message });
+  }
+
+  get stopped(): boolean {
+    return this.stopped_ !== null;
+  }
+  get reason(): HaltReason | null {
+    return this.stopped_?.reason ?? null;
+  }
+  get detail(): string {
+    return this.stopped_?.detail ?? '';
+  }
+  /** Every backend error this run saw, in order. */
+  get backendErrors(): readonly { at: string; message: string }[] {
+    return this.errors_;
+  }
 }
 
-/** A backend that charges the budget before every call it makes. */
-class BudgetedBackend implements IMindBackend {
+/**
+ * A backend that charges the persisted counter before every call it makes, and
+ * latches the halt when the counter says no.
+ *
+ * Not exported and not constructible from outside `door.ts`: the only way to
+ * hold one is to have gone through the door.
+ */
+export class BudgetedBackend implements IMindBackend {
+  /** The marker that makes wrapping idempotent, for a judge as well as a mind. */
+  readonly budgeted = true as const;
+
   constructor(
     private readonly inner: IMindBackend,
     private readonly budget: CallBudget,
+    private readonly halt: RunHalt | undefined,
+    private readonly label: string,
   ) {}
 
   get modelId(): string {
@@ -298,34 +466,24 @@ class BudgetedBackend implements IMindBackend {
   }
 
   async complete(prompt: ThinkPrompt, input: ThinkInput): Promise<string> {
-    this.budget.spend(1);
+    try {
+      this.budget.spend(1);
+    } catch (err) {
+      if (err instanceof BudgetExhaustedError) {
+        this.halt?.halt('budget-exhausted', `${this.label}: ${err.message}`);
+      }
+      throw err;
+    }
     try {
       return await this.inner.complete(prompt, input);
+    } catch (err) {
+      this.halt?.noteError(this.label, err instanceof Error ? err.message : String(err));
+      throw err;
     } finally {
-      this.budget.recordUsage(this.inner.modelId, reportsUsage(this.inner) ? this.inner.lastUsage() : undefined);
+      this.budget.recordUsage(
+        this.inner.modelId,
+        reportsUsage(this.inner) ? (this.inner as unknown as UsageReporting).lastUsage() : undefined,
+      );
     }
   }
-}
-
-export interface JudgeAccess {
-  judge: ILeakJudge;
-  budget?: CallBudget;
-}
-
-/** The same door for a leak judge — a judge is a model too. */
-export function accessLeakJudge(access: JudgeAccess): ILeakJudge {
-  if (!access.budget) {
-    if ((access.judge as { free?: boolean }).free === true) return access.judge;
-    throw new PaidCallRefused(
-      `refused: leak judge "${access.judge.id}" is not declared free and no CallBudget came with it.`,
-    );
-  }
-  const { judge, budget } = access;
-  return {
-    id: judge.id,
-    judge(request: LeakJudgeRequest): Promise<LeakJudgeVerdict> {
-      budget.spend(1);
-      return judge.judge(request);
-    },
-  };
 }

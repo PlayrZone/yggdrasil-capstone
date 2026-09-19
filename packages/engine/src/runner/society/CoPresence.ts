@@ -39,9 +39,9 @@ export class CoPresenceSystem implements SocietySystem {
         // hour it was told — an old tale stays old in a new mouth.
         if ((tick + a.id + b.id) % 3 === 0) {
           const sa = a.mind.narratives.pickToRetell(tick);
-          if (sa) b.mind.narratives.remember(sa.id, mutateNarrative(sa.text, (b.id * 31 + sa.text.length) >>> 0), sa.x, sa.y, sa.firstTick, false);
+          if (sa) b.mind.narratives.remember(sa.id, mutateNarrative(sa.text, (b.id * 31 + sa.text.length) >>> 0), sa.place, sa.firstTick, false);
           const sb = b.mind.narratives.pickToRetell(tick);
-          if (sb) a.mind.narratives.remember(sb.id, mutateNarrative(sb.text, (a.id * 31 + sb.text.length) >>> 0), sb.x, sb.y, sb.firstTick, false);
+          if (sb) a.mind.narratives.remember(sb.id, mutateNarrative(sb.text, (a.id * 31 + sb.text.length) >>> 0), sb.place, sb.firstTick, false);
         }
       }
     }

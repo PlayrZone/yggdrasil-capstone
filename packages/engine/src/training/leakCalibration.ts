@@ -1,4 +1,5 @@
 import type { MindOutput } from '../contract/types.js';
+import { at } from '../worlds/forager/space.js';
 import type { ILeakJudge } from './leakJudge.js';
 import type { LeakDomain, LeakEvidence } from './leakMatch.js';
 import { LEAK_DOMAINS, detectLeak, detectLexicalLeaks } from './leakMatch.js';
@@ -195,8 +196,7 @@ const EMPTY_INPUT = {
     needs: { hunger: 0, rest: 0, safety: 0, socialConnection: 0 },
     health: 100,
     sick: false,
-    x: 0,
-    y: 0,
+    place: at(0, 0),
     inventory: {},
     context: { nearWater: false, night: false, inShelter: false, elevationBand: 0 },
   },
