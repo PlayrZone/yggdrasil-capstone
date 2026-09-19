@@ -13,7 +13,7 @@ fingerprints are bit-identical.
 | Module | Owns |
 |---|---|
 | `Experiment.ts` | **The facade.** Composition and delegation only; its public surface is unchanged, because `packages/lab`, `packages/mcp`, the bench and the goldens all speak it. |
-| `Scenario.ts` | **What world exists.** `Scenario` (the interface) + `ForagerScenario` (the one implementation): terrain, the resource-scatter tables, the founders, the wildlife, the demography, this world's narrator. |
+| `Scenario.ts` | **What world exists.** `Scenario` (the interface), `ForagerScenario` (the 2 km classic world) and `scenarioFor()`, which picks between it and `worlds/forager/continentScenario.ts` (the true-scale one). A scenario owns the geography, the body's scale constants, the resource-placement rules, the founders, the wildlife, the demography, the activity tiling and this world's narrator. |
 | `Runtime.ts` | **The simulation.** `SimRuntime`: the world, the body systems, the bus, the mind registry, the tick loop and its order, the scheduling glue, the roster, the clock. |
 | `EventPipeline.ts` | One global event → N partial views: counters, story, each witness's memory / narrative / respect. **Owns the listener order.** |
 | `RunCounters.ts` | Cumulative tallies + the capped tail of the event stream. |
@@ -47,6 +47,9 @@ cannot be read back cannot become the mechanism.
 Load bearing; `test/golden-state.test.ts` locks it.
 
 1. `world.spatial.reconcile()` — re-home anything a host moved between ticks.
+1b. `ActivityRegions.update` — which tiles of the world are live, computed from
+   where the living beings are BEFORE anything moves. The classic world's
+   tiling answers "all of them", always.
 2. `ResourceNodeSystem.step`
 3. `WildlifeSystem.step`
 4. `WorldRegularitiesSystem.step`
@@ -79,10 +82,26 @@ and asserts the identity or the effect of each; it fails if any of them moves.
 
 ## RNG streams
 
-Four, independent, each keyed off the run seed and consumed in exactly one place:
+Each keyed off the run seed and consumed in exactly one place:
 `<seed>:world` (scatter, in `ForagerScenario.build`) · `<seed>:genesis` (founder
 placement, in `spawnGahallians`) · `<seed>:wildlife` (`WildlifeSystem`) ·
 `<seed>:repro` (`ReproductionSystem`, pairing + trait blending + birth position).
+
+The continent uses PER-TILE streams instead of one world stream —
+`<seed>:nodes:<tx>:<ty>` and `<seed>:wildlife:<tx>:<ty>` — so what grows in one
+tile cannot depend on what grew in another, and a tile can be generated, or
+skipped, in any order.
+
+## Two scenarios, one mind
+
+`forager-classic` (the default) is the 2 km plane every golden, corpus and
+published result was recorded on. `forager-continent` is the same world where
+one unit is one metre: 8.192 km of sea, 42 km² of land, an 899 m range, and
+founders seeded into one 840 m river valley. Both hand every being the SAME
+`foragerAdapter`, so nothing under `agent/ memory/ learning/ knowledge/
+relationships/ narrative/ consciousness/` can tell them apart — which is what
+makes the pair the first real test of the W1-B seam. Each has its own goldens
+and its own world id.
 
 ## Which side of the future `WorldAdapter` line
 

@@ -1,12 +1,21 @@
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { ProvenanceLevel } from '../learning/ILearner.js';
 import type { ICognitionSink } from '../record/types.js';
+import type { ScenarioId } from '../worlds/forager/scale.js';
+
+export type { ScenarioId } from '../worlds/forager/scale.js';
 
 /**
- * The one world this engine generates. A record carries it so a held-out-world
- * transfer score has something to split on the day a second adapter exists.
+ * The world this engine generated for its first year, and still its default:
+ * a 2 km plane whose highest ground is 20 m. A record carries it so a
+ * held-out-world transfer score has something to split on.
  */
 export const FORAGER_CONTINENT = 'forager-continent-v1';
+
+/** The same world at human scale — 8.192 km of sea, 6.9 km of land, an 899 m
+ *  range. A separate id, because a row recorded in one is not a row recorded
+ *  in the other. */
+export const TRUE_SCALE_CONTINENT = 'forager-continent-truescale-v1';
 
 /** Default bound on an outcome window — a plan that neither finishes nor is
  *  replaced within this many ticks is scored on what it did get done. */
@@ -15,6 +24,20 @@ export const DEFAULT_OUTCOME_WINDOW = 400;
 export interface ExperimentOptions {
   seed: string;
   agentCount?: number;
+  /**
+   * WHICH FORAGER WORLD. `forager-classic` (the default) is the 2 km plane
+   * every golden and every corpus so far was recorded in; `forager-continent`
+   * is the same world where one unit is one metre — 42 km² of land, an 899 m
+   * range, and founders seeded into one river valley. Same adapter, same mind.
+   */
+  scenario?: ScenarioId;
+  /**
+   * Metres from a living being within which a world tile is stepped. Only the
+   * continent uses one by default (768 m); a finite value here also makes the
+   * classic world skip dormant tiles, which is how
+   * `test/continent-activity.test.ts` proves the skipping changes nothing.
+   */
+  activityRadius?: number;
   mindBackend?: IMindBackend;
   /** A/B control for Cycle 10: when false, held stories don't steer movement. Default true. */
   mythBehavior?: boolean;

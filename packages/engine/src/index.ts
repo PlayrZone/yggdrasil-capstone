@@ -24,6 +24,7 @@ export {
   NODE_YIELD,
   SEED_EVERY_N_GATHERS,
   DEFAULT_REGROW,
+  regrowthCount,
 } from './body/ResourceNodeSystem.js';
 export type { SeedInGround } from './body/WorldRegularities.js';
 export {
@@ -41,6 +42,10 @@ export {
 export type { Structure, TerrainField } from './body/PerceptionSystem.js';
 export { PerceptionSystem } from './body/PerceptionSystem.js';
 export { YggdrasilSystem } from './body/YggdrasilSystem.js';
+export { WildlifeSystem } from './body/WildlifeSystem.js';
+export type { Animal, AnimalKind, HomeRange, WildlifeRules } from './body/WildlifeSystem.js';
+export { ContinentWildlife, WILDLIFE_PER_KM2 } from './body/ContinentWildlife.js';
+export { homePosition } from './body/animals.js';
 export { spawnGahallians } from './body/genesis.js';
 export type { GenesisArea } from './body/genesis.js';
 export { CANONICAL_IDENTITIES, identityAt } from './body/identities.js';
@@ -61,9 +66,36 @@ export {
 export { WORLD, EDGE, SEA_HEIGHT, regionAt, heightAt, elevationBand, riverY, tributaryY, inRiver, LAKE_CENTERS, clampToWorld, isWater, isDeepWater } from './world/regions.js';
 export type { Region } from './world/regions.js';
 
+// ── The ground, as a scenario supplies it (M1 — "one metre is one metre") ────
+export { classicGeography, CLASSIC_SCALE, slopeOf } from './world/geography.js';
+export type { WorldGeography, BodyScale } from './world/geography.js';
+export {
+  continentGeography,
+  continentHeightAt,
+  continentElevationBand,
+  continentRegionAt,
+  freshWaterNearness,
+  inFoundingValley,
+  riverCourse,
+  CONTINENT_SPAN,
+  CONTINENT_TILE,
+  CONTINENT_LAKES,
+  FOUNDING_VALLEY,
+  HIGHLAND_M,
+  UPLAND_M,
+  RIVER_COUNT,
+} from './world/continent.js';
+export { ActivityRegions, TiledEntities } from './world/activity.js';
+export { valueNoise, smoothstep01 } from './world/noise.js';
+export { scaleReport, SCALE_TABLE, CONTINENT_SCALE, ADULT_HEIGHT_M } from './worlds/forager/scale.js';
+export type { ScaleReport, ScaleRow, ScenarioId } from './worlds/forager/scale.js';
+
 // ── Experiment runner (headless sim host) ────────────────────────────────────
-export { Experiment, FORAGER_CONTINENT } from './runner/Experiment.js';
+export { Experiment, FORAGER_CONTINENT, TRUE_SCALE_CONTINENT } from './runner/Experiment.js';
 export type { ExperimentOptions, RecordingOptions, AgentInfo } from './runner/Experiment.js';
+export { scenarioFor, ForagerScenario, CONTINENT_ACTIVITY_RADIUS } from './runner/Scenario.js';
+export type { Scenario, ScenarioWorld, ActivitySettings, Demography } from './runner/Scenario.js';
+export { ContinentScenario } from './worlds/forager/continentScenario.js';
 
 // ── Lossless cognition record (W0-B) ─────────────────────────────────────────
 export { ENGINE_VERSION } from './version.js';

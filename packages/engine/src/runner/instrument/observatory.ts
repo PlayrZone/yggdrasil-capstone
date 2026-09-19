@@ -6,7 +6,6 @@ import type { ObjectKind } from '../../worlds/forager/types.js';
 import { classifyFromCounts } from '../../analysis/archetype.js';
 import type { Archetype, ArchetypeResult } from '../../analysis/archetype.js';
 import type { AgentKnowledge } from '../../analysis/diffusion.js';
-import { regionAt } from '../../world/regions.js';
 import type { Region } from '../../world/regions.js';
 import { kinOf } from '../kinship.js';
 import type { RuntimeView } from '../RuntimeView.js';
@@ -114,7 +113,7 @@ export function agentDetail(view: RuntimeView, id: number): AgentDetail | null {
     alive: body.alive,
     x: t.x,
     y: t.y,
-    region: regionAt(t.x, t.y),
+    region: view.geography.regionAt(t.x, t.y),
     archetype: arche && arche.sampleSize > 0 ? arche.archetype : null,
     needs: { ...body.needs } as Record<string, number>,
     traits: { ...body.traits } as Record<string, number>,

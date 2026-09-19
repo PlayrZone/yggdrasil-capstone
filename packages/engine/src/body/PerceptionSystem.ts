@@ -9,12 +9,10 @@ import type {
   SimEvent,
   WorldView,
 } from './contract.js';
-import {
-  PERCEPTION_RADIUS_DAY,
-  PERCEPTION_RADIUS_NIGHT,
-  isNight,
-} from './WorldRegularities.js';
+import { isNight } from './WorldRegularities.js';
 import { seasonAt } from './Climate.js';
+import { CLASSIC_SCALE } from '../world/geography.js';
+import type { BodyScale } from '../world/geography.js';
 
 /** Component key: 'Structure'. */
 export interface Structure {
@@ -34,9 +32,6 @@ export interface TerrainField {
   elevationBand(x: number, y: number): number;
 }
 
-const NEAR_WATER_RADIUS = 12;
-const IN_SHELTER_RADIUS = 4;
-
 // Hoisted so the per-tick, per-witness queries below allocate nothing.
 const IS_DRINKABLE = (entity: Entity): boolean => {
   const node = entity.components['ResourceNode'] as ResourceNode;
@@ -53,16 +48,19 @@ const IS_ALIVE = (entity: Entity): boolean =>
  * belief divergence) begins.
  */
 export class PerceptionSystem {
-  constructor(private readonly terrain?: TerrainField) {}
+  constructor(
+    private readonly terrain?: TerrainField,
+    private readonly scale: BodyScale = CLASSIC_SCALE,
+  ) {}
 
   radius(tick: number): number {
-    return isNight(tick) ? PERCEPTION_RADIUS_NIGHT : PERCEPTION_RADIUS_DAY;
+    return isNight(tick) ? this.scale.perceptionNight : this.scale.perceptionDay;
   }
 
   /** Context features at a position — the miners' feature space. */
   contextAt(world: World, x: number, y: number, tick: number): ContextFeatures {
-    const nearWater = world.spatial.anyWithin('ResourceNode', x, y, NEAR_WATER_RADIUS, IS_DRINKABLE);
-    const inShelter = world.spatial.anyWithin('Structure', x, y, IN_SHELTER_RADIUS, IS_SHELTER);
+    const nearWater = world.spatial.anyWithin('ResourceNode', x, y, this.scale.nearWaterRadius, IS_DRINKABLE);
+    const inShelter = world.spatial.anyWithin('Structure', x, y, this.scale.inShelterRadius, IS_SHELTER);
     const elevationBand = this.terrain?.elevationBand(x, y) ?? 0;
     return { nearWater, night: isNight(tick), inShelter, elevationBand };
   }

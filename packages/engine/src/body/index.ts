@@ -46,6 +46,7 @@ export type { ResourceNode } from './ResourceNodeSystem.js';
 export {
   ResourceNodeSystem,
   createResourceNode,
+  regrowthCount,
   NODE_YIELD,
   SEED_EVERY_N_GATHERS,
   DEFAULT_REGROW,
@@ -71,7 +72,9 @@ export { PerceptionSystem } from './PerceptionSystem.js';
 export { YggdrasilSystem, CRAFT_RECIPES } from './YggdrasilSystem.js';
 
 export { WildlifeSystem } from './WildlifeSystem.js';
-export type { Animal, AnimalKind } from './WildlifeSystem.js';
+export type { Animal, AnimalKind, HomeRange, WildlifeRules } from './WildlifeSystem.js';
+export { ContinentWildlife, WILDLIFE_PER_KM2 } from './ContinentWildlife.js';
+export { homePosition } from './animals.js';
 
 export { spawnGahallians } from './genesis.js';
 export type { GenesisArea } from './genesis.js';

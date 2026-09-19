@@ -7,6 +7,7 @@ import type { Structure } from '../src/body/PerceptionSystem.js';
 import type { Animal } from '../src/body/WildlifeSystem.js';
 import type { SeedInGround } from '../src/body/WorldRegularities.js';
 import type { Intent } from '../src/contract/types.js';
+import type { ScenarioId } from '../src/worlds/forager/scale.js';
 
 /**
  * A deep, order-stable fingerprint of a whole run's state — the acceptance gate
@@ -67,11 +68,16 @@ function intent(d: Digest, i: Intent): void {
   d.push(i.utterance?.speechAct ?? '~').num(i.utterance?.targetId).push(i.utterance?.text ?? '~');
 }
 
-function entity(d: Digest, e: Entity): void {
+function entity(d: Digest, e: Entity, animals: boolean): void {
   d.num(e.id);
   for (const key of Object.keys(e.components).sort()) d.push(key);
+  const isAnimal = e.components['Animal'] !== undefined;
   const t = e.components['Transform2D'] as Transform2D | undefined;
-  if (t) d.num(t.x).num(t.y).num(t.z);
+  // An animal's POSITION is skipped when `animals` is off: a beast in a tile
+  // no living being is near has not been moved yet, which is the whole point
+  // of activity regions and is by construction unobservable. Everything else
+  // about it — its kind, health, what it is carrying — is still hashed.
+  if (t && !(isAnimal && !animals)) d.num(t.x).num(t.y).num(t.z);
 
   const body = e.components['GahallianBody'] as GahallianBody | undefined;
   if (body) {
@@ -92,8 +98,14 @@ function entity(d: Digest, e: Entity): void {
   const s = e.components['Structure'] as Structure | undefined;
   if (s) d.push(s.kind).num(s.builtBy).num(s.builtTick).dict(s.inventory as Record<string, unknown>);
 
-  const a = e.components['Animal'] as Animal | undefined;
-  if (a) d.push(a.kind).num(a.heading).num(a.changeAt).num(a.targetId).num(a.lastAttack).num(a.health);
+  const a = animals ? (e.components['Animal'] as Animal | undefined) : undefined;
+  if (a) {
+    d.push(a.kind).num(a.heading).num(a.changeAt).num(a.targetId).num(a.lastAttack).num(a.health);
+    // Only the continent's animals carry a home range, so nothing is pushed
+    // for a classic one and its fingerprint is untouched by this addition.
+    const h = a.home;
+    if (h) d.num(h.x).num(h.y).num(h.rx).num(h.ry).num(h.wx).num(h.wy).num(h.px).num(h.py);
+  }
 
   const seed = e.components['SeedInGround'] as SeedInGround | undefined;
   if (seed) d.num(seed.plantedTick);
@@ -149,8 +161,14 @@ function mind(d: Digest, exp: Experiment, agentId: number): void {
   for (const g of m.goals) d.num(g.id).push(g.description).push(g.need ?? '~').num(g.createdTick);
 }
 
+export interface FingerprintOptions {
+  /** Include animal positions and headings. Default true. */
+  readonly animals?: boolean;
+}
+
 /** The whole run's state, hashed. Identical input state ⇒ identical string. */
-export function fingerprintOf(exp: Experiment): string {
+export function fingerprintOf(exp: Experiment, options: FingerprintOptions = {}): string {
+  const animals = options.animals ?? true;
   const d = new Digest();
   d.push(exp.seed).num(exp.tick).num(exp.eventCount).num(exp.birthCount).num(exp.aliveCount());
   d.num(exp.exchangeCount).num(exp.conflictCount).num(exp.sicknessCount).num(exp.shareCount);
@@ -168,7 +186,7 @@ export function fingerprintOf(exp: Experiment): string {
   exp.world.forEach((e) => entities.push(e));
   entities.sort((a, b) => a.id - b.id);
   d.num(entities.length);
-  for (const e of entities) entity(d, e);
+  for (const e of entities) entity(d, e, animals);
 
   for (const ev of exp.eventLog) {
     d.num(ev.tick).push(ev.type).num(ev.actorId).push(ev.targetIds.join(',')).num(ev.x).num(ev.y);
@@ -185,6 +203,10 @@ export interface GoldenRun {
   readonly name: string;
   readonly seed: string;
   readonly agents: number;
+  /** Absent = the classic world, which is what every original golden used. */
+  readonly scenario?: ScenarioId;
+  /** Ticks to fingerprint at, when this run is not on the standard pair. */
+  readonly checkpoints?: readonly number[];
   /** Pre-run seeding, so the culture + craft-observation paths are locked too. */
   readonly setup?: (exp: Experiment) => void;
   readonly craftLearning?: boolean;
@@ -216,14 +238,35 @@ export function fingerprintsFor(run: GoldenRun): string[] {
     seed: run.seed,
     agentCount: run.agents,
     ...(run.craftLearning ? { craftLearning: true } : {}),
+    ...(run.scenario ? { scenario: run.scenario } : {}),
   });
   run.setup?.(exp);
   const out: string[] = [];
   let at = 0;
-  for (const cp of GOLDEN_CHECKPOINTS) {
+  for (const cp of run.checkpoints ?? GOLDEN_CHECKPOINTS) {
     exp.advance(cp - at);
     at = cp;
     out.push(fingerprintOf(exp));
   }
   return out;
 }
+
+/**
+ * THE CONTINENT'S OWN GOLDENS. Two configs, deliberately unlike each other:
+ * a small band that stays in the valley, and a larger one seeded with a myth
+ * so the culture and pilgrimage paths are locked in the bigger world too.
+ */
+export const CONTINENT_RUNS: readonly GoldenRun[] = [
+  { name: 'continent-40', seed: 'golden-continent', agents: 40, scenario: 'forager-continent' },
+  {
+    name: 'continent-120-seeded',
+    seed: 'golden-continent-b',
+    agents: 120,
+    scenario: 'forager-continent',
+    craftLearning: true,
+    setup: (exp) => {
+      exp.seedMyth('The first makers raised a home by the great river', { timesHeard: 5 });
+      exp.seedRecipe('spear', exp.agentIds.slice(0, 2));
+    },
+  },
+];

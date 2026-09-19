@@ -6,50 +6,23 @@ import type { ResourceNode } from './ResourceNodeSystem.js';
 import type { SimEventBus } from './SimEventBus.js';
 import { createResourceNode } from './ResourceNodeSystem.js';
 import { mulberry32, hashSeed } from './prng.js';
-import { WORLD, regionAt, isWater, isDeepWater, clampToWorld } from '../world/regions.js';
+import { CLASSIC_SCALE, classicGeography } from '../world/geography.js';
+import type { BodyScale, WorldGeography } from '../world/geography.js';
+import {
+  ATTACK_COOLDOWN,
+  MEAT_PER_PREY,
+  PREY,
+  PRED_HEALTH,
+  WATER_KIND,
+  resolveStrike,
+} from './animals.js';
+import type { Animal, AnimalKind, Quarry } from './animals.js';
 
-export type AnimalKind = 'deer' | 'hare' | 'boar' | 'fish' | 'wolf' | 'bear' | 'crocodile';
+export type { Animal, AnimalKind, HomeRange } from './animals.js';
 
-/** Component key: 'Animal'. Prey are also `game` ResourceNodes (huntable for
- *  meat); predators are threats that hunt Gahallians. */
-export interface Animal {
-  kind: AnimalKind;
-  heading: number;
-  changeAt: number;
-  /** Predators only: current quarry + attack cooldown + health (can be killed). */
-  targetId: number;
-  lastAttack: number;
-  health: number;
-}
-
-// What a held weapon does to a predator that attacks you. Emergent: you only
-// have one if you DISCOVERED how to craft it. Best weapon in hand is used.
-const WEAPON_DAMAGE: Record<string, number> = { spear: 12, handaxe: 9, club: 6 };
-const PRED_HEALTH: Record<string, number> = { wolf: 18, bear: 34, crocodile: 24 };
-
-function bestWeaponDamage(inv: Partial<Record<string, number>>): number {
-  let best = 0;
-  for (const [w, d] of Object.entries(WEAPON_DAMAGE)) if ((inv[w] ?? 0) > 0 && d > best) best = d;
-  return best;
-}
-
-const PREY: ReadonlySet<AnimalKind> = new Set<AnimalKind>(['deer', 'hare', 'boar', 'fish']);
-const WATER_KIND: ReadonlySet<AnimalKind> = new Set<AnimalKind>(['fish', 'crocodile']);
-// Predators are slower than a Gahallian (0.5) so a fleeing one can escape.
-const SPEED: Record<AnimalKind, number> = { deer: 0.34, hare: 0.4, boar: 0.3, fish: 0.3, wolf: 0.44, bear: 0.36, crocodile: 0.4 };
-const DAMAGE: Record<string, number> = { wolf: 4, bear: 8, crocodile: 7 };
-const DETECT = 42; // a predator only notices a Gahallian this close
-const GIVE_UP_DIST = 70; // and abandons a chase past here
-const ATTACK_R = 7;
-const ATTACK_COOLDOWN = 60; // ~slow maulings, not a death ray
-const FEAR_R = 46; // prey bolt from a predator within this range
-const MEAT_PER_PREY = 4;
-
-function habitatOk(kind: AnimalKind, x: number, y: number): boolean {
-  if (WATER_KIND.has(kind)) return isWater(x, y);
-  // Land animals avoid the sea/lakes and the high peaks.
-  const r = regionAt(x, y);
-  return !isDeepWater(x, y) && r !== 'mountain';
+/** Every world's wildlife, as the runtime sees it: something that steps. */
+export interface WildlifeRules {
+  step(world: World, tick: number, bus: SimEventBus): void;
 }
 
 /**
@@ -58,17 +31,16 @@ function habitatOk(kind: AnimalKind, x: number, y: number): boolean {
  * meat through the normal gather loop); wolves and bears stalk the land while
  * crocodiles lurk in the water, hunting Gahallians who stray too close. Nothing
  * is scripted onto the Gahallians — the danger and the food are simply there.
+ *
+ * THIS IS THE CLASSIC WORLD'S WILDLIFE and stays exactly as it was: a shared
+ * RNG stream, a wandering heading per animal, prey that bolt from predators,
+ * and a full rescan every `REFRESH` ticks. It does not scale past a 2 km plane
+ * — `stepPrey` alone is O(prey × predators) — which is why the continent has
+ * its own (`ContinentWildlife`) rather than this one with bigger numbers.
  */
 const REFRESH = 12; // ticks between full entity rescans (perf — animals are slow)
 
-interface Person {
-  id: number;
-  x: number;
-  y: number;
-  body: GahallianBody;
-}
-
-export class WildlifeSystem {
+export class WildlifeSystem implements WildlifeRules {
   private readonly rng: () => number;
   private readonly herd: number;
   private spawned = false;
@@ -76,13 +48,28 @@ export class WildlifeSystem {
   // tick (there are ~2000 resource entities). Slightly-stale positions are fine
   // for slow-moving wildlife.
   private animalCache: Entity[] = [];
-  private peopleCache: Person[] = [];
+  private peopleCache: Quarry[] = [];
   /** Quarry lookup for the cached people — a predator asks by id every tick. */
-  private peopleById = new Map<number, Person>();
+  private peopleById = new Map<number, Quarry>();
 
-  constructor(seed: string, herd: number) {
+  constructor(
+    seed: string,
+    herd: number,
+    private readonly geography: WorldGeography = classicGeography,
+    private readonly scale: BodyScale = CLASSIC_SCALE,
+  ) {
     this.rng = mulberry32(hashSeed(`${seed}:wildlife`));
     this.herd = herd;
+  }
+
+  private speedOf(kind: AnimalKind): number {
+    return this.scale.animalSpeed[kind] ?? 0.3;
+  }
+
+  private habitatOk(kind: AnimalKind, x: number, y: number): boolean {
+    if (WATER_KIND.has(kind)) return this.geography.isWater(x, y);
+    // Land animals avoid the sea/lakes and the high peaks.
+    return !this.geography.isDeepWater(x, y) && this.geography.regionAt(x, y) !== 'mountain';
   }
 
   private pickKind(): AnimalKind {
@@ -100,12 +87,13 @@ export class WildlifeSystem {
 
   private spawnOne(world: World, tick: number, kind?: AnimalKind): void {
     const k = kind ?? this.pickKind();
-    let x = WORLD / 2;
-    let y = WORLD / 2;
+    const span = this.geography.span;
+    let x = span / 2;
+    let y = span / 2;
     for (let i = 0; i < 60; i++) {
-      x = WORLD * 0.08 + this.rng() * WORLD * 0.78;
-      y = WORLD * 0.06 + this.rng() * WORLD * 0.88;
-      if (habitatOk(k, x, y)) break;
+      x = span * 0.08 + this.rng() * span * 0.78;
+      y = span * 0.06 + this.rng() * span * 0.88;
+      if (this.habitatOk(k, x, y)) break;
     }
     const animal: Animal = {
       kind: k,
@@ -129,7 +117,7 @@ export class WildlifeSystem {
 
     // Rescan the world only periodically; reuse the caches in between.
     if (tick % REFRESH === 0 || this.animalCache.length === 0) {
-      const people: Person[] = [];
+      const people: Quarry[] = [];
       const animals: Entity[] = [];
       world.spatial.each('Animal', (e) => animals.push(e));
       world.spatial.each('GahallianBody', (e) => {
@@ -167,13 +155,13 @@ export class WildlifeSystem {
       animal.heading += (this.rng() - 0.5) * Math.PI;
       animal.changeAt = tick + 80 + Math.floor(this.rng() * 240);
     }
-    const sp = SPEED[animal.kind];
+    const sp = this.speedOf(animal.kind);
     const nx = t.x + Math.cos(animal.heading) * sp;
     const ny = t.y + Math.sin(animal.heading) * sp;
-    if (habitatOk(animal.kind, nx, ny)) {
+    if (this.habitatOk(animal.kind, nx, ny)) {
       t.x = nx;
       t.y = ny;
-      clampToWorld(t);
+      this.geography.clamp(t);
       world.spatial.markMoved(id);
     } else {
       animal.heading += Math.PI * 0.7; // turn back into habitat
@@ -193,13 +181,13 @@ export class WildlifeSystem {
     const dx = tx - t.x;
     const dy = ty - t.y;
     const d = Math.hypot(dx, dy) || 1;
-    const sp = SPEED[animal.kind] * mult;
+    const sp = this.speedOf(animal.kind) * mult;
     const nx = t.x + (dx / d) * sp;
     const ny = t.y + (dy / d) * sp;
-    if (habitatOk(animal.kind, nx, ny)) {
+    if (this.habitatOk(animal.kind, nx, ny)) {
       t.x = nx;
       t.y = ny;
-      clampToWorld(t);
+      this.geography.clamp(t);
       world.spatial.markMoved(id);
     } else {
       animal.changeAt = tick - 1; // force a new heading and graze instead
@@ -210,7 +198,7 @@ export class WildlifeSystem {
   private stepPrey(world: World, animal: Animal, id: number, t: Transform2D, animals: Entity[], tick: number): void {
     // Bolt from the nearest predator in sight; otherwise graze.
     let nearest: Transform2D | null = null;
-    let best = FEAR_R * FEAR_R;
+    let best = this.scale.preyFear * this.scale.preyFear;
     for (const o of animals) {
       const oa = o.components['Animal'] as Animal;
       if (PREY.has(oa.kind)) continue;
@@ -230,13 +218,13 @@ export class WildlifeSystem {
     animal: Animal,
     id: number,
     t: Transform2D,
-    people: Person[],
+    people: Quarry[],
     tick: number,
     bus: SimEventBus,
   ): void {
     // Re-acquire a quarry periodically.
     if (tick % 16 === 0 || animal.targetId === 0) {
-      let best = DETECT * DETECT;
+      let best = this.scale.predatorDetect * this.scale.predatorDetect;
       animal.targetId = 0;
       for (const p of people) {
         const dd = (p.x - t.x) ** 2 + (p.y - t.y) ** 2;
@@ -253,41 +241,13 @@ export class WildlifeSystem {
       return;
     }
     const dist = Math.hypot(quarry.x - t.x, quarry.y - t.y);
-    if (dist > GIVE_UP_DIST) {
+    if (dist > this.scale.predatorGiveUp) {
       animal.targetId = 0; // lost it — go back to roaming
       this.wander(world, id, animal, t, tick);
       return;
     }
-    if (dist <= ATTACK_R + 2) {
-      if (tick - animal.lastAttack >= ATTACK_COOLDOWN) {
-        animal.lastAttack = tick;
-        const dmg = DAMAGE[animal.kind] ?? 6;
-        quarry.body.health -= dmg;
-        quarry.body.needs.safety = Math.min(100, quarry.body.needs.safety + 38); // terror
-        quarry.body.hitThisTick = true;
-        bus.emit({
-          tick,
-          type: 'AttackedByPredator',
-          actorId: quarry.id,
-          targetIds: [id],
-          x: quarry.x,
-          y: quarry.y,
-          payload: { predator: animal.kind, damage: dmg },
-        });
-        // An ARMED Gahallian fights back — the whole point of weapons. They
-        // only have one if they discovered how to craft it.
-        const wdmg = bestWeaponDamage(quarry.body.inventory as Partial<Record<string, number>>);
-        if (wdmg > 0) {
-          animal.health -= wdmg;
-          bus.emit({ tick, type: 'FoughtPredator', actorId: quarry.id, targetIds: [id], x: quarry.x, y: quarry.y, payload: { predator: animal.kind, damage: wdmg } });
-          if (animal.health <= 0) {
-            world.removeEntity(id); // the beast is slain
-            world.createEntity({ Transform2D: { x: t.x, y: t.y } satisfies Transform2D, ResourceNode: createResourceNode('game', 2) }); // a carcass to butcher
-            bus.emit({ tick, type: 'KilledPredator', actorId: quarry.id, targetIds: [], x: quarry.x, y: quarry.y, payload: { predator: animal.kind } });
-            quarry.body.needs.safety = Math.max(0, quarry.body.needs.safety - 25); // relief
-          }
-        }
-      }
+    if (dist <= this.scale.predatorAttack + 2) {
+      if (tick - animal.lastAttack >= ATTACK_COOLDOWN) resolveStrike(world, bus, tick, id, animal, t, quarry);
     } else {
       this.moveToward(world, id, animal, t, quarry.x, quarry.y, tick, 1);
     }

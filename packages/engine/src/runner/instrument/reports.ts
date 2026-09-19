@@ -9,6 +9,7 @@ import type { CultureReport } from '../../analysis/culture.js';
 import { analyzeMyth } from '../../analysis/myth.js';
 import type { MythReport } from '../../analysis/myth.js';
 import { analyzeSacredPlaces } from '../../analysis/sacredPlaces.js';
+import { CLASSIC_SCALE } from '../../world/geography.js';
 import type { SacredPlacesReport } from '../../analysis/sacredPlaces.js';
 import type { Archetype } from '../../analysis/archetype.js';
 import type { RuntimeView } from '../RuntimeView.js';
@@ -119,7 +120,10 @@ export function sacredPlaces(view: RuntimeView): SacredPlacesReport {
       s.holders++;
     }
   }
-  return analyzeSacredPlaces([...sites.values()]);
+  // Named rather than left to the analyzer's default, and deliberately the
+  // SAME radius in every world: a sacred place is a place, and it does not
+  // grow because the map did — so the two worlds' counts compare directly.
+  return analyzeSacredPlaces([...sites.values()], { radius: CLASSIC_SCALE.sacredPlaceRadius });
 }
 
 export interface InstitutionsReport {

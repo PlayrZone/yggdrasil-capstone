@@ -2,10 +2,11 @@ import type { GahallianBody } from '../../body/GahallianBody.js';
 import { createGahallianBody } from '../../body/index.js';
 import { mulberry32, hashSeed } from '../../body/prng.js';
 import type { Traits } from '../../contract/types.js';
-// World geography reached from a society process — inherited leakage
-// (audit 01 §4). It moves to the adapter's `space` in W1-B; moving it now
-// would change where children land, and the goldens lock that.
-import { clampToWorld, isDeepWater } from '../../world/regions.js';
+// Geography reached from a society process — inherited leakage (audit 01 §4).
+// It moves to the adapter's `space` in W1-B; it is at least the SCENARIO's
+// geography now, so a child is born in the world its parents live in.
+import { CLASSIC_SCALE, classicGeography } from '../../world/geography.js';
+import type { BodyScale, WorldGeography } from '../../world/geography.js';
 import type { Demography } from '../Scenario.js';
 import type { SocietyHost, SocietySystem } from './SocietySystem.js';
 
@@ -34,6 +35,8 @@ export class ReproductionSystem implements SocietySystem {
     private readonly host: SocietyHost,
     private readonly demography: Demography,
     seed: string,
+    private readonly geography: WorldGeography = classicGeography,
+    private readonly scale: BodyScale = CLASSIC_SCALE,
   ) {
     this.intervalTicks = demography.reproInterval;
     this.rng = mulberry32(hashSeed(`${seed}:repro`));
@@ -87,9 +90,13 @@ export class ReproductionSystem implements SocietySystem {
       loyalty: blend('loyalty'),
       riskTolerance: blend('riskTolerance'),
     };
-    const pos = { x: (a.x + b.x) / 2 + (this.rng() - 0.5) * 6, y: (a.y + b.y) / 2 + (this.rng() - 0.5) * 6 };
-    clampToWorld(pos);
-    if (isDeepWater(pos.x, pos.y)) {
+    const jitter = this.scale.childSpawnJitter * 2;
+    const pos = {
+      x: (a.x + b.x) / 2 + (this.rng() - 0.5) * jitter,
+      y: (a.y + b.y) / 2 + (this.rng() - 0.5) * jitter,
+    };
+    this.geography.clamp(pos);
+    if (this.geography.isDeepWater(pos.x, pos.y)) {
       pos.x = a.x;
       pos.y = a.y;
     }

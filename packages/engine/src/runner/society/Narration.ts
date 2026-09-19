@@ -1,5 +1,6 @@
 import type { SimEvent } from '../../contract/types.js';
-import { regionAt } from '../../world/regions.js';
+import { classicGeography } from '../../world/geography.js';
+import type { WorldGeography } from '../../world/geography.js';
 import type { AuthoredStory, NarrativeAuthor } from './SocietySystem.js';
 
 /** What the author needs from the host: who a being is called. */
@@ -14,11 +15,15 @@ export interface NarrationHost {
  * of the same event remembers the same story.
  */
 export class ForagerNarrator implements NarrativeAuthor {
-  constructor(private readonly host: NarrationHost) {}
+  constructor(
+    private readonly host: NarrationHost,
+    /** Which map's region names the tales are told in. */
+    private readonly geography: WorldGeography = classicGeography,
+  ) {}
 
   storyFor(event: SimEvent): AuthoredStory | null {
     const bucket = Math.floor(event.tick / 300);
-    const region = regionAt(event.x, event.y);
+    const region = this.geography.regionAt(event.x, event.y);
     const who = this.host.nameOf(event.actorId);
     const at = { x: event.x, y: event.y };
     switch (event.type) {

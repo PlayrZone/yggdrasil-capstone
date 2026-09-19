@@ -1,4 +1,4 @@
-import { WORLD } from '../../world/regions.js';
+import { CLASSIC_SCALE } from '../../world/geography.js';
 import type { RuntimeView } from '../RuntimeView.js';
 
 interface SiteMeasure {
@@ -50,9 +50,12 @@ export function beliefBehavior(view: RuntimeView): BeliefBehaviorReport {
     }
   }
   const alive = positions.length || 1;
-  const R = 60;
+  const R = CLASSIC_SCALE.congregationRadius;
   const R2 = R * R;
-  const expected = (alive / (WORLD * WORLD)) * Math.PI * R2; // uniform-density baseline within R
+  // Uniform-density baseline within R — over THIS world's area, not the 2 km
+  // plane's. Held at the classic radius so the two worlds' numbers compare.
+  const span = view.geography.span;
+  const expected = (alive / (span * span)) * Math.PI * R2;
   const measure = (s: Site): SiteMeasure => {
     let near = 0;
     for (const p of positions) if ((p.x - s.x) ** 2 + (p.y - s.y) ** 2 <= R2) near++;

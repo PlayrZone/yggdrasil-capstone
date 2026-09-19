@@ -27,7 +27,9 @@ const BODY = fileURLToPath(new URL('../src/body/', import.meta.url));
  * added and covered.
  */
 const ENTRY_POINTS: Record<string, () => Promise<unknown>> = {
+  animals: () => import('../src/body/animals.js'),
   Climate: () => import('../src/body/Climate.js'),
+  ContinentWildlife: () => import('../src/body/ContinentWildlife.js'),
   clock: () => import('../src/body/clock.js'),
   contract: () => import('../src/body/contract.js'),
   GahallianBody: () => import('../src/body/GahallianBody.js'),

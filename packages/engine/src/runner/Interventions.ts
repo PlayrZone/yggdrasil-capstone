@@ -2,10 +2,6 @@ import { CRAFT_RECIPES } from '../body/index.js';
 import { emptyContext, heardEvent } from '../contract/adapter.js';
 import type { SimEvent } from '../contract/types.js';
 import type { Needs, ObjectKind } from '../worlds/forager/types.js';
-// World geography reached from an intervention: the default seeding point and
-// the clamp. Inherited leakage (audit 01 §4); it moves to the adapter's
-// `space` in W1-B.
-import { WORLD, clampToWorld } from '../world/regions.js';
 import type { SimRuntime } from './Runtime.js';
 
 const NEED_KEYS = ['hunger', 'rest', 'safety', 'socialConnection'] as const satisfies readonly (keyof Needs)[];
@@ -94,7 +90,7 @@ export class Interventions {
     if (!t) return false;
     t.x = x;
     t.y = y;
-    clampToWorld(t);
+    rt.geography.clamp(t);
     rt.world.spatial.markMoved(id);
     rt.scaffold.relocated(id, rt.tick);
     return true;
@@ -122,8 +118,10 @@ export class Interventions {
   seedMyth(text: string, opts: { id?: string; x?: number; y?: number; timesHeard?: number; toAgentIds?: number[] } = {}): void {
     const rt = this.rt;
     const id = opts.id ?? 'seed:myth';
-    const x = opts.x ?? WORLD / 2;
-    const y = opts.y ?? WORLD / 2;
+    // A myth with no site is anchored at the world's own beginning — the
+    // middle of the classic plane, the founding valley on the continent.
+    const x = opts.x ?? rt.geography.origin.x;
+    const y = opts.y ?? rt.geography.origin.y;
     const timesHeard = opts.timesHeard ?? 6;
     const ids = opts.toAgentIds ?? rt.agentIds;
     for (const aid of ids) {

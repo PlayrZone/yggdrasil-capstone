@@ -10,6 +10,8 @@ import {
   WildlifeSystem,
   YggdrasilSystem,
 } from '../body/index.js';
+import { ActivityRegions, TiledEntities } from '../world/activity.js';
+import type { BodyScale, WorldGeography } from '../world/geography.js';
 import { AgentMind } from '../agent/AgentMind.js';
 import { CognitionLog } from '../scheduler/CognitionLog.js';
 import { CognitionScheduler } from '../scheduler/CognitionScheduler.js';
@@ -27,6 +29,7 @@ import { createRecorder } from './recording.js';
 import { RunCounters } from './RunCounters.js';
 import type { BirthRecord, ObservedEntity, RuntimeView } from './RuntimeView.js';
 import type { Scenario } from './Scenario.js';
+import type { WildlifeRules } from '../body/WildlifeSystem.js';
 import { enrichCulture } from './promptCulture.js';
 import { CoPresenceSystem } from './society/CoPresence.js';
 import { ReproductionSystem } from './society/Reproduction.js';
@@ -61,6 +64,11 @@ export class SimRuntime implements RuntimeView, SocietyHost {
   /** What kind of place this is, as data — read by every mind it creates, by
    *  the event pipeline, by the recorder and by the clock. Never mutated. */
   readonly adapter: WorldAdapter;
+  /** The ground this run happens on — read by the body and the instrument,
+   *  never by a mind. */
+  readonly geography: WorldGeography;
+  /** How far a metre is here. */
+  readonly scale: BodyScale;
   readonly world = new World();
   readonly bus = new SimEventBus();
   readonly perception: PerceptionSystem;
@@ -83,9 +91,11 @@ export class SimRuntime implements RuntimeView, SocietyHost {
 
   tick = 0;
 
-  private readonly resources = new ResourceNodeSystem();
+  /** Which tiles of the world are live this tick — see `world/activity.ts`. */
+  private readonly tiles: ActivityRegions;
+  private readonly resources: ResourceNodeSystem;
   private readonly regularities = new WorldRegularitiesSystem();
-  private readonly wildlife: WildlifeSystem;
+  private readonly wildlife: WildlifeRules;
   private readonly society: readonly SocietySystem[];
   private readonly narrator: NarrativeAuthor;
   // Optional LLM consciousness. When absent, agents run pure reflex.
@@ -101,12 +111,24 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     const { seed, agentCount = 100, mindBackend } = options;
     this.seed = seed;
     this.adapter = scenario.adapter;
+    this.geography = scenario.geography;
+    this.scale = scenario.scale;
     this.flags = runFlagsFrom(options);
     const recording = options.recording;
+    const activity = scenario.activity;
+    this.tiles = Number.isFinite(activity.radius)
+      ? ActivityRegions.within(this.geography.span, activity.tileSize, activity.radius)
+      : ActivityRegions.everywhere(this.geography.span, activity.tileSize);
+    // Subscribed BEFORE the scenario furnishes the world, so it sees every
+    // node the world is built with, not only the ones that sprout later.
+    this.resources = new ResourceNodeSystem(
+      this.tiles,
+      new TiledEntities(this.world, this.tiles, ResourceNodeSystem.REGROWABLE),
+    );
     // Terrain elevation feeds the `highland` context feature so mountains read
     // differently from the river valley (ore-in-highlands becomes discoverable).
-    this.perception = new PerceptionSystem(scenario.terrain);
-    this.body = new YggdrasilSystem(this.perception);
+    this.perception = new PerceptionSystem(scenario.terrain, this.scale);
+    this.body = new YggdrasilSystem(this.perception, this.geography, this.scale);
     this.narrator = scenario.narrator(this);
     if (mindBackend) {
       this.cognitionLog = new CognitionLog();
@@ -138,7 +160,7 @@ export class SimRuntime implements RuntimeView, SocietyHost {
       this.backendLabel = 'reflex';
     }
 
-    const built = scenario.build(this.world);
+    const built = scenario.build(this.world, this.tiles);
     this.wildlife = built.wildlife;
     // Cognition VARIES by personality, so no two minds are equal: the curious
     // think and act more often, the curious+ambitious learn faster and remember
@@ -153,7 +175,7 @@ export class SimRuntime implements RuntimeView, SocietyHost {
     // divides their intervals. Both are locked by the goldens.
     this.society = [
       new CoPresenceSystem(this),
-      new ReproductionSystem(this, scenario.demography, seed),
+      new ReproductionSystem(this, scenario.demography, seed, this.geography, this.scale),
     ];
 
     this.recorder = createRecorder(this, {
@@ -179,6 +201,9 @@ export class SimRuntime implements RuntimeView, SocietyHost {
       // Positions written from outside the body (a host relocating a being
       // between ticks) are re-homed here, before anything queries the world.
       this.world.spatial.reconcile();
+      // Which ground is live this tick. Read by everything below it, so it is
+      // computed from where the beings ARE before anything else moves.
+      this.tiles.update(this.world, tick);
       this.resources.step(this.world, tick);
       this.wildlife.step(this.world, tick, this.bus);
       this.regularities.step(this.world, tick, this.bus);

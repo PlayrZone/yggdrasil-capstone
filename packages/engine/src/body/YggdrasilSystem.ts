@@ -17,15 +17,10 @@ import {
   SICKNESS_TICKS,
 } from './WorldRegularities.js';
 import { coldPressure, hungerRateMultiplier } from './Climate.js';
-import { clampToWorld, isDeepWater } from '../world/regions.js';
+import { CLASSIC_SCALE, classicGeography } from '../world/geography.js';
+import type { BodyScale, WorldGeography } from '../world/geography.js';
 
-const MOVE_SPEED = 0.5;
-const ARRIVE_DISTANCE = 1.0;
-const INTERACT_RANGE = 2.5;
-const GIVE_RANGE = 3;
-const ATTACK_RANGE = 2;
 const ATTACK_DAMAGE = 15;
-const SOCIAL_RANGE = 8;
 
 const EAT_HUNGER_RELIEF = 55;
 const SICK_SAFETY_HIT = 15;
@@ -72,7 +67,13 @@ const DECAY = {
  * Deterministic: no randomness, agents processed in entity-id order.
  */
 export class YggdrasilSystem {
-  constructor(private readonly perception = new PerceptionSystem()) {}
+  constructor(
+    private readonly perception = new PerceptionSystem(),
+    /** Where the water and the world's edge are. Defaults to the classic map. */
+    private readonly geography: WorldGeography = classicGeography,
+    /** How far a metre is: reach, pace, earshot. See `world/geography.ts`. */
+    private readonly scale: BodyScale = CLASSIC_SCALE,
+  ) {}
 
   step(world: World, tick: number, bus: SimEventBus): void {
     const agents: Entity[] = [];
@@ -142,7 +143,7 @@ export class YggdrasilSystem {
       'GahallianBody',
       t.x,
       t.y,
-      SOCIAL_RANGE,
+      this.scale.socialRange,
       IS_ALIVE,
       entity.id,
     );
@@ -326,7 +327,7 @@ export class YggdrasilSystem {
         return;
       }
       case 'Gather': {
-        const node = this.componentNear<ResourceNode>(world, t, intent.targetId, 'ResourceNode', INTERACT_RANGE);
+        const node = this.componentNear<ResourceNode>(world, t, intent.targetId, 'ResourceNode', this.scale.interactRange);
         if (!node) return reject('out-of-range');
         if (node.value.stock <= 0) {
           bus.emit({
@@ -423,7 +424,7 @@ export class YggdrasilSystem {
         return;
       }
       case 'Drink': {
-        const node = this.nearestNodeOfKind(world, t, 'waterSource', GIVE_RANGE);
+        const node = this.nearestNodeOfKind(world, t, 'waterSource', this.scale.giveRange);
         if (!node) return reject('no-water');
         const before = body.needs.hunger;
         body.needs.hunger = clamp(body.needs.hunger - 2);
@@ -506,7 +507,7 @@ export class YggdrasilSystem {
         const kind = intent.objectKind ?? 'seed';
         if ((body.inventory[kind] ?? 0) <= 0) return reject('not-in-inventory');
         if (intent.targetId !== undefined) {
-          const container = this.componentNear<Structure>(world, t, intent.targetId, 'Structure', GIVE_RANGE);
+          const container = this.componentNear<Structure>(world, t, intent.targetId, 'Structure', this.scale.giveRange);
           if (!container || container.value.kind !== 'container') return reject('no-container');
           removeItem(body.inventory, kind, 1);
           container.value.inventory[kind] = ((container.value.inventory[kind] as number | undefined) ?? 0) + 1;
@@ -554,7 +555,7 @@ export class YggdrasilSystem {
       case 'Withdraw': {
         const kind = intent.objectKind;
         if (!kind) return reject('no-object-kind');
-        const container = this.componentNear<Structure>(world, t, intent.targetId, 'Structure', GIVE_RANGE);
+        const container = this.componentNear<Structure>(world, t, intent.targetId, 'Structure', this.scale.giveRange);
         if (!container || container.value.kind !== 'container') return reject('no-container');
         const available = (container.value.inventory[kind] as number | undefined) ?? 0;
         if (available <= 0) return reject('container-empty');
@@ -575,7 +576,7 @@ export class YggdrasilSystem {
       case 'Give': {
         const kind = intent.objectKind ?? 'berry';
         if ((body.inventory[kind] ?? 0) <= 0) return reject('not-in-inventory');
-        const receiver = this.livingAgentNear(world, t, intent.targetId, GIVE_RANGE);
+        const receiver = this.livingAgentNear(world, t, intent.targetId, this.scale.giveRange);
         if (!receiver) return reject('no-receiver');
         removeItem(body.inventory, kind, 1);
         const receiverBody = receiver.components['GahallianBody'] as GahallianBody;
@@ -593,7 +594,7 @@ export class YggdrasilSystem {
         return;
       }
       case 'Attack': {
-        const victim = this.livingAgentNear(world, t, intent.targetId, ATTACK_RANGE);
+        const victim = this.livingAgentNear(world, t, intent.targetId, this.scale.attackRange);
         if (!victim) return reject('out-of-range');
         const victimBody = victim.components['GahallianBody'] as GahallianBody;
         victimBody.health -= ATTACK_DAMAGE;
@@ -636,7 +637,8 @@ export class YggdrasilSystem {
         const tt = target.components['Transform2D'] as Transform2D;
         const dx = tt.x - t.x;
         const dy = tt.y - t.y;
-        if (dx * dx + dy * dy <= GIVE_RANGE * GIVE_RANGE) return this.advance(body);
+        const reach = this.scale.giveRange;
+        if (dx * dx + dy * dy <= reach * reach) return this.advance(body);
         this.moveToward(world, entity.id, t, tt.x, tt.y);
         return;
       }
@@ -647,12 +649,13 @@ export class YggdrasilSystem {
         const dy = t.y - intent.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
         {
-          const fx = t.x + (dx / d) * MOVE_SPEED * 1.5; // Fear is fast.
-          const fy = t.y + (dy / d) * MOVE_SPEED * 1.5;
-          if (!isDeepWater(fx, fy)) {
+          const flee = this.scale.moveSpeed * this.scale.fleeSpeed; // Fear is fast.
+          const fx = t.x + (dx / d) * flee;
+          const fy = t.y + (dy / d) * flee;
+          if (!this.geography.isDeepWater(fx, fy)) {
             t.x = fx;
             t.y = fy;
-            clampToWorld(t);
+            this.geography.clamp(t);
             world.spatial.markMoved(entity.id);
           }
         }
@@ -676,14 +679,14 @@ export class YggdrasilSystem {
     const dx = x - t.x;
     const dy = y - t.y;
     const d = Math.sqrt(dx * dx + dy * dy);
-    if (d <= ARRIVE_DISTANCE) return true;
-    const nx = t.x + (dx / d) * MOVE_SPEED;
-    const ny = t.y + (dy / d) * MOVE_SPEED;
+    if (d <= this.scale.arriveDistance) return true;
+    const nx = t.x + (dx / d) * this.scale.moveSpeed;
+    const ny = t.y + (dy / d) * this.scale.moveSpeed;
     // Deep water (sea, lakes) is impassable on foot — stop at the shoreline.
-    if (isDeepWater(nx, ny)) return true;
+    if (this.geography.isDeepWater(nx, ny)) return true;
     t.x = nx;
     t.y = ny;
-    clampToWorld(t);
+    this.geography.clamp(t);
     world.spatial.markMoved(id);
     return false;
   }

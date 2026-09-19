@@ -3,11 +3,19 @@ import type { Entity } from '../core/Entity.js';
 import type { WorldAdapter } from '../contract/adapter.js';
 import type { ResourceNodeKind } from '../worlds/forager/types.js';
 import type { TerrainField } from '../body/PerceptionSystem.js';
+import type { WildlifeRules } from '../body/WildlifeSystem.js';
 import { WildlifeSystem, createResourceNode, spawnGahallians, TICKS_PER_SEASON } from '../body/index.js';
 import { mulberry32, hashSeed } from '../body/prng.js';
 import { foragerAdapter } from '../worlds/forager/adapter.js';
+import { ContinentScenario } from '../worlds/forager/continentScenario.js';
+import { CONTINENT_TILE } from '../world/continent.js';
+import { CLASSIC_SCALE, classicGeography } from '../world/geography.js';
+import type { ActivityRegions } from '../world/activity.js';
+import type { BodyScale, WorldGeography } from '../world/geography.js';
 import { WORLD, elevationBand, regionAt, riverY, tributaryY, LAKE_CENTERS, isDeepWater } from '../world/regions.js';
 import type { Region } from '../world/regions.js';
+import { FORAGER_CONTINENT, TRUE_SCALE_CONTINENT } from './options.js';
+import type { ExperimentOptions } from './options.js';
 import { ForagerNarrator } from './society/Narration.js';
 import type { NarrationHost } from './society/Narration.js';
 import type { NarrativeAuthor } from './society/SocietySystem.js';
@@ -32,14 +40,30 @@ export interface Scenario {
    * world AND declares it; by B6 the two are one thing.
    */
   readonly adapter: WorldAdapter;
+  /** The ground: extents, relief, water, and the world's own edge. */
+  readonly geography: WorldGeography;
+  /** How far a metre is to a body here — reach, pace, earshot, eyesight. */
+  readonly scale: BodyScale;
   /** Elevation provider for the `highland` context feature. */
   readonly terrain: TerrainField;
   /** Life-cycle numbers the society processes run on. */
   readonly demography: Demography;
+  /** How the world is tiled for activity, and how live a tile stays. */
+  readonly activity: ActivitySettings;
   /** Furnish `world`: resources, founders, wildlife. Called once, at birth. */
-  build(world: World): ScenarioWorld;
+  build(world: World, tiles: ActivityRegions): ScenarioWorld;
   /** This world's tale-teller, bound to the host that knows beings' names. */
   narrator(host: NarrationHost): NarrativeAuthor;
+}
+
+/**
+ * The world's activity tiling — see `world/activity.ts`. A `radius` that is
+ * not finite means every tile is always live, which is what the classic world
+ * asks for: it steps exactly what it always stepped.
+ */
+export interface ActivitySettings {
+  readonly tileSize: number;
+  readonly radius: number;
 }
 
 /** How a people ages, pairs and is bounded — world data, not mind data. */
@@ -59,7 +83,30 @@ export interface Demography {
 export interface ScenarioWorld {
   /** The founding population, in spawn order. */
   readonly founders: readonly Entity[];
-  readonly wildlife: WildlifeSystem;
+  readonly wildlife: WildlifeRules;
+}
+
+/** How far from a living being a continent tile stays live, in metres. */
+export const CONTINENT_ACTIVITY_RADIUS = 768;
+
+/**
+ * WHICH WORLD THIS RUN HAPPENS IN. Two scenarios, one mind: both hand the same
+ * `foragerAdapter` to every being, so nothing under `agent/ memory/ learning/
+ * knowledge/ relationships/ narrative/ consciousness/` can tell them apart.
+ * The classic world stays the default, because every golden, corpus and
+ * published result stands on it.
+ */
+export function scenarioFor(options: ExperimentOptions): Scenario {
+  const agents = options.agentCount ?? 100;
+  if (options.scenario === 'forager-continent') {
+    return new ContinentScenario(
+      TRUE_SCALE_CONTINENT,
+      options.seed,
+      agents,
+      options.activityRadius ?? CONTINENT_ACTIVITY_RADIUS,
+    );
+  }
+  return new ForagerScenario(FORAGER_CONTINENT, options.seed, agents, options.activityRadius);
 }
 
 const REPRO_COOLDOWN = TICKS_PER_SEASON; // a season between births
@@ -81,17 +128,25 @@ const FORAGER_DEMOGRAPHY: Demography = {
  */
 export class ForagerScenario implements Scenario {
   readonly adapter = foragerAdapter;
+  readonly geography: WorldGeography = classicGeography;
+  readonly scale: BodyScale = CLASSIC_SCALE;
   readonly terrain: TerrainField = { elevationBand };
   readonly demography = FORAGER_DEMOGRAPHY;
+  readonly activity: ActivitySettings;
 
   constructor(
     readonly worldId: string,
     private readonly seed: string,
     private readonly agentCount: number,
-  ) {}
+    /** Present only so a test can prove the tiling is what it claims: a finite
+     *  radius here makes this world skip dormant tiles too. Default: none. */
+    activityRadius?: number,
+  ) {
+    this.activity = { tileSize: CONTINENT_TILE, radius: activityRadius ?? Number.POSITIVE_INFINITY };
+  }
 
   narrator(host: NarrationHost): NarrativeAuthor {
-    return new ForagerNarrator(host);
+    return new ForagerNarrator(host, this.geography);
   }
 
   build(world: World): ScenarioWorld {
@@ -185,7 +240,12 @@ export class ForagerScenario implements Scenario {
     );
 
     // Wild animals roam the lowlands — mobile food, and a reason to range.
-    const wildlife = new WildlifeSystem(this.seed, Math.max(40, Math.round(this.agentCount * 0.6)));
+    const wildlife = new WildlifeSystem(
+      this.seed,
+      Math.max(40, Math.round(this.agentCount * 0.6)),
+      this.geography,
+      this.scale,
+    );
     return { founders, wildlife };
   }
 }

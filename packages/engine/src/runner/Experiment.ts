@@ -15,12 +15,12 @@ import type { SocietyReport } from '../analysis/society.js';
 import type { CultureReport } from '../analysis/culture.js';
 import type { MythReport } from '../analysis/myth.js';
 import type { SacredPlacesReport } from '../analysis/sacredPlaces.js';
-import { FORAGER_CONTINENT } from './options.js';
 import type { ExperimentOptions } from './options.js';
 import { SimRuntime } from './Runtime.js';
 import { Interventions } from './Interventions.js';
-import { ForagerScenario } from './Scenario.js';
+import { scenarioFor } from './Scenario.js';
 import type { BirthRecord } from './RuntimeView.js';
+import type { WorldGeography } from '../world/geography.js';
 import * as instrument from './instrument/index.js';
 import type {
   AgentDetail,
@@ -32,8 +32,8 @@ import type {
   LeadershipReport,
 } from './instrument/index.js';
 
-export { FORAGER_CONTINENT } from './options.js';
-export type { ExperimentOptions, RecordingOptions } from './options.js';
+export { FORAGER_CONTINENT, TRUE_SCALE_CONTINENT } from './options.js';
+export type { ExperimentOptions, RecordingOptions, ScenarioId } from './options.js';
 export type { AgentInfo } from './instrument/index.js';
 
 /**
@@ -61,7 +61,7 @@ export class Experiment {
   private readonly interventions: Interventions;
 
   constructor(options: ExperimentOptions) {
-    const scenario = new ForagerScenario(FORAGER_CONTINENT, options.seed, options.agentCount ?? 100);
+    const scenario = scenarioFor(options);
     this.rt = new SimRuntime(options, scenario);
     this.interventions = new Interventions(this.rt);
   }
@@ -70,6 +70,11 @@ export class Experiment {
 
   get seed(): string {
     return this.rt.seed;
+  }
+
+  /** Which world this run happens in — its id, extents, relief and water. */
+  get geography(): WorldGeography {
+    return this.rt.geography;
   }
 
   get world(): World {

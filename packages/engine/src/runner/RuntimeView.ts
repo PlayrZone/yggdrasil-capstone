@@ -8,6 +8,7 @@ import type {
   Traits,
 } from '../contract/types.js';
 import type { Needs, ObjectKind } from '../worlds/forager/types.js';
+import type { WorldGeography } from '../world/geography.js';
 
 /** One birth as the kinship ledger records it (the event log is capped). */
 export interface BirthRecord {
@@ -98,6 +99,13 @@ export interface MindView {
 export interface RuntimeView {
   readonly seed: string;
   readonly tick: number;
+  /**
+   * The ground, so a report can say which region a being stands in and divide
+   * by the right area. Added when a second world arrived: the instrument used
+   * to import ONE map's `regionAt` and ONE map's `WORLD` constant directly, so
+   * every spatial measure silently assumed the 2 km plane.
+   */
+  readonly geography: WorldGeography;
   /** Every being ever spawned, founders first then children, in birth order. */
   readonly agentIds: readonly number[];
   /** Every mind, living and entombed, in the same order as `agentIds`. */
