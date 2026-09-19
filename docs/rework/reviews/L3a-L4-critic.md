@@ -378,3 +378,121 @@ visibility probe that lied; both are fixed, and I checked both against the pictu
 the probe that asserts them. What replaced them is smaller and more ordinary — a clamp that is off by a
 hysteresis margin, and two measurements that disagree by eleven pixels. Fix defect 1 and I expect L3a to
 pass; fix 2 and 5 and the honesty argument is over.
+
+---
+
+# Round 4 (L3a) (`09fa64b`) — **FAIL**
+
+Built and run from the permanent clean checkout `C:\dev\YggdrasilLab-critic`, re-pinned
+`git checkout --detach 09fa64b` from a clean tree, `pnpm install --frozen-lockfile --prefer-offline`
+(already up to date), `pnpm --filter @yggdrasil/lab build` (exit 0). Lab suite **394 / 394 passed**
+(9 files, 2.2 s). The main tree was never built, tested or checked out; only this review file was
+edited there. Six Electron sessions, one at a time, isolated `YGG_HOME`, no key, launched with
+`--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows
+--disable-renderer-backgrounding --disable-background-timer-throttling` plus
+`setBackgroundThrottling(false)`; every session proved it was drawing (12 frames / 1.2 s) before it
+measured anything. **A 179416** (wheel→FAR on four geometries), **B 221072** (first pass, night),
+**C 229584** (items 2–3 at scale, daylight, two worlds), **D 229980** (NEAR radius, the piled hut),
+**E 217184** (chip interaction, regression sweep), **F 225532** (roster clicks, chip mix, NEAR strip).
+All six verified gone by id; **0 `electron.exe` remain**. Maximised, canvas 2188 × 914.8 CSS, dpr 1.5,
+world paused before every scored frame. Shots in `~/.yggdrasil-lab/rework/shots/L3a-r4-critic/`;
+counts filed in `MY-READINGS.md` **before** `truth/` was opened.
+
+## The round-4 claims
+
+| | claim | my measurement | |
+|---|---|---|---|
+| **1** | FAR reachable by the wheel | From DEFAULT, real wheel events at Δ300: **30 notches → `far`** on maximised (2188 × 914.8), **30** on a small canvas (674 × 184.7), **30** after a live resize (1334 × 500.5), **20** on a short one (1114 × 215.7). Holds: 0.384 px at the stop, `atStop`, still `far` after two more notches and 1.5 s. After a live resize *while in FAR* the band stayed `far` at 0.390 px with `canvasH === projectionH`. | **PASS** |
+| **2** | one screen point per being | 104 beings, 2 bands, 2 worlds, 10 cameras, measured against the PIXELS (hover draws a ring concentric with the being's ground point; centroid of the diff in a masked box). Of the **92 whose mark is drawn**, `screenPositionOf` equals `markScreenPositionOf` to **0.00 px, 92/92**, and the drawn ink is **mean 2.38 px, max 13.43 px** away (4 over 8 px). Quadrant split **0 of 56**. Round three's 11.3 px / 8.6 % is gone. | **PASS**, see defect 4 |
+| **3** | nobody offered while covered | **148 offered beings** over 10 cameras: **4 mispicks (2.70 %)** against round three's 2/101 (1.98 %). Three of the four hand you a being the view itself calls `"behind another being"` and keeps out of `visibleIds()`. | **FAIL** |
+| **4** | `ui.select` keeps the roster row | `.rrow.sel` present **3/3** after `select`, **3/3** after `centreOn`, inspector and selbar correct. | **PASS** |
+| **5** | NEAR radius, one metric | 7 real settlement frames (67–138 beings in frame). Strip text **equals** `labelAudit().claim` 3/3 exactly — that half is fixed. But `within` = **2, 1, 0, 1, 0, 0, 0** against `shown` = 10, 6, 7, 6, 2, 10, 5: the printed radius contains almost nobody. In 2 of 4 measured frames **5 names each are drawn beyond a nearer readable unnamed being** (Marosh readable at 4.12 m, unnamed; Keloan 4.15, Eskaem 4.20, Joram 4.21, Umbor 4.26, Selur 13.14 m, all named). `e-hut-near.png` prints **"NAMES WITHIN 0 M · 4 SHOWN"**. | **FAIL** |
+| **6** | the piled hut | Found 12-, 18- and 22-occupant shelters. Rings/badges/arrows **are** off (`marksKept` 0/18, 0/22) and the ghosted hut **does** read as a building — roof, eaves, corner posts, footprint, doorway. Everything else fails: see below. | **FAIL** |
+| **7** | no regression | Everything round three passed still passes **except the roster, clicked with a real mouse** — defect 2. | **FAIL** |
+
+## The numbers
+
+| bar | target | mine | truth | |
+|---|---|---|---|---|
+| FAR whole frame (10 chips + pins) | ±10% | **267** | 268 | **−0.37% pass** |
+| DEFAULT whole frame (8 chips + pins) | ±10% | **59** | 60 | **−1.67% pass** |
+| condition at DEFAULT, every pin I resolved | ≥70% | 14 well + 3 starving | 15 well + 3 starving | **17/17 right, all 3 starving found, pass** |
+| **people inside the hut, read from the picture** | ±10% | **3** (MID), **1–2** (night), **2–3** (NEAR) | 12, 18, 22 | **−75% / −92% / −89% FAIL** |
+| scale bar, four bands | `px == metres/mPerPx` | 500 m/144.9 · 20 m/157.8 · 5 m/178.1 · 2 m/187.9 | error **0.000 px in all four** | pass |
+| true scale | 1 unit = 1 m | +0.01 / +0.40 / +0.73 / **+2.90 %** (far/default/mid/near) | adult 1.75, hut **4.400 from the mesh**, doorway 2.0 | pass |
+| quadrants reconcile / chip over a pin / clear marks overlapping | exact / 0 / 0 | **4 of 4 · 0 · 0** | | pass |
+| pointable but NOT offered | 0 | **0 of 18** | | pass |
+| 12 real-mouse hovers in a crowd | card == truth | **12/12 hit · 12/12 card == truth · 0 covering its subject · 0 off-window** | | pass |
+| perf, 290 beings @ 2400×, roster open | ~60 fps, 0 long tasks | **2400 frames / 40.0 s = 60.00 fps, 0 long tasks** | | pass |
+| limiter focused / unfocused / minimised | ~60/10/2 | **60 / 10.0 / 1.0** draws per second | `document.hidden` stayed **false** while minimised | pass |
+| deuteranopia, on bodies and rings | no collapse | **4/4 separable** (cream plain · yellow dashed · olive **spiked** · blue concentric) | | pass |
+| badges vs their being | ≤40% | 46–56 CSS px discs against 114 CSS px at frame centre (**~40–49 %**) and 250+ px in the foreground (~20 %); none stacked | eyeballed off a crop, no probe exists | pass, at the edge |
+| bridge | refuses | garbage → `prompt must be a plain object` (2 ms); legacy → `unexpected key "snapshot"`; renderer `process`/`require`/`module` **undefined**, `window.lab` present | unknown-world refusal **unreachable**: every well-formed pair now trips `BAD_THINK_INPUT: snapshot.place must be an object` (the engine moved to the opaque `place`, as `env.d.ts` predicted) | pass, one path untestable |
+
+## Defects, ranked
+
+1. **HIGH — a shipped shader does not compile, in every session.** `applyGhostFade` injects
+   `normalize(transformedNormal)` at `World3D.ts:1035` into `#include <begin_vertex>`. GLSL compiles
+   both branches of `if (uRim > 0.0)`, and `windowMat` (`:1549`) is a **`MeshBasicMaterial`**, whose
+   vertex shader declares no normals. Result, six times out of six:
+   `THREE.WebGLProgram: Shader Error … 'transformedNormal' : undeclared identifier … Vertex shader is
+   not compiled.` The **lit windows never draw**, which is why every hut in `d-hut-mid.png` is a black
+   box at midnight. Structure materials are `MeshStandardMaterial` and survive; the rim term itself is
+   fine. A renderer that logs a compile failure on boot is not an instrument anyone should trust, and
+   no round has caught it because `pageerror` does not see `console.error`.
+2. **HIGH — you can pick one being off the roster with the mouse and then no other.** Real clicks on
+   `.rrow` 2, 6 and 11: the first selects Kelith; the next two leave `.rrow.sel` **and the selbar still
+   reading "Kelith"**, at 500 ms and at 1.9 s. A fourth click in session E left **no** selected row at
+   all. The programmatic `ui.select` path is fine (4 passes), so the fix that landed for the driver
+   never reached the pointer — the mirror image of round three's defect 4.
+3. **HIGH — eighteen people in a hut read as one or two.** `crops-hut-night.png`: the bodies are drawn
+   through the ghost at full white with no shading, and fuse into a single blown-out mass; I resolved
+   **two heads out of eighteen**. Meanwhile **seven of the eighteen are still NAMED**, with seven
+   leaders converging into that same mass — the building was supposed to speak for them. The count disc
+   is drawn in empty sky at the top of a dashed hull whose lower arc crosses the roof, and its leader
+   runs into the tree behind: my first blind reading was "a crowd of 18 somewhere behind that tree".
+   The `.wmix` bar on both shelter chips measures **0 × 0 px** — no condition mix is drawn, so the
+   chip says how many and nothing about how they are. (Ordinary chips do draw it when the mix has two
+   segments: the `5` chip, `well:2 starving:3`, is 10.2 × 3 px. Single-segment chips draw it
+   inconsistently — 5 of 24 at MID, 1 of 24 at DEFAULT.)
+4. **MED — two coordinate systems, and the mouse lands 113 px away.** `chipsOnScreen()` returns
+   **canvas-local** coordinates; `screenPositionOf` and `pickAtScreen` return **client** ones. Measured
+   on the same chip: probe (1290, 306), DOM rect (1306.0, 418.8) — off by exactly the canvas origin
+   (16, 112.8). Driving the real mouse to the probe's point opened **no card at all** (session D);
+   driving it to the DOM rect opened the right one — "22 inside this shelter · well 22 · standing 21 ·
+   asleep 1 · click to frame them" — and the click framed **22 of 22**. Round three's defect 2 was
+   closed for beings and left open for chips. The 12 housed beings are the same story:
+   `screenPositionOf` and `markScreenPositionOf` sit **28.5–37.1 px** apart there, documented but
+   invisible to a driver that does not know which regime it is in.
+5. **MED — the NEAR radius is honest and useless.** `nameRadius` floors the radius strictly inside the
+   nearest readable unnamed being, so "names within 3 m" is literally true and the strip, the claim and
+   the DOM are one number — that is a real fix. But the rule then names people it calls *unreadable*
+   out to 13–17 m while leaving a *readable* one at 4.12 m unnamed, so the printed radius contains
+   **zero** of the names drawn over it in 4 of 7 frames, and collapses to **0 m** in one. A reader is
+   told "NAMES WITHIN 0 M · 4 SHOWN".
+6. **MED — four mispicks in 148.** 1846/1977, 2276/2070, 2768/2598, 1986/2420→2541. In three of four,
+   `pickAtScreen` at the offered being's own point returns, first, a being whose `visibilityOf` says
+   `coveredBy` and `reason: "behind another being"`. The picker has the depth order and the cover rule
+   disagrees with it; `visibleIds()` is the population a stranger test draws from.
+7. **LOW — `visibleIds()` offers 5 of 115 at MID.** In `c-mid.png`, 115 beings stand in frame, ten or
+   more with their own ground ring and name, and the view will let you point at five. Nothing here is
+   *wrong* — every offered being is pointable and `pointableNotOffered` is 0 — but the honest
+   population a reviewer is told to sample from is now a twentieth of the picture.
+
+## Craft
+
+Two things in this round are genuinely better than round three, and I would defend both. The FAR map
+is reachable with a scroll wheel on every window shape I could produce, and it counts: 267 from the
+picture against 268 in the frustum, by adding ten numbers and eight dots. And "where is this being"
+is finally one question with one answer — ninety-two marks, two worlds, two bands, and the probe and
+the pixels agree to 2.4 px with the quadrant split at zero. That was round three's headline defect and
+it is closed properly, against the screenshot rather than against the probe that asserts it.
+
+What has not moved is the thing the round was mostly about. A hut with twenty-two people in it is
+still, at every band, a white cloud — and this time the cloud has no rings to blame. The marks came
+off exactly as promised, and what is left underneath is a shape nobody can count, under a number
+drawn in the sky, beside four names pointing into fog. `NEAR · A BEING IS 207 PX · THE WHOLE FIGURE ·
+EVERYTHING IT IS DOING` is printed under it. Fixing the annotation was the easy half; the bodies were
+always the hard half, and they are unchanged. Add to that a shader that has never compiled, a roster
+you can only pick from once, and a probe that aims the mouse 113 pixels below the thing it describes,
+and this is not yet an instrument — it is an instrument with three loose wires and a lens cap on.
