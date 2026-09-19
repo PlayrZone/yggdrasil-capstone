@@ -616,3 +616,115 @@ crowd inside a shelter is the same white cloud it was in round four, with better
 instrument is judged on the picture, and in both cases the picture is the one thing that was not checked.
 Fix the culling, light the interior, and hold the offered set still for the length of a press, and I
 expect L3a to pass.
+
+---
+
+# Round 6 (L3a) (engine `f21ee83` + lab `4811c74`) — **FAIL**
+
+Built in the permanent clean checkout `C:\dev\YggdrasilLab-critic` by the recipe I was given: clean at
+`b4cd86f` → `git checkout --detach f21ee83` → `git checkout 4811c74 -- packages/lab` (13 files staged, as
+expected) → `pnpm install --frozen-lockfile --prefer-offline` (already up to date) → `pnpm --filter
+@yggdrasil/lab build` **exit 0** → lab suite **499 / 499** (10 files, 2.28 s). The main tree was never
+built, tested or checked out; only this file was edited there. Nine Electron sessions, one at a time,
+isolated `YGG_HOME`, no key, round five's flags plus `setBackgroundThrottling(false)`, each proving it drew
+(12 frames / 1.2 s) before measuring: **A 243960** (night, windows), **B 248176** (crowds, orbit, keyline),
+**C 236996** (blind crowds), **D 249524** (offers, chip names), **E 237784** + **E2 241852** (roster),
+**F 251460** (unwell), **G 255136** (sweep, craft), **H 257156** (wheel, naming, long tasks). All 36
+recorded PIDs verified gone; **0 `electron.exe` remain**. Maximised, canvas 2188 × 914.8 CSS, dpr 1.5.
+Shots in `~/.yggdrasil-lab/rework/shots/L3a-r6-critic/`; counts filed before `truth/` was opened. The
+engineer's `…/L3a-r6/` was read for his launch method and nothing else.
+
+**Health.** `health()` + `cullAudit()` at boot, mid-run and close in all nine sessions: every count **0**,
+`cullRisks` **[]** everywhere — except three I provoked myself (session A: `console.error` → `consoleErrors`
+1 with the text kept; a thrown `Error` → `windowErrors` 1; session G: two `ResizeObserver loop …` from my
+own 900 × 620 resize). The tap is honest in both channels now.
+
+## The round-6 claims
+
+| | claim | my measurement | |
+|---|---|---|---|
+| **1** | lit windows at night | Panes **do** draw — round five's culling defect is fixed. Square on the window wall of five shelters at 7 m and 16 m at `daylight() === 0.000`, the pane box against the wall beside it: **98.3 / 112.8 / 138.1 / 138.5 px mean vs walls of 13.6–74** (`r6cA-window-{1,2,3}-16m-x3.png`). But a pane is a **flat grey rectangle**: sampled RGB **(155,145,130)** on a wall of (37,24,15) — no glow, no spill, no frame, no warmth. And it ghosts with its hut: shelter 4 measured **49.9 vs 44.4** (invisible), the occupied hut at MID draws **no pane at all** (`r6cA-night-village-mid-x2.png`), and DEFAULT looks down on a roof. | **FAIL** |
+| **2** | a crowded shelter reads as people | At MID a **solid** occupied hut shows **0 of 15** occupants — a closed brown box with a "15" over it (`r6cB-fifteen-mid-x3.png`). Ghosted from above, 17 people are a heap of pale spheres and cylinders: I resolved **~4 of 17** (`r6cB-orbit-3.png`). At NEAR night 34 are a blown-out white mass with a hard clipping seam (`r6cF-blind-near-night-x2.png`). At NEAR day the 63-hut **is** "a packed room" and the chip says 63 — but the bodies burst through both side walls (`r6cC-C-near-x2.png`). | **FAIL** |
+| **3** | offers hold still for a press | **PAUSED: 474 offers**, 2 worlds, MID / NEAR / DEFAULT, crowds included, real mouse to `screenPositionOf` → **0 mispicks, 0 lost**. Round five's 2 in 389 are gone. **RUNNING at 30×: 52 offers → 41 hit, 1 mispick, 10 lost**; all ten lost opened **no card at all**, so nothing is falsely selected. Shelter chip name buttons: **10 / 10** select that being. | **PASS** paused · the running mispick is defect 6 |
+| **4** | the roster | **42 real-mouse clicks** — paused, 120× (there is no 60× preset), 2400×, straight after a re-centre, scrolled, 9 of them on a row at the box edge: **42 / 42 correct**. Order **identical 20 / 20** over 20 s at 2400× with the pointer resting. A being that died while sealed (Ithith) stayed at **index 17**, marked `died` in place. Order released when the pointer left. | **PASS**, see defect 7 |
+| **5** | the unwell, found cold | DEFAULT: the picture marks **2 of 16** unwell individually (its own `conditionShownOf`) and I found **both** blind, plus three hut chips carrying notches ("4·2", "2·1", "5·2") — **0 false alarms**. MID day: **2 of 2** blind — Vasham (in danger, crimson body + spiked ring + crimson pennant) and Umbosk, **starving at 2 body pixels, found from the pennant alone**. NEAR night: no unwell was on the canvas and I called none. Round five's 0 / 7 is properly fixed. | **PASS**, see defects 4–5 |
+| **6** | no regression | Scale bar **0.000 px error in all four bands**, in metres (500/144.1 · 20/157.8 · 5/175.2 · 2/187.3). True scale: adult 1.75 < hut **4.400 from the mesh** < shortest tree 7.43 < tree 20.25; `adultOnScreenPx` 61.77 vs `bandPixels` 61.8. One point per being: `screenPositionOf == markScreenPositionOf` to **0.00 px**, picker agrees **20/20** in-frame and **474/474** by real mouse. Quadrants **20 of 20** reconcile over 5 DEFAULT frames, frame-wide **5/5**. NEAR naming **5 frames, 0 violations**, `expected == shown == labelsShown ==` visible `.wlabel` pills. Limiter **60.2 / 10.0 / 10.0 / 1.0**. **But FAR by wheel, perf and the small window all fail — defects 1, 2, 3.** | **FAIL** |
+| **7** | craft, as a stranger | Four full frames. DEFAULT is the strongest thing here and looks like an instrument. FAR reads as a continent. NEAR and the shelters do not. Three ugliest below. | **FAIL** |
+
+## Defects, ranked
+
+1. **HIGH — FAR cannot be reached with the wheel, and the view says it can.** The wheel direction has
+   **inverted** since round five: Δ+300 now zooms IN (`figurePx` 14.06 → 26.01, distance 137.2 → 74.1) and
+   Δ−300 out. Driving the zoom-out direction, **80 notches from DEFAULT leaves the band at `default` with
+   `figurePx` 1.902** against `enterFarPx` **0.577** — more than three times short — while
+   `cameraReport().atStop` is `false` and **`farReachable` is `true`** (`r6cH-far-by-wheel.png`, session H).
+   Round three's defect 1 is back, worse than it was (0.620 then), and the report now asserts the opposite
+   of what the mouse can do. FAR itself is fine when placed programmatically: 15 pins + 22 chips = 231
+   against 231 in the frustum.
+2. **HIGH — the perf bar that passed in round five is gone.** DEFAULT, 2400×, roster open, 320 alive:
+   **57.98 / 58.80 / 56.00 fps** over three 40 s windows and **41 long tasks, up to 161 ms**. With the
+   roster **closed**, same camera: 57.97 fps and 13 more long tasks in 30 s — so it is not the roster, it
+   is the frame. NEAR (148 in frustum) and MID packed (100) both hold 60.0 fps with no new long tasks, so
+   the cost is in the wide frame: the outline pass, the pennants and the hull circles. Round five: 60.00
+   fps, **0** long tasks, 272 beings.
+3. **HIGH — below its minimum the picture is not merely squeezed, it is empty.** Forced to 900 × 620 the
+   world canvas collapses to **534 × 293 CSS** and `visibleIds()` returns **0** — not one being is offered,
+   and none of the 7 chips' own points land on the canvas under `elementFromPoint` (`r6cG-small-window.png`).
+   The coordinate-frame check a round was asked to make here cannot be made, because there is nothing left
+   to point at. Round five's defect 8, now with teeth.
+4. **HIGH — the crowd inside a building, at every band.** Unchanged in substance from rounds four and five
+   and now with new artefacts: a **giant white cluster ring** sweeps through the hut and across the bodies
+   at MID and blows out to pure white at NEAR (`crops/G-near-glow-x2.png`); at DEFAULT a 37-occupant hut is
+   a **white splash with two limbs poking through the roof**, beside a "2" chip leadered to an **empty
+   circle** (`crops/G-default-whiteblob-x4.png`); ghosted walls show striped z-fighting; stray translucent
+   quads lie outside the footprint. No body was ever drawn through solid terrain, and the keyline is real —
+   but one-sided, thick on one edge of a head and absent on the other (`r6cB-keyline-mid-x6.png`).
+5. **MED — `conditionShownOf` under-reports what the picture draws.** At MID, Vasham (in danger, 32 body
+   px, crimson body, spiked crimson ring, crimson pennant) and Umbosk (starving, orange pennant) both
+   return **`null`**, and I read both correctly off the PNG. The `*ShownOf` reads are what a stranger test
+   is scored against; here they would mark a correct reader wrong. Round five's defect was the frame
+   claiming more than it drew; this is the frame drawing more than it claims.
+6. **MED — the pennant is detached and oversized where it matters most.** Inside a shelter it floats at
+   roof height over an unreadable heap — two flags for 63 bodies, attributable to nobody
+   (`r6cC-C-near-x2.png`) — and at close range it is **taller than the being**: on the specimen grid a
+   crimson flag measures ~115 CSS px against a ~100 px adult (`r6cF-specimen-x2.png`). Colour-blindness
+   passes, but on the rings, not the flag: under my own Machado severity-1.0 matrices the three flag hues
+   collapse toward two blues and a gold, while plain / dashed / concentric / spiked still separate all four
+   conditions (`r6cF-specimen-deut-x2.png`).
+7. **MED — one mispick in 52 while the world runs, and the roster seal releases on a keypress.** The 30×
+   mispick is small and the ten lost targets are handled honestly (no card). Separately: the seal survives
+   a resting pointer perfectly (20/20) but `rosterRows()` id order **changes after three arrow keys and
+   again after one wheel notch** with the pointer still on the table (session G) — the two things a reader
+   does while reading a row are exactly what releases it.
+8. **LOW — the crowd hull is a soap bubble.** Cluster hulls are perfect **screen-space** circles, ~140 CSS
+   px across for knots of two and three, hanging in the air over a ground plane seen at a grazing angle,
+   overlapping each other four deep (`crops/A-discs-x2.png`). They are the most conspicuous thing in a MID
+   frame and they describe the least.
+
+## Craft
+
+Two things are genuinely better than round five and I would defend both. The **pennant works**: a starving
+being **two pixels tall** turned up in my blind notes from an orange flag, and I found every unwell being
+the picture marked, in two bands, with no false alarms — after a round in which I found none of seven. And
+the **roster is now trustworthy under a real hand**: forty-two clicks at three speeds, on clipped rows and
+straight after a re-centre, all correct, with the order standing still for twenty seconds and a death
+marked in place rather than resorted away.
+
+The three ugliest things left on screen are all the same failure seen from different distances. **One:** a
+crowd inside a building — a white splash at DEFAULT, a bone-pile at MID, a picket of bollards bursting
+through the walls at NEAR. **Two:** the annotation is winning against the world — a cluster ring that
+blows out to pure white across a NEAR frame and passes through the hut it describes, hull circles floating
+like bubbles, a flag taller than the person carrying it. **Three:** the lit window, which is the round's
+headline fix and is a grey rectangle stuck on a brown wall, switched off precisely when the hut opens.
+
+And two bars that passed in round five no longer do: the widest contract is unreachable with a mouse again
+— by more than three times, under a flag that says it is reachable — and the frame has stopped holding
+sixty with zero long tasks. A round that adds a lighting effect, an outline pass and a new mark should
+measure what they cost; this one shipped them and left `farReachable` asserting the opposite of what the
+wheel does.
+
+**Shortest path to a pass:** (1) make the wheel reach FAR again and make `farReachable`/`atStop` agree with
+it; (2) get DEFAULT at 2400× back to 60 fps with 0 long tasks; (3) light the shelter interior and keep the
+window lit when the hut ghosts, so a crowd indoors resolves into separate people at MID and NEAR;
+(4) stop the cluster ring being drawn through buildings and bodies, and scale the pennant to its being;
+(5) give the 900 × 620 window a canvas that still offers beings.
