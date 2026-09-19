@@ -33,6 +33,18 @@ recipes). The Gahallians do not — they must discover them.
   — paths, the activity feed, and the shared reports. One implementation used
   by both the lab and the MCP server.
 
+## Running tests on a shared machine
+
+This repo is developed on a box that other people (and games) are using, so the
+test suites are polite by default: every `vitest.config.ts` caps the pool at
+**4 workers** (min 1) instead of vitest's default of one worker per core. Set
+`YGG_TEST_WORKERS` to change it — `YGG_TEST_WORKERS=2 pnpm --filter
+@yggdrasil/home test` for an even lighter run, or `YGG_TEST_WORKERS=max` (or
+`0`) on CI or a machine you have to yourself to restore vitest's default.
+Anything empty or non-numeric falls back to 4. Please run full suites **one
+package at a time** (`pnpm --filter <pkg> test`) rather than `pnpm -r test`,
+which starts every package's pool at once.
+
 ## Anti-NPC doctrine
 
 No roles, jobs, factions, leaders, governments, kingdoms, or religions are ever
