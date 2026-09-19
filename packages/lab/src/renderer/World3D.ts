@@ -30,6 +30,7 @@ import {
   bandShowsBodies,
   bandShowsDetail,
   bodyTint,
+  DETAIL_MIN_PX,
   CLUSTER_BUDGET,
   clusterHierarchy,
   conditionHue,
@@ -43,6 +44,7 @@ import {
   labelClearanceFor,
   LABEL_BUDGET_MAX,
   figurePxAt,
+  maxOrbitDistance,
   maxLeaderFor,
   movingFor,
   NEAR_LABEL_M,
@@ -72,6 +74,25 @@ import {
   type ScreenPoint,
   type ZoomBand,
 } from './beings.js';
+import {
+  doorwayClear,
+  isSpecimenId,
+  packSubjects,
+  READABLE_MARK_PX,
+  SHELTER,
+  SHELTER_FOOTPRINT,
+  SHELTER_PARTS,
+  shelterMeasure,
+  specimenPlan,
+  SPECIMEN_COLS,
+  SPECIMEN_ID_BASE,
+  SPECIMEN_ROWS,
+  SPECIMEN_SPACING,
+  SUBJECT_R,
+  SUBJECT_SLOTS,
+  XRAY_MIN_BODY_PX,
+  type Subject,
+} from './legibility.js';
 import { buildGlyphAtlas, PICTO_STUB_AT } from './glyphs.js';
 
 // ── The world's own scale ────────────────────────────────────────────────────
@@ -182,6 +203,31 @@ const RING_BUCKETS = RING_STYLE_COUNT * 2;
 const DOT_R = 0.30;
 
 /**
+ * The order the layers are painted in, and it carries two rules that the
+ * picture depends on.
+ *
+ * The scenery ghosts, which makes it blended, which puts it and everything
+ * after it in three's transparent queue — where `renderOrder` decides. So the
+ * order is stated once, here, instead of being an accident of which material
+ * happened to be transparent.
+ *
+ * Rule one: the X-RAY goes between the scenery and the bodies, so the depth it
+ * tests against is the land, the trees and the walls, and NOT the other
+ * beings. A being behind another being is further away, not hidden, and
+ * x-raying that turns a crowd into a heap of ghosts.
+ *
+ * Rule two: annotation is last and depth-tested against nothing. A map pin a
+ * building can eat is not a map pin.
+ */
+const RENDER_SCENERY = 0;
+const RENDER_FOOT = 3;
+const RENDER_XRAY = 4;
+const RENDER_BODY = 6;
+const RENDER_TRAIL = 10;
+const RENDER_RING = 12;
+const RENDER_PICTO = 14;
+
+/**
  * The pictogram chip's height, as a fraction of the marker, and where its quad
  * sits relative to the ring it belongs to.
  *
@@ -193,6 +239,19 @@ const DOT_R = 0.30;
  */
 const PICTO_H = 0.64;
 const PICTO_RIM = RING_R * RING_OUTER * 0.72;
+
+/**
+ * How much of that the chip keeps down in the street.
+ *
+ * At NEAR the annotation stops holding a screen size and becomes the FOOTPRINT
+ * a being stands on — which is right for a ring on the ground and wrong for a
+ * symbol, because a symbol scaled to a person's footprint is a symbol the size
+ * of their torso. Ninety-six of them at full strength was a wall of badges with
+ * a village somewhere behind it. The chip stays a readable fifty-odd pixels
+ * instead, and the weld to the ring's rim is recomputed so it still lands where
+ * it belongs — see `uOffset`.
+ */
+const PICTO_NEAR_SCALE = 0.58;
 
 /**
  * A crowd is a group of beings closer together than this many marker-widths,
@@ -611,6 +670,8 @@ function trailMaterial(fade: { value: number }): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
+    // Annotation is not part of the world it annotates. See `ringMaterial`.
+    depthTest: false,
     side: THREE.DoubleSide,
     uniforms: { uOpacity: fade },
     vertexShader: `
@@ -663,11 +724,18 @@ function dotGeometry(): THREE.BufferGeometry {
  * The ring's shader. Three weights in, one unlit colour out — no lighting, no
  * tone mapping, because an instrument mark must arrive on screen as the colour
  * the legend names, not as the film curve's opinion of it.
+ *
+ * And no depth test. A map pin that a building can eat is not a map pin: round
+ * four's DEFAULT frame had three pins reduced to a bare arrowhead by a hut
+ * standing in front of them, two of which a reviewer could only find at 3–4×
+ * magnification. The annotation layer is drawn OVER the world it annotates, in
+ * every band, always — that is what makes it annotation and not scenery.
  */
 function ringMaterial(fade: { value: number }): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
+    depthTest: false,
     side: THREE.DoubleSide,
     uniforms: { uOpacity: fade },
     vertexShader: `
@@ -700,43 +768,70 @@ interface FadeUniforms {
   uFadeFar: { value: number };
   uSel: { value: THREE.Vector3 };
   uSelR: { value: number };
-  /** How much of the thing survives at full fade. Foliage goes; a building ghosts. */
+  /** How much of the thing survives when it is pressed against the lens. */
   uFadeFloor: { value: number };
-  /**
-   * How far ahead the camera is aiming. Anything inside the cone in front of it
-   * and nearer than this is standing in the picture; 0 turns the rule off.
-   */
-  uBlockDepth: { value: number };
-  /** Half-width of that cone, as a fraction of the distance down it. */
-  uBlockR: { value: number };
+  /** How much of it survives when it is standing in front of somebody. */
+  uGhostFloor: { value: number };
+  /** This mesh's own radius across and up, in metres, at instance scale 1. */
+  uThick: { value: number };
+  uThickY: { value: number };
+  /** Where the THING's middle is above this mesh's own instance anchor. */
+  uCentreY: { value: number };
+  /** How many of `uSubject` are live this frame. */
+  uSubjectN: { value: number };
+  /** View-space x, y, z, radius per being the reader is looking at. */
+  uSubject: { value: Float32Array };
 }
 
 /**
- * Scenery that gets out of the way.
+ * Scenery that gets out of the way — and stays its own size while it does it.
  *
- * Six thousand trees and a thousand huts will hide beings — the ones between
- * the camera and the world, and the ones standing over whoever you are
- * watching. Both have to clear out, and how they clear out is the whole point:
- * round one discarded fragments against a 4×4 screen-door, and a reviewer
- * magnified it and found "trees and huts dissolving into a dark checkerboard
- * which at real size reads as speckle or dead pixels". A one-pixel chequer is
- * not a dissolve, it is a rendering fault with an explanation.
+ * Six thousand trees and a thousand huts will hide beings, and a view of a
+ * village whose people are behind the village is not a view of anything. Round
+ * four's legend said "trees and huts step aside"; what it actually did was
+ * aim a narrow cone down the camera's own axis, which cleared the middle of the
+ * frame and nothing else — sixteen of twenty-nine reviewed beings had three
+ * body pixels or fewer, inside huts and behind trunks.
  *
- * So nothing is discarded. The whole instance SHRINKS toward its own footing
- * and sinks into the ground, computed once per instance in the vertex shader
- * from a smooth distance falloff. No stipple, no transparency sorting, no
- * second pass — and the motion reads as deliberate, which a dither never can.
+ * Two changes, and the second one matters more than it looks.
  *
- * There is a second rule on top of the first, and it is the one that fixes the
- * near-camera tree. Down in the street a single trunk eleven metres off the
- * lens is a black bar across a third of the frame — far enough away that the
- * distance rule leaves it alone, and directly in front of everything the camera
- * came down to look at. So anything standing INSIDE THE CONE the camera is
- * aiming down, and nearer than the point it is aiming at, steps aside on the
- * same shrink-and-sink it already uses. Off to the side at the same distance
- * nothing moves: the street is still a street.
+ * WHAT steps aside is now decided by where the BEINGS are. Every being the
+ * reader can read is packed into a handful of spheres in view space
+ * (`packSubjects`), and any instance that is nearer to the eye than one of them
+ * and overlaps it on screen ghosts out. That is the literal statement of
+ * "between the camera and a being", so a trunk at the edge of the frame in
+ * front of somebody clears, and a trunk in the middle of the frame in front of
+ * nobody does not.
+ *
+ * HOW it steps aside is opacity, never size. Round four shrank the instance —
+ * and that is why `scaleReport().hut` said 4.40 m over a hut a reviewer
+ * measured at 2.43–2.56 m in two independent frames. The instrument was not
+ * lying about the geometry; the renderer was quietly redrawing the world at 55%
+ * to make room. A view whose scale contract is its whole subject may not resize
+ * the world for legibility, ever. So a ghost keeps its footprint, its height
+ * and its place, and loses only its opacity — and a structure leaves an outline
+ * on the ground where it stands, so the village still reads as a village.
+ *
+ * Nothing is discarded and nothing is stippled: round one's 4×4 screen door
+ * read as dead pixels under magnification, and it deserved to.
  */
-function applyFoliageFade(material: THREE.Material, out: FadeUniforms[], near = 110, far = 320, floor = 0, sink = 9): void {
+function applyGhostFade(
+  material: THREE.Material,
+  out: FadeUniforms[],
+  subjects: Float32Array,
+  near = 110,
+  far = 320,
+  floor = 0,
+  ghost = 0.2,
+  thick = 3.3,
+  thickY = 4.6,
+  centreY = 0,
+): void {
+  // Mostly-opaque instances that occasionally blend. depthWrite stays ON: each
+  // mesh is one object to the sorter, so the trees behind a tree are settled by
+  // the depth buffer exactly as they were when this was opaque, and only the
+  // few ghosted instances blend at all.
+  material.transparent = true;
   material.onBeforeCompile = (shader) => {
     const u: FadeUniforms = {
       uFadeNear: { value: near },
@@ -744,8 +839,12 @@ function applyFoliageFade(material: THREE.Material, out: FadeUniforms[], near = 
       uSel: { value: new THREE.Vector3(0, -1e6, 0) },
       uSelR: { value: 0 },
       uFadeFloor: { value: floor },
-      uBlockDepth: { value: 0 },
-      uBlockR: { value: 0.2 },
+      uGhostFloor: { value: ghost },
+      uThick: { value: thick },
+      uThickY: { value: thickY },
+      uCentreY: { value: centreY },
+      uSubjectN: { value: 0 },
+      uSubject: { value: subjects },
     };
     Object.assign(shader.uniforms, u);
     out.push(u);
@@ -758,8 +857,13 @@ function applyFoliageFade(material: THREE.Material, out: FadeUniforms[], near = 
         uniform vec3 uSel;
         uniform float uSelR;
         uniform float uFadeFloor;
-        uniform float uBlockDepth;
-        uniform float uBlockR;`,
+        uniform float uGhostFloor;
+        uniform float uThick;
+        uniform float uThickY;
+        uniform float uCentreY;
+        uniform int uSubjectN;
+        uniform vec4 uSubject[${SUBJECT_SLOTS}];
+        varying float vGhostA;`,
       )
       .replace(
         '#include <begin_vertex>',
@@ -767,23 +871,121 @@ function applyFoliageFade(material: THREE.Material, out: FadeUniforms[], near = 
         {
           vec4 fadeAnchor = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
           vec3 fadeWorld = (modelMatrix * fadeAnchor).xyz;
-          vec3 fadeView = (modelViewMatrix * fadeAnchor).xyz;
+          float scale = length(instanceMatrix[0].xyz);
+          // The THING's middle, not this mesh's own origin. A tree is two
+          // meshes with two anchors five metres apart, and testing each where
+          // it happens to be pinned ghosts the crown and leaves the trunk — a
+          // black bar standing in front of somebody with a ghost over it.
+          vec3 fadeUp = (modelViewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
+          vec3 fadeView = (modelViewMatrix * fadeAnchor).xyz + fadeUp * (uCentreY * scale);
           float fadeDepth = -fadeView.z;
-          float fadeCam = smoothstep(uFadeNear, uFadeFar, fadeDepth);
-          float fadeSel = uSelR > 0.0 ? smoothstep(uSelR * 0.55, uSelR * 1.6, distance(fadeWorld, uSel)) : 1.0;
-          float fadeBlock = 1.0;
-          if (uBlockDepth > 0.0 && fadeDepth > 0.0) {
-            float coneR = uBlockR * max(3.0, fadeDepth);
-            float across = 1.0 - smoothstep(coneR * 0.55, coneR, length(fadeView.xy));
-            float ahead = 1.0 - smoothstep(uBlockDepth * 0.55, uBlockDepth * 0.92, fadeDepth);
-            fadeBlock = 1.0 - across * ahead;
+          // Pressed against the lens: a trunk eleven metres off the glass is a
+          // black bar across a third of the frame whoever is behind it.
+          float lens = smoothstep(uFadeNear, uFadeFar, fadeDepth);
+          float block = 0.0;
+          float rx = uThick * scale;
+          float ry = uThickY * scale;
+          if (fadeDepth > 0.05) {
+            for (int k = 0; k < ${SUBJECT_SLOTS}; k++) {
+              if (k >= uSubjectN) break;
+              vec4 sj = uSubject[k];
+              float sd = -sj.z;
+              // Its NEAR FACE, not its middle: a being standing inside a hut is
+              // behind the hut's front wall and in front of its back one, and
+              // the middle of the hut says neither.
+              if (sd <= 0.05 || fadeDepth - max(rx, ry) >= sd - 0.2) continue;
+              // Screen overlap, done as the projection does it: x over depth.
+              vec2 o = fadeView.xy / fadeDepth;
+              vec2 s = sj.xy / sd;
+              vec2 reach = vec2(rx, ry) / fadeDepth + vec2(sj.w / sd);
+              float d = length((o - s) / reach);
+              block = max(block, 1.0 - smoothstep(0.62, 1.02, d));
+            }
           }
-          float fadeA = max(uFadeFloor, min(min(fadeCam, fadeSel), fadeBlock));
-          transformed *= fadeA;
-          transformed.y -= (1.0 - fadeA) * ${sink.toFixed(1)};
+          float sel = uSelR > 0.0 ? 1.0 - smoothstep(uSelR * 0.55, uSelR * 1.6, distance(fadeWorld, uSel)) : 0.0;
+          float g = max(block, sel);
+          vGhostA = min(mix(uFadeFloor, 1.0, lens), mix(1.0, uGhostFloor, g));
         }`,
       );
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vGhostA;')
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        if (vGhostA < 0.015) discard;
+        // A ghost is not a faint tree, it is a tree drawn as vapour: pulled
+        // toward the pale end so its edges still describe the shape at a fifth
+        // of the opacity, which a merely dimmed dark green does not.
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.70, 0.76, 0.80), (1.0 - vGhostA) * 0.55);
+        diffuseColor.a *= vGhostA;`,
+      );
   };
+}
+
+/**
+ * The x-ray pass: a being that something is standing in front of keeps a pale
+ * outline of itself, drawn only in the pixels where it is hidden.
+ *
+ * This is the backstop under the ghosting, and it is what makes "a being is
+ * never invisible because of scenery" a property of the frame rather than a
+ * hope about the ghost rule. Terrain folds, a rock, a hut the ghost rule has
+ * not reached yet, another being — any of them, and the figure still reads.
+ *
+ * `depthFunc: GreaterDepth` is the whole trick: the body's own depth test,
+ * inverted, so the silhouette appears exactly where the body FAILED and nowhere
+ * else. Over open ground it draws nothing at all. The hull is pushed out a
+ * couple of screen pixels along the view-space normal so the shape carries an
+ * edge rather than sitting flush inside its own missing body, and anything too
+ * small to be a picture is collapsed off-screen: three hundred specks showing
+ * through a mountain is noise with an explanation.
+ *
+ * WHEN it is drawn matters as much as how. It goes in after the scenery and
+ * before the bodies (`RENDER_XRAY` between `RENDER_SCENERY` and `RENDER_BODY`),
+ * so the depth buffer it tests against holds the land, the trees and the walls
+ * — and not the other beings. A being standing behind another being is not
+ * hidden by scenery, it is simply further away, and x-raying that turned a
+ * crowd into a heap of overlapping ghosts in round five's first NEAR frame.
+ */
+function xrayMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    depthFunc: THREE.GreaterDepth,
+    side: THREE.FrontSide,
+    uniforms: {
+      uOpacity: { value: 0.52 },
+      uGrowPx: { value: 2.2 },
+      uMinPx: { value: XRAY_MIN_BODY_PX },
+      uWorldPerPx: { value: 0.002 },
+    },
+    vertexShader: `
+      uniform float uGrowPx;
+      uniform float uMinPx;
+      uniform float uWorldPerPx;
+      varying vec3 vTint;
+      void main() {
+        vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        float depth = max(0.001, -mv.z);
+        float tall = length(instanceMatrix[0].xyz);
+        if (tall / (depth * uWorldPerPx) < uMinPx) {
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          return;
+        }
+        vec3 n = normalMatrix * (mat3(instanceMatrix) * normal);
+        vec2 outward = length(n.xy) > 1e-4 ? normalize(n.xy) : vec2(0.0);
+        mv.xy += outward * (uGrowPx * depth * uWorldPerPx);
+        gl_Position = projectionMatrix * mv;
+        vTint = instanceColor;
+      }`,
+    fragmentShader: `
+      uniform float uOpacity;
+      varying vec3 vTint;
+      void main() {
+        gl_FragColor = vec4(mix(vTint, vec3(0.93, 0.95, 0.99), 0.55), uOpacity);
+        #include <colorspace_fragment>
+      }`,
+  });
 }
 
 /**
@@ -848,6 +1050,9 @@ export class World3D {
   /** Handles on how strongly the map is drawn over the world. */
   private readonly ringFade = { value: 0.94 };
   private readonly trailFade = { value: 0.80 };
+  private readonly pictoFade = { value: 0.94 };
+  /** How much of its normal size the activity chip keeps in this band. */
+  private pictoScale = 1;
 
   private readonly names = new Map<number, string>();
   private readonly speakingUntil = new Map<number, number>();
@@ -904,6 +1109,42 @@ export class World3D {
   private readonly foliageFades: FadeUniforms[] = [];
   private daylight = 1;
 
+  /**
+   * The beings the scenery has to step aside for, in VIEW space — one shared
+   * buffer, uploaded to every scenery material. See `packSubjects`.
+   */
+  private readonly subjects = new Float32Array(SUBJECT_SLOTS * 4);
+  private subjectCount = 0;
+  /** Reused scratch for the pack; never grown inside a frame. */
+  private readonly subjectPool: Subject[] = [];
+  private readonly subjectSeen: Subject[] = [];
+  /** The pale outline a hidden being keeps — one per life stage. */
+  private xrays: THREE.InstancedMesh[] = [];
+  private xrayMat: THREE.ShaderMaterial | null = null;
+  /** Where a ghosted building stood, so the village still reads as a village. */
+  private footprints: THREE.InstancedMesh | null = null;
+  /** Per structure: scene x, z and the ground under it, for the footprint ring. */
+  private structureAt = new Float32Array(0);
+
+  /** The legibility specimen: dev-only, display-only, never sent anywhere. */
+  private specimenOn = false;
+  private specimenCount = 0;
+  /** How many of `instanceCount` are the world's own beings. */
+  private simCount = 0;
+  private specimenBase = new THREE.Vector3();
+  private specimenYaw = 0;
+  private specimenGround: THREE.Mesh | null = null;
+
+  /**
+   * How far out the view managed to keep the NEAR naming promise this frame:
+   * every VISIBLE being nearer than this has a name drawn. Measured from the
+   * placement, never assumed — see `updateLabels`.
+   */
+  private namedWithin = 0;
+  private namesExpected = 0;
+  /** Reused: whose name went up this frame, for the audit above. */
+  private readonly placedIds = new Set<number>();
+
   private readonly labelLayer: HTMLElement | null;
   private readonly labelNodes: HTMLElement[] = [];
   private readonly leaderNodes: HTMLElement[] = [];
@@ -941,6 +1182,8 @@ export class World3D {
   private readonly right = new THREE.Vector3();
   private readonly basis = new THREE.Matrix4();
   private readonly raycaster = new THREE.Raycaster();
+  /** A throwaway eye, for scoring a camera placement without moving the real one. */
+  private readonly scout = new THREE.PerspectiveCamera(45, 1, 0.25, 1);
   private readonly ndc = new THREE.Vector2();
   private readonly probe = new THREE.Vector3();
   private readonly focusTarget = new THREE.Vector3();
@@ -1045,7 +1288,7 @@ export class World3D {
     // Pale lamp cream, not amber: a reviewer at midnight read warm window light
     // as starving beings, and #ffc46b is very nearly the starving colour.
     const windowMat = new THREE.MeshBasicMaterial({ color: 0xf2dcae, transparent: true, opacity: 0, depthWrite: false });
-    applyFoliageFade(windowMat, this.foliageFades, 3.5, 11, 0.45, 0);
+    applyGhostFade(windowMat, this.foliageFades, this.subjects, 3.5, 11, 0.25, 0.05, 3.1, 2.3, 0.8);
     this.windows = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.8, 0.7), windowMat, 64);
     this.windows.count = 0;
     this.windows.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -1467,8 +1710,11 @@ export class World3D {
     // Only what is pressed against the lens. Round three's first cut faded
     // anything within fourteen metres, which at street level is the whole
     // street: the camera came down among them and the world went out.
-    applyFoliageFade(trunkMat, this.foliageFades, 3.5, 12, 0, 6);
-    applyFoliageFade(foliageMat, this.foliageFades, 3.5, 12, 0, 10);
+    // Trunk and crown are one tree. Their anchors sit five metres apart, so
+    // each is told where the tree's middle is relative to its own origin and
+    // both then ghost together — see `applyGhostFade`.
+    applyGhostFade(trunkMat, this.foliageFades, this.subjects, 3.5, 12, 0, 0.18, 3.3, 4.6, 3.8);
+    applyGhostFade(foliageMat, this.foliageFades, this.subjects, 3.5, 12, 0, 0.18, 3.3, 4.6, -1.0);
     const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.42, 4.4, 5), trunkMat, places.length);
     const foliage = new THREE.InstancedMesh(new THREE.ConeGeometry(3.3, 9, 6), foliageMat, places.length);
     places.forEach((pl, k) => {
@@ -1530,7 +1776,7 @@ export class World3D {
       // attribute for a mesh that already has one.
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3).fill(1), 3);
       mesh.frustumCulled = false;
-      mesh.renderOrder = 2;
+      mesh.renderOrder = RENDER_RING;
       this.ringMeshes[bucket] = mesh;
       this.scene.add(mesh);
     }
@@ -1540,7 +1786,7 @@ export class World3D {
     trails.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     trails.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3).fill(1), 3);
     trails.frustumCulled = false;
-    trails.renderOrder = 1;
+    trails.renderOrder = RENDER_TRAIL;
     this.trails = trails;
     this.scene.add(trails);
 
@@ -1549,20 +1795,52 @@ export class World3D {
     dots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     dots.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3).fill(1), 3);
     dots.frustumCulled = false;
-    dots.renderOrder = 2;
+    dots.renderOrder = RENDER_RING;
     dots.visible = false;
     this.dots = dots;
     this.scene.add(dots);
 
+    this.xrayMat = xrayMaterial();
     for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
       const mesh = new THREE.InstancedMesh(figureGeometry(stage), this.figureMaterial(), 64);
       mesh.count = 0;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false;
+      mesh.renderOrder = RENDER_BODY;
+      // A body needs a colour before three will declare `instanceColor`, and
+      // the silhouette that shares this buffer reads it.
+      mesh.setColorAt(0, this.color.setHex(HUE_WELL));
       this.figures[stage] = mesh;
       this.scene.add(mesh);
+
+      const ghost = new THREE.InstancedMesh(mesh.geometry, this.xrayMat, 64);
+      ghost.count = 0;
+      ghost.frustumCulled = false;
+      ghost.renderOrder = RENDER_XRAY;
+      this.xrays[stage] = ghost;
+      this.scene.add(ghost);
     }
+    this.linkXrays();
     this.growBeingCapacity(64);
+
+    // The outline a ghosted building leaves behind. Flat on the ground, drawn
+    // through whatever is over it, and exactly the size of the thing that
+    // stood there — a village of ghosts still has to read as a village.
+    const foot = new THREE.InstancedMesh(
+      new THREE.RingGeometry(0.88, 1, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: 0xbfc9cf, transparent: true, opacity: 0.5, depthWrite: false, depthTest: false,
+        side: THREE.DoubleSide, toneMapped: false,
+      }),
+      64,
+    );
+    foot.count = 0;
+    foot.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    foot.frustumCulled = false;
+    foot.renderOrder = RENDER_FOOT;
+    foot.visible = false;
+    this.footprints = foot;
+    this.scene.add(foot);
 
     const atlas = buildGlyphAtlas();
     const pictoGeo = new THREE.PlaneGeometry(1, 1);
@@ -1570,14 +1848,14 @@ export class World3D {
     cell.setUsage(THREE.DynamicDrawUsage);
     pictoGeo.setAttribute('aCell', cell);
     this.pictoCell = cell;
-    this.pictos = new THREE.InstancedMesh(pictoGeo, World3D.pictoMaterial(atlas), 64);
+    this.pictos = new THREE.InstancedMesh(pictoGeo, World3D.pictoMaterial(atlas, this.pictoFade), 64);
     // The pictogram shader reads `instanceColor`, and three only declares that
     // attribute for a mesh that already has one.
     this.pictos.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3).fill(1), 3);
     this.pictos.count = 0;
     this.pictos.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.pictos.frustumCulled = false;
-    this.pictos.renderOrder = 4;
+    this.pictos.renderOrder = RENDER_PICTO;
     // Push the quad up and right by exactly enough that the stub drawn into
     // the lower-left of every cell ends on the rim of the ring the instance is
     // anchored to. Read off the atlas's own numbers, so moving the chip in the
@@ -1585,6 +1863,23 @@ export class World3D {
     const offset = (this.pictos.material as THREE.ShaderMaterial).uniforms['uOffset']!.value as THREE.Vector2;
     offset.set(PICTO_RIM / PICTO_H - PICTO_STUB_AT[0], PICTO_RIM / PICTO_H - PICTO_STUB_AT[1]);
     this.scene.add(this.pictos);
+  }
+
+  /**
+   * The x-ray silhouettes ride on the bodies' own instance buffers — the same
+   * matrices, the same colours, uploaded once. A silhouette that could drift
+   * from the body it belongs to would be worse than none, and this makes that
+   * impossible rather than unlikely.
+   */
+  private linkXrays(): void {
+    for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
+      const body = this.figures[stage];
+      const ghost = this.xrays[stage];
+      if (!body || !ghost) continue;
+      ghost.geometry = body.geometry;
+      ghost.instanceMatrix = body.instanceMatrix;
+      if (body.instanceColor) ghost.instanceColor = body.instanceColor;
+    }
   }
 
   /**
@@ -1599,14 +1894,20 @@ export class World3D {
    * ends on that ring's rim. In a crowd that is the whole answer to whose mark
    * this is, and it is an answer a still screenshot can give.
    */
-  private static pictoMaterial(map: THREE.Texture): THREE.ShaderMaterial {
+  private static pictoMaterial(map: THREE.Texture, fade: { value: number }): THREE.ShaderMaterial {
     return new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
+      depthTest: false,
       uniforms: {
         uMap: { value: map },
         uGrid: { value: PICTO_GRID },
         uOffset: { value: new THREE.Vector2(0, 0) },
+        // The chip is annotation and fades back with the rest of it. Round
+        // five's first NEAR frame had ninety-six chips at full strength over
+        // rings at 0.42 and a scene at 1.0: a wall of badges with a village
+        // somewhere behind it.
+        uOpacity: { value: fade.value },
       },
       vertexShader: `
         uniform float uGrid;
@@ -1634,6 +1935,7 @@ export class World3D {
         }`,
       fragmentShader: `
         uniform sampler2D uMap;
+        uniform float uOpacity;
         varying vec2 vUv;
         varying vec3 vTint;
         void main() {
@@ -1642,7 +1944,7 @@ export class World3D {
           // The atlas is a mask: white is the chip, black is its keyline and
           // the symbol punched into it. The chip takes the tint, the ink stays
           // dark, so the mark holds against grass, snow, water and night alike.
-          gl_FragColor = vec4(mix(vec3(0.02, 0.022, 0.026), vTint, t.r), t.a);
+          gl_FragColor = vec4(mix(vec3(0.02, 0.022, 0.026), vTint, t.r), t.a * uOpacity);
           #include <colorspace_fragment>
         }`,
     });
@@ -1660,7 +1962,12 @@ export class World3D {
    * in it stay the colour the legend says they are.
    */
   private figureMaterial(): THREE.MeshStandardMaterial {
-    const mat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0 });
+    // Opaque in every way that shows — alpha is 1 and depth is written — but
+    // BLENDED, which is what puts it in three's transparent queue where
+    // `renderOrder` decides. The bodies have to be painted after the x-ray
+    // silhouettes so a being standing behind another one is covered by it
+    // rather than showing through it. See RENDER_BODY.
+    const mat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0, transparent: true, depthWrite: true });
     mat.onBeforeCompile = (shader) => {
       const lift = { value: 0 };
       shader.uniforms['uNightLift'] = lift;
@@ -1757,6 +2064,11 @@ export class World3D {
       this.pictos.geometry.setAttribute('aCell', cell);
       this.pictoCell = cell;
     }
+    for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
+      const ghost = this.xrays[stage];
+      if (ghost) this.xrays[stage] = regrow(this.scene, ghost, cap);
+    }
+    this.linkXrays();
   }
 
   // ── World lifecycle ────────────────────────────────────────────────────────
@@ -1770,6 +2082,8 @@ export class World3D {
     if (this.dots) this.dots.count = 0;
     this.figureCount = [0, 0, 0];
     this.ringCount.fill(0);
+    this.specimen(false);
+    this.simCount = 0;
     this.instanceCount = 0;
     this.hiddenBeings = 0;
     this.hiddenWildlife = 0;
@@ -1846,6 +2160,138 @@ export class World3D {
     this.dummy.rotation.set(0, 0, 0);
   }
 
+  // ── The legibility specimen ────────────────────────────────────────────────
+
+  /**
+   * Lay out — or clear — a grid of synthetic beings on flat ground in front of
+   * the camera, covering every stage, every condition, every act and all eight
+   * headings.
+   *
+   * Dev-only and display-only: it never touches the sim, it is never sent
+   * anywhere, and it wears no name, so the only way to find out what one of
+   * these is, is to look at it and then ask the probe. The point is not the
+   * grid — it is that these beings go through the SAME writeMarkers, the same
+   * ring buckets, the same pictogram atlas, the same x-ray pass and the same
+   * probes as the real ones. A separate drawing routine would be testing a
+   * drawing routine nobody uses.
+   *
+   * Round four's reviewed run held three unwell beings in two hundred and
+   * fifty-one, and every one of them was off-frame or inside a hut. A condition
+   * channel scored 100% at one band and 7% at another in the same review, and
+   * neither number was about the condition channel. With ninety-six specimens
+   * there is no hiding: a quarter of them are unwell, in every act, at every
+   * age, facing every way.
+   */
+  specimen(on: boolean): { ids: number[]; count: number; centre: { x: number; y: number; z: number } } | null {
+    if (!on) {
+      this.specimenOn = false;
+      this.specimenCount = 0;
+      this.instanceCount = this.simCount;
+      if (this.specimenGround) {
+        this.scene.remove(this.specimenGround);
+        this.specimenGround.geometry.dispose();
+        (this.specimenGround.material as THREE.Material).dispose();
+        this.specimenGround = null;
+      }
+      return null;
+    }
+
+    // In front of the camera, on the level. The grid is laid at the HIGHEST
+    // ground it covers and given its own floor, because a stranger test of the
+    // channels should not also be a test of whether a hillside cut a ring in
+    // half — that is what the real settlement frames are for.
+    this.camera.getWorldDirection(this.fwd);
+    this.fwd.y = 0;
+    if (this.fwd.lengthSq() < 1e-6) this.fwd.set(0, 0, 1);
+    this.fwd.normalize();
+    const reach = Math.min(
+      this.camera.position.distanceTo(this.controls.target),
+      Math.max(26, (SPECIMEN_ROWS * SPECIMEN_SPACING) * 1.2),
+    );
+    const w = (SPECIMEN_COLS - 1) * SPECIMEN_SPACING;
+    const h = (SPECIMEN_ROWS - 1) * SPECIMEN_SPACING;
+    const edge = Math.max(w, h) * 0.5 + 12;
+    const cx = Math.max(-HALF + edge, Math.min(HALF - edge, this.camera.position.x + this.fwd.x * reach));
+    const cz = Math.max(-HALF + edge, Math.min(HALF - edge, this.camera.position.z + this.fwd.z * reach));
+    this.specimenYaw = Math.atan2(this.fwd.x, this.fwd.z);
+    let top = -Infinity;
+    for (let r = -1; r <= SPECIMEN_ROWS; r++) {
+      for (let c = -1; c <= SPECIMEN_COLS; c++) {
+        const p = this.specimenPlaceAt(cx, cz, c, r);
+        top = Math.max(top, this.surfaceAt(p.x + HALF, p.z + HALF));
+      }
+    }
+    this.specimenBase.set(cx, top + 0.05, cz);
+
+    if (!this.specimenGround) {
+      const geo = new THREE.PlaneGeometry(w + 9, h + 9).rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x5a6b45, roughness: 0.98, metalness: 0 });
+      this.specimenGround = new THREE.Mesh(geo, mat);
+      this.scene.add(this.specimenGround);
+    }
+    this.specimenGround.position.copy(this.specimenBase);
+    this.specimenGround.rotation.set(0, this.specimenYaw, 0);
+
+    this.specimenOn = true;
+    this.appendSpecimen();
+    return {
+      ids: this.specimenIds(),
+      count: this.specimenCount,
+      centre: { x: this.specimenBase.x, y: this.specimenBase.y, z: this.specimenBase.z },
+    };
+  }
+
+  /** Where cell (col, row) stands, in scene units. */
+  private specimenPlaceAt(cx: number, cz: number, col: number, row: number): { x: number; z: number } {
+    const ox = (col - (SPECIMEN_COLS - 1) / 2) * SPECIMEN_SPACING;
+    const oz = (row - (SPECIMEN_ROWS - 1) / 2) * SPECIMEN_SPACING;
+    const s = Math.sin(this.specimenYaw);
+    const c = Math.cos(this.specimenYaw);
+    return { x: cx + ox * c + oz * s, z: cz - ox * s + oz * c };
+  }
+
+  /**
+   * Write the specimen into the per-being arrays, straight after the world's
+   * own beings — from here on it is indistinguishable from them to every line
+   * of code that draws, sizes, labels, projects or probes.
+   */
+  private appendSpecimen(): void {
+    if (!this.specimenOn) {
+      this.specimenCount = 0;
+      this.instanceCount = this.simCount;
+      return;
+    }
+    const plan = specimenPlan();
+    this.growBeingCapacity(this.simCount + plan.length);
+    const y = this.specimenBase.y;
+    for (let n = 0; n < plan.length; n++) {
+      const cell = plan[n]!;
+      const i = this.simCount + n;
+      const at = this.specimenPlaceAt(this.specimenBase.x, this.specimenBase.z, cell.col, cell.row);
+      this.ids[i] = SPECIMEN_ID_BASE - n;
+      this.beingPos[i * 3] = at.x;
+      this.beingPos[i * 3 + 1] = y;
+      this.beingPos[i * 3 + 2] = at.z;
+      this.beingNormal[i * 3] = 0;
+      this.beingNormal[i * 3 + 1] = 1;
+      this.beingNormal[i * 3 + 2] = 0;
+      this.beingAct[i] = cell.act;
+      this.beingCond[i] = cell.cond;
+      this.beingStage[i] = cell.stage;
+      this.beingHeading[i] = (cell.octant * Math.PI) / 4;
+      this.beingCrowded[i] = 0;
+    }
+    this.specimenCount = plan.length;
+    this.instanceCount = this.simCount + plan.length;
+  }
+
+  /** The ids of the synthetic beings, in layout order. */
+  specimenIds(): number[] {
+    const out: number[] = [];
+    for (let n = 0; n < this.specimenCount; n++) out.push(SPECIMEN_ID_BASE - n);
+    return out;
+  }
+
   // ── Per frame ──────────────────────────────────────────────────────────────
 
   /**
@@ -1867,7 +2313,7 @@ export class World3D {
     for (const s of f.speech) this.markSpeech(s.id, s.x, s.y, s.to);
     this.daylight = f.daylight;
 
-    this.growBeingCapacity(f.beings);
+    this.growBeingCapacity(f.beings + this.specimenCount);
     for (let i = 0; i < f.beings; i++) {
       const x = f.arrays.pos[i * 2]!;
       const y = f.arrays.pos[i * 2 + 1]!;
@@ -1890,7 +2336,11 @@ export class World3D {
       this.beingHeading[i] = f.arrays.heading[i]!;
       this.beingCrowded[i] = 0;
     }
+    this.simCount = f.beings;
     this.instanceCount = f.beings;
+    // The specimen, if one is laid out, lives straight after the world's own
+    // beings and goes through everything they go through.
+    this.appendSpecimen();
 
     this.hiddenBeings = Math.max(0, f.beingsAlive - f.beings);
     this.hiddenWildlife = Math.max(0, f.wildlifeTotal - f.wildlife);
@@ -1945,6 +2395,24 @@ export class World3D {
     if (this.ringFade.value !== fade) {
       this.ringFade.value = fade;
       this.trailFade.value = fade * 0.85;
+      this.pictoFade.value = fade;
+      const mat = this.pictos?.material as THREE.ShaderMaterial | undefined;
+      if (mat) mat.uniforms['uOpacity']!.value = fade;
+    }
+    const pf = this.band === 'near' ? PICTO_NEAR_SCALE : 1;
+    if (pf !== this.pictoScale) {
+      this.pictoScale = pf;
+      // The stub has to keep landing on the ring's rim, and the rim is a
+      // fraction of the MARKER while the quad is now a fraction of the chip —
+      // so the offset is re-derived rather than left to drift.
+      const mat = this.pictos?.material as THREE.ShaderMaterial | undefined;
+      const off = mat?.uniforms['uOffset']?.value as THREE.Vector2 | undefined;
+      if (off) {
+        off.set(
+          PICTO_RIM / (PICTO_H * pf) - PICTO_STUB_AT[0],
+          PICTO_RIM / (PICTO_H * pf) - PICTO_STUB_AT[1],
+        );
+      }
     }
     for (let i = 0; i < this.instanceCount; i++) {
       const annot = this.annotationAt(this.beingPos[i * 3]!, this.beingPos[i * 3 + 1]!, this.beingPos[i * 3 + 2]!);
@@ -2100,7 +2568,7 @@ export class World3D {
       if (picto === PICTO_NONE) continue;
       this.dummy.position.set(sx, surface + deco * 0.10, sz);
       this.dummy.rotation.set(0, 0, 0);
-      this.dummy.scale.setScalar(deco * PICTO_H);
+      this.dummy.scale.setScalar(deco * PICTO_H * this.pictoScale);
       this.dummy.updateMatrix();
       pictos.setMatrixAt(pictoAt, this.dummy.matrix);
       // Bone, for every condition and every band. Condition already has a
@@ -2128,6 +2596,15 @@ export class World3D {
       // Every instance moved, so the cached sphere `InstancedMesh.raycast` culls
       // against is stale — and three only ever computes it when it is null.
       mesh.boundingSphere = null;
+      // The x-ray draws the same instances, only where they are hidden. Out
+      // wide there is nothing to x-ray: a pin already carries the being, and it
+      // is drawn over everything.
+      const ghost = this.xrays[stage];
+      if (ghost) {
+        ghost.visible = detail;
+        ghost.count = detail ? mesh.count : 0;
+        ghost.boundingSphere = null;
+      }
     }
     dots.visible = !bodies;
     dots.count = dotAt;
@@ -2141,6 +2618,123 @@ export class World3D {
     if (pictos.instanceColor) pictos.instanceColor.needsUpdate = true;
     cells.needsUpdate = true;
     this.dummy.scale.setScalar(1);
+  }
+
+  /**
+   * Who the scenery has to get out of the way for, this frame.
+   *
+   * Every being big enough to be read, in view space, packed into at most
+   * `SUBJECT_SLOTS` spheres and handed to every scenery material. That list is
+   * the literal subject of the promise "a being is never invisible because of
+   * scenery": a trunk is ghosted if and only if it is nearer to the eye than
+   * one of these and covers it on screen.
+   *
+   * Out wide the list is empty and nothing ghosts — a pin is already drawn over
+   * the world there, and dissolving a forest to show a map pin would be
+   * vandalism for no gain.
+   */
+  private updateSubjects(): void {
+    // Everything below reads view space, so the camera's own matrices have to
+    // be this frame's — the renderer would not refresh them until after.
+    this.camera.updateMatrixWorld();
+    const want = bandShowsDetail(this.band);
+    this.subjectSeen.length = 0;
+    if (want) {
+      for (let k = 0; k < this.screenPoints.length; k++) {
+        const i = this.screenIndex[k]!;
+        // The same size rule the probes answer by. A frame with a hundred
+        // ten-pixel beings scattered across a valley would otherwise ghost
+        // every tree in it, and the picture goes to fog for nobody's benefit.
+        if (this.bodyPixelsOf(i) < DETAIL_MIN_PX) continue;
+        // The middle of the figure, not its feet: a wall that hides a being
+        // from the knees up is hiding the being.
+        const mid = this.beingPos[i * 3 + 1]! + (this.beingTop[i]! - this.beingPos[i * 3 + 1]!) * 0.55;
+        this.probe.set(this.beingPos[i * 3]!, mid, this.beingPos[i * 3 + 2]!).applyMatrix4(this.camera.matrixWorldInverse);
+        const slot = this.subjectPool[this.subjectSeen.length] ?? { x: 0, y: 0, z: 0, r: SUBJECT_R };
+        this.subjectPool[this.subjectSeen.length] = slot;
+        slot.x = this.probe.x;
+        slot.y = this.probe.y;
+        slot.z = this.probe.z;
+        slot.r = SUBJECT_R;
+        this.subjectSeen.push(slot);
+      }
+      // Nearest first: what is close is what is being read, and the pack grows
+      // whatever it cannot give a slot of its own into the sphere next door.
+      this.subjectSeen.sort((a, b) => b.z - a.z);
+    }
+    this.subjectCount = want ? packSubjects(this.subjectSeen, this.subjects) : 0;
+    for (const u of this.foliageFades) u.uSubjectN.value = this.subjectCount;
+  }
+
+  /**
+   * The outline a ghosted building leaves on the ground.
+   *
+   * The same arithmetic the shader does, on the few hundred structures rather
+   * than the six thousand trees — a hut that is dissolving has to leave a plan
+   * of itself behind or the settlement stops being one. Trees get none: a
+   * forest floor stencilled with six thousand circles is not a forest floor.
+   */
+  private updateFootprints(): void {
+    const mesh = this.footprints;
+    if (!mesh) return;
+    const shelters = this.structures.length;
+    if (!bandShowsDetail(this.band) || this.subjectCount === 0 || shelters === 0) {
+      mesh.visible = false;
+      mesh.count = 0;
+      return;
+    }
+    let out = mesh;
+    if (out.instanceMatrix.count < shelters) {
+      out = regrow(this.scene, out, capacityFor(shelters));
+      this.footprints = out;
+    }
+    const inv = this.camera.matrixWorldInverse;
+    let at = 0;
+    for (let s = 0; s < shelters; s++) {
+      if (this.structures[s]!.kind !== 'shelter') continue;
+      const x = this.structureAt[s * 3]!;
+      const y = this.structureAt[s * 3 + 1]!;
+      const z = this.structureAt[s * 3 + 2]!;
+      const g = this.ghostAmountAt(x, y + 2.2, z, 3.1, 2.3, inv);
+      if (g < 0.25) continue;
+      const r = (SHELTER_FOOTPRINT / 2) * (0.86 + g * 0.14);
+      this.dummy.position.set(x, y + 0.06, z);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.scale.setScalar(r);
+      this.dummy.updateMatrix();
+      out.setMatrixAt(at, this.dummy.matrix);
+      at++;
+    }
+    this.dummy.scale.setScalar(1);
+    out.count = at;
+    out.visible = at > 0;
+    out.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
+   * How much a thing standing here is in somebody's way — the shader's own
+   * test, in TypeScript, so the footprint outlines and the probes agree with
+   * the picture instead of guessing at it.
+   */
+  private ghostAmountAt(x: number, y: number, z: number, rx: number, ry: number, inv: THREE.Matrix4): number {
+    this.probe.set(x, y, z).applyMatrix4(inv);
+    const depth = -this.probe.z;
+    if (depth <= 0.05) return 0;
+    const ox = this.probe.x / depth;
+    const oy = this.probe.y / depth;
+    let block = 0;
+    for (let k = 0; k < this.subjectCount; k++) {
+      const sd = -this.subjects[k * 4 + 2]!;
+      if (sd <= 0.05 || depth - Math.max(rx, ry) >= sd - 0.2) continue;
+      const sx = this.subjects[k * 4]! / sd;
+      const sy = this.subjects[k * 4 + 1]! / sd;
+      const r = this.subjects[k * 4 + 3]! / sd;
+      const d = Math.hypot((ox - sx) / (rx / depth + r), (oy - sy) / (ry / depth + r));
+      const t = d <= 0.62 ? 0 : d >= 1.02 ? 1 : (d - 0.62) / 0.4;
+      block = Math.max(block, 1 - t * t * (3 - 2 * t));
+      if (block >= 0.999) break;
+    }
+    return block;
   }
 
   private ensureAnimalCapacity(n: number): THREE.InstancedMesh {
@@ -2193,13 +2787,12 @@ export class World3D {
           this.scene.remove(existing);
           existing.geometry.dispose();
         }
-        // A shelter the selected being is standing in is as much of a wall as a
-        // tree is; it clears out on the same rule. It shrinks in place rather
-        // than sinking — a hut's geometry stands on its own origin, and it
-        // keeps a sixth of its size so you can still see that a building is
-        // there.
+        // A shelter somebody is standing in, or behind, is as much of a wall as
+        // a tree is, and it clears on the same rule — by going to a fifth of
+        // its opacity, at exactly the size it has always been, with its
+        // footprint left drawn on the ground.
         const material = structureMaterial(kind);
-        applyFoliageFade(material, this.foliageFades, 3.5, 11, 0.45, 0);
+        applyGhostFade(material, this.foliageFades, this.subjects, 3.5, 11, 0.25, 0.22, 3.1, 2.3, 2.2);
         const mesh = new THREE.InstancedMesh(structureGeometry(kind), material, capacityFor(n));
         mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
         this.structureMeshes.set(kind, mesh);
@@ -2217,24 +2810,39 @@ export class World3D {
       this.windows = grown;
     }
 
+    if (this.structureAt.length < this.structures.length * 3) {
+      this.structureAt = new Float32Array(capacityFor(this.structures.length) * 3);
+    }
     const written = new Map<string, number>();
     let windowAt = 0;
     this.dummy.scale.set(1, 1, 1);
-    for (const s of this.structures) {
-      const mesh = this.structureMeshes.get(s.kind)!;
-      const at = written.get(s.kind) ?? 0;
-      written.set(s.kind, at + 1);
-      const base = this.surfaceAt(s.x, s.y);
+    for (let s = 0; s < this.structures.length; s++) {
+      const st = this.structures[s]!;
+      const mesh = this.structureMeshes.get(st.kind)!;
+      const at = written.get(st.kind) ?? 0;
+      written.set(st.kind, at + 1);
+      const base = this.surfaceAt(st.x, st.y);
+      // Kept so the ghost rule and the footprint outline can find the building
+      // without walking three instanced meshes to work out where it stands.
+      this.structureAt[s * 3] = st.x - HALF;
+      this.structureAt[s * 3 + 1] = base;
+      this.structureAt[s * 3 + 2] = st.y - HALF;
       // Turned by who built it, so a settlement has the slight disorder of
       // something raised by hand rather than a grid stamped on the ground.
-      this.dummy.rotation.set(0, hash2(s.id, s.builtBy) * Math.PI * 2, 0);
-      this.dummy.position.set(s.x - HALF, base, s.y - HALF);
+      const yaw = hash2(st.id, st.builtBy) * Math.PI * 2;
+      this.dummy.rotation.set(0, yaw, 0);
+      this.dummy.position.set(st.x - HALF, base, st.y - HALF);
       this.dummy.updateMatrix();
       mesh.setMatrixAt(at, this.dummy.matrix);
-      if (s.kind === 'shelter') {
-        const yaw = hash2(s.id, s.builtBy) * Math.PI * 2;
-        this.dummy.rotation.set(0, yaw, 0);
-        this.dummy.position.set(s.x - HALF + Math.sin(yaw) * 2.55, base + 1.5, s.y - HALF + Math.cos(yaw) * 2.55);
+      if (st.kind === 'shelter') {
+        // On a SIDE wall: the front one is where the doorway is now, and a
+        // lit pane hanging in the middle of a doorway is a bug with a glow.
+        this.dummy.rotation.set(0, yaw + Math.PI / 2, 0);
+        this.dummy.position.set(
+          st.x - HALF + Math.cos(yaw) * (SHELTER.room / 2 + 0.02),
+          base + 1.4,
+          st.y - HALF - Math.sin(yaw) * (SHELTER.room / 2 + 0.02),
+        );
         this.dummy.updateMatrix();
         this.windows.setMatrixAt(windowAt++, this.dummy.matrix);
       }
@@ -2417,23 +3025,14 @@ export class World3D {
   }
 
   private updateSelection(t: number): void {
-    // Down in the street, whatever is standing between the eye and the point it
-    // is aimed at steps aside — a rule about the CAMERA, not about the
-    // selection, so it is set whether or not anything is selected.
-    const blockDepth = this.band === 'near'
-      ? this.camera.position.distanceTo(this.controls.target)
-      : 0;
-    for (const u of this.foliageFades) u.uBlockDepth.value = blockDepth;
-
     const i = this.selectedId === null ? -1 : this.indexOf(this.selectedId);
     if (i < 0) {
       this.selRing.visible = false;
       this.selBeam.visible = false;
       this.ties.visible = false;
-      // Nothing is selected, so nothing is standing in the way of anything —
-      // except at NEAR, where the camera is a few marker-widths off the ground
-      // and a single hut is a wall across the frame. There the view clears the
-      // ground it is AIMED at, which is the whole reason anyone is that close.
+      // Nothing is selected, so nothing is standing in the selection's way.
+      // What is standing in a BEING's way is `updateSubjects`, and it is not a
+      // property of the selection: every being on screen is somebody's subject.
       for (const u of this.foliageFades) u.uSelR.value = 0;
       return;
     }
@@ -2488,11 +3087,13 @@ export class World3D {
       this.ties.visible = link > 0;
     }
 
-    // Foliage standing over the selected being gets out of the way — but not
-    // at NEAR. Down in the street the scene IS the answer, and a view that
-    // deletes the house someone is standing next to in order to show you the
-    // person standing next to a house has misunderstood the question.
-    const clear = this.band === 'near' ? 0 : Math.max(6, h * 1.4);
+    // Scenery standing ON the selected being clears a little further than the
+    // occlusion rule asks, because the selected being is the one the whole
+    // frame is about. Not at MID and NEAR: there the subject rule already
+    // clears whatever is in front of it, and widening it into a bubble would
+    // delete the house somebody is standing beside in order to show you the
+    // person standing beside a house.
+    const clear = bandShowsDetail(this.band) ? 0 : Math.max(6, h * 1.4);
     for (const u of this.foliageFades) {
       u.uSel.value.set(x, y, z);
       u.uSelR.value = clear;
@@ -2557,7 +3158,10 @@ export class World3D {
    * hide a being from a camera that is always above it.
    */
   private terrainHides(x: number, y: number, z: number): boolean {
-    const cam = this.camera.position;
+    return this.terrainHidesFrom(this.camera.position, x, y, z);
+  }
+
+  private terrainHidesFrom(cam: THREE.Vector3, x: number, y: number, z: number): boolean {
     const steps = 14;
     for (let s = 1; s < steps; s++) {
       const t = s / steps;
@@ -2567,6 +3171,26 @@ export class World3D {
       if (this.surfaceAt(px + HALF, pz + HALF) > py + 1) return true;
     }
     return false;
+  }
+
+  /**
+   * How far this point is inside a building's footprint, in metres — 0 when it
+   * is outside every one of them.
+   *
+   * Used to keep a proposed camera, and the point it aims at, out of the inside
+   * of a hut. Round four's `frameCandidates` put both there.
+   */
+  private insideStructure(x: number, y: number, z: number, clearance: number): number {
+    let worst = 0;
+    const reach = SHELTER_FOOTPRINT / 2 + clearance;
+    for (let s = 0; s < this.structures.length; s++) {
+      if (this.structures[s]!.kind !== 'shelter') continue;
+      const base = this.structureAt[s * 3 + 1]!;
+      if (y < base - 1 || y > base + SHELTER.ridge + clearance) continue;
+      const d = Math.hypot(x - this.structureAt[s * 3]!, z - this.structureAt[s * 3 + 2]!);
+      if (d < reach) worst = Math.max(worst, reach - d);
+    }
+    return worst;
   }
 
   /**
@@ -2810,6 +3434,10 @@ export class World3D {
         if (this.labelCandidates.length >= budget * 2 + 6) break;
         const i = this.screenIndex[k]!;
         const id = this.ids[i]!;
+        // The specimen is read with the probes and nothing else. A name over a
+        // synthetic being would hand the reader the answer to the question the
+        // specimen exists to ask.
+        if (isSpecimenId(id)) continue;
         const rank = rankOf(id);
         // At FAR the contract is how many, where, and which one is selected.
         // A handful of names scattered over a continent is not an answer to
@@ -2850,12 +3478,19 @@ export class World3D {
     // them on screen to matter, which is exactly the band where it matters.
     this.bodyRects.length = 0;
     for (const rect of this.chipRects) this.bodyRects.push(rect);
-    if (bandShowsDetail(this.band) && this.screenPoints.length <= 90) {
+    if (bandShowsDetail(this.band) && this.screenPoints.length <= 140) {
       for (let k = 0; k < this.screenPoints.length; k++) {
         const p = this.screenPoints[k]!;
         const i = this.screenIndex[k]!;
-        const half = this.markerPixelsOf(i) * 0.5;
-        this.bodyRects.push({ x0: p.x - half, y0: p.y - half, x1: p.x + half, y1: p.y + half });
+        // A PERSON's box, not a square of their own height. Round five's first
+        // NEAR frame reserved a 170 × 170 px block around every being, which
+        // covered the air over its head, so eighteen names competed for the
+        // slots between bodies and three of them landed. A being is about a
+        // fifth as wide as it is tall, and its name goes ABOVE it — so the box
+        // stops at the head and the slots over it are free.
+        const tall = Math.max(this.markerPixelsOf(i), 8);
+        const half = Math.max(5, tall * 0.22);
+        this.bodyRects.push({ x0: p.x - half, y0: p.y - tall * 0.58, x1: p.x + half, y1: p.y + tall * 0.55 });
       }
     }
     const placed = placeLabels(
@@ -2864,6 +3499,7 @@ export class World3D {
       maxLeaderFor(this.band),
     );
     this.labelShown.length = 0;
+    this.placedIds.clear();
     for (let n = 0; n < this.labelNodes.length; n++) {
       const node = this.labelNodes[n]!;
       const leader = this.leaderNodes[n]!;
@@ -2890,7 +3526,71 @@ export class World3D {
         leader.style.display = 'none';
       }
       this.labelShown.push(name.text);
+      this.placedIds.add(lab.id);
     }
+    this.auditNames();
+  }
+
+  /**
+   * How far out the NEAR promise actually reached this frame.
+   *
+   * The band claims every being you could walk to is named. Round four printed
+   * "every being in frame is named" over nineteen beings and four names, which
+   * is the kind of claim that makes every other claim suspect. So the view
+   * MEASURES it: find the nearest readable being that did NOT get a name, and
+   * the promise is everything inside that. The chip over the canvas prints the
+   * number, the legend points at the chip, and the claim is therefore true by
+   * construction — and shrinks, visibly, when the frame is too crowded to keep
+   * it.
+   *
+   * Readability here is the cheap test — on screen, not inside a chip, big
+   * enough — because this runs every frame and the terrain march does not. A
+   * being hidden by a hill that goes unnamed pulls the radius in, which is the
+   * safe direction to be wrong in.
+   */
+  private auditNames(): void {
+    if (this.band !== 'near') {
+      this.namedWithin = 0;
+      this.namesExpected = 0;
+      return;
+    }
+    let cut = NEAR_LABEL_M;
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const i = this.screenIndex[k]!;
+      const id = this.ids[i]!;
+      if (this.placedIds.has(id) || isSpecimenId(id)) continue;
+      if (this.markerPixelsOf(i) < READABLE_MARK_PX || this.isCollapsed(i)) continue;
+      const d = this.distanceTo(i);
+      if (d < cut) cut = d;
+    }
+    let held = 0;
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const i = this.screenIndex[k]!;
+      if (isSpecimenId(this.ids[i]!)) continue;
+      if (this.markerPixelsOf(i) < READABLE_MARK_PX || this.isCollapsed(i)) continue;
+      if (this.distanceTo(i) <= cut) held++;
+    }
+    this.namedWithin = cut;
+    this.namesExpected = held;
+  }
+
+  /**
+   * The naming claim, measured: how far out every readable being got a name,
+   * and how many that was. `shown` is the list actually drawn, so a reviewer
+   * can check all three against the picture.
+   */
+  labelAudit(): { claim: string; withinM: number; expected: number; shown: number } {
+    const near = this.band === 'near';
+    return {
+      claim: near
+        ? `every being within ${this.namedWithin.toFixed(1)} m is named`
+        : bandPromise(this.band).names === 'found'
+          ? 'only the selected being is named'
+          : 'names for whoever there is room to name, nearest first',
+      withinM: near ? this.namedWithin : 0,
+      expected: near ? this.namesExpected : this.labelShown.length,
+      shown: this.labelShown.length,
+    };
   }
 
   private labelTextFor(i: number, id: number): string {
@@ -2912,8 +3612,94 @@ export class World3D {
     return out;
   }
 
+  /**
+   * Whether a human being could actually READ this being off the frame, and
+   * why not when they could not.
+   *
+   * This is the probe round four was missing, and the missing probe is what
+   * every MID and NEAR failure came down to: sixteen of twenty-nine targets had
+   * three body pixels or fewer where `screenPositionOf` said they were, while
+   * `stageShownOf` and `conditionShownOf` answered for all twenty-nine. The
+   * view was scoring a reader against marks that were not in the picture.
+   *
+   * Four ways to be unreadable, and the view names which one:
+   *   · not in the frustum at all;
+   *   · a crowd's number is standing in for it (the band said it would);
+   *   · drawn smaller than `READABLE_MARK_PX`, the far side of the valley;
+   *   · behind the land, in a band whose x-ray is too coarse to carry it.
+   *
+   * Scenery is deliberately absent from that list, and that is a claim, not an
+   * omission: every being on this list is a SUBJECT, so a tree or a hut in
+   * front of one is ghosted by construction (`updateSubjects`), and whatever
+   * the ghosting misses the x-ray silhouette carries. If a reviewer finds a
+   * being on this list with no pixels, the bug is here and the probe is wrong —
+   * which is exactly the failure this is built to make visible.
+   */
+  visibilityOf(id: number): {
+    visible: boolean; markPx: number; bodyPx: number; inFrame: boolean; collapsed: boolean; behindLand: boolean; reason: string;
+  } | null {
+    const i = this.indexOf(id);
+    if (i < 0) return null;
+    const inFrame = this.beingOnScreen[i] === 1;
+    const markPx = this.markerPixelsOf(i);
+    const bodyPx = this.bodyPixelsOf(i);
+    const collapsed = this.isCollapsed(i);
+    // In a band that promises stage, activity, condition and heading, the
+    // channel is carried by the BODY. A pin holds its size on screen forever;
+    // a body does not, and the far side of the valley is ten pixels of person
+    // under a twenty-four pixel pin. See DETAIL_MIN_PX.
+    const tooSmallForDetail = bandShowsDetail(this.band) && bodyPx < DETAIL_MIN_PX;
+    const behindLand = inFrame
+      && this.terrainHides(this.beingPos[i * 3]!, (this.beingPos[i * 3 + 1]! + this.beingTop[i]!) * 0.5, this.beingPos[i * 3 + 2]!);
+    // The x-ray only draws where a body is big enough to be a picture; out
+    // wide the pin carries the being instead, and the pin is drawn over the
+    // world rather than inside it.
+    const carried = !bandShowsDetail(this.band) || bodyPx >= XRAY_MIN_BODY_PX;
+    const reason = !inFrame ? 'out of frame'
+      : collapsed ? 'counted by a crowd chip'
+        : markPx < READABLE_MARK_PX ? 'drawn too small to read'
+          : tooSmallForDetail ? 'smaller than the band draws detail at'
+            : behindLand && !carried ? 'behind the land, too small to x-ray'
+              : 'visible';
+    return { visible: reason === 'visible', markPx, bodyPx, inFrame, collapsed, behindLand, reason };
+  }
+
+  /** How tall this being's own body stands on screen, in CSS pixels. */
+  private bodyPixelsOf(i: number): number {
+    return stageForm(this.beingStage[i]!).scale / Math.max(1e-6, this.distanceTo(i) * this.worldPerPx);
+  }
+
+  /** Distance from the eye to this being's middle, in metres. */
+  private distanceTo(i: number): number {
+    const dx = this.beingPos[i * 3]! - this.camera.position.x;
+    const dy = (this.beingPos[i * 3 + 1]! + this.beingTop[i]!) * 0.5 - this.camera.position.y;
+    const dz = this.beingPos[i * 3 + 2]! - this.camera.position.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Every being a reader could actually find in this frame — the only honest
+   * population for a stranger test to draw its targets from.
+   *
+   * On demand, never per frame: it costs a terrain march per candidate, which
+   * is nothing when a driver asks for it once and would be silly sixty times a
+   * second.
+   */
+  visibleIds(): number[] {
+    const out: number[] = [];
+    for (let k = 0; k < this.screenPoints.length; k++) {
+      const id = this.screenPoints[k]!.id;
+      if (this.visibilityOf(id)?.visible) out.push(id);
+    }
+    return out;
+  }
+
+  private isVisible(id: number): boolean {
+    return this.visibilityOf(id)?.visible === true;
+  }
+
   /** What this being is doing and how it is, exactly as the view encoded it. */
-  stateOf(id: number): { act: number; cond: number; picto: number; hue: number; ring: number; core: boolean } | null {
+  stateOf(id: number): { act: number; cond: number; picto: number; hue: number; ring: number; core: boolean; visible: boolean } | null {
     const i = this.indexOf(id);
     if (i < 0) return null;
     const act = this.beingAct[i]!;
@@ -2925,6 +3711,7 @@ export class World3D {
       hue: conditionHue(cond, act),
       ring: ringStyleFor(cond, act),
       core: stageCore(this.beingStage[i]!, this.band),
+      visible: this.isVisible(id),
     };
   }
 
@@ -2943,21 +3730,29 @@ export class World3D {
       && this.ids[i] !== this.selectedId;
   }
 
-  stageOf(id: number): number | null {
+  /**
+   * The SIM's answers, each one carrying whether the picture could be read for
+   * it. The value is the ground truth a score is graded against; `visible` is
+   * whether this being belonged in the sample at all.
+   */
+  stageOf(id: number): { stage: number; word: string; visible: boolean } | null {
     const i = this.indexOf(id);
-    return i < 0 ? null : this.beingStage[i]!;
+    if (i < 0) return null;
+    return { stage: this.beingStage[i]!, word: stageWord(this.beingStage[i]!), visible: this.isVisible(id) };
   }
 
-  /** The one word for how this being is — `well`, `starving`, `sick`, `in danger`. */
-  conditionOf(id: number): string | null {
+  /** How this being is — `well`, `starving`, `sick`, `in danger`. */
+  conditionOf(id: number): { word: string; visible: boolean } | null {
     const i = this.indexOf(id);
-    return i < 0 ? null : conditionWord(this.beingCond[i]!, this.beingAct[i]!);
+    if (i < 0) return null;
+    return { word: conditionWord(this.beingCond[i]!, this.beingAct[i]!), visible: this.isVisible(id) };
   }
 
-  /** The one word for what this being is doing, as the SIM means it. */
-  activityOf(id: number): string | null {
+  /** What this being is doing, as the SIM means it. */
+  activityOf(id: number): { word: string; visible: boolean } | null {
     const i = this.indexOf(id);
-    return i < 0 ? null : activityWord(this.beingAct[i]!);
+    if (i < 0) return null;
+    return { word: activityWord(this.beingAct[i]!), visible: this.isVisible(id) };
   }
 
   /**
@@ -2971,37 +3766,40 @@ export class World3D {
    */
   activityShownOf(id: number): string | null {
     const i = this.indexOf(id);
-    return i < 0 ? null : readableActivity(this.beingAct[i]!, this.band);
+    if (i < 0 || !this.isVisible(id)) return null;
+    return readableActivity(this.beingAct[i]!, this.band);
   }
 
   /** The life stage the picture claims, or `null` where the band draws none. */
   stageShownOf(id: number): string | null {
     const i = this.indexOf(id);
-    if (i < 0 || !bandShowsDetail(this.band)) return null;
+    if (i < 0 || !bandShowsDetail(this.band) || !this.isVisible(id)) return null;
     return stageWord(this.beingStage[i]!);
   }
 
   /**
    * The condition the picture claims, or `null` at FAR, where it claims none —
-   * and `null` for a being whose mark a crowd's number has absorbed.
+   * and `null` for anything a reader could not find: a being inside a crowd's
+   * number, off the edge of the frame, or drawn too small to carry a ring.
    */
   conditionShownOf(id: number): string | null {
     const i = this.indexOf(id);
-    if (i < 0 || !bandShowsBodies(this.band) || this.isCollapsed(i)) return null;
+    if (i < 0 || !bandShowsBodies(this.band) || !this.isVisible(id)) return null;
     return conditionWord(this.beingCond[i]!, this.beingAct[i]!);
   }
 
   /** Whether the picture says this being is on the move — the streak channel. */
   movingShownOf(id: number): boolean | null {
     const i = this.indexOf(id);
-    if (i < 0 || !bandShowsDetail(this.band)) return null;
+    if (i < 0 || !bandShowsDetail(this.band) || !this.isVisible(id)) return null;
     return movingFor(this.beingAct[i]!);
   }
 
   /** Which way this being is facing in the world, in radians, as drawn. */
-  headingOf(id: number): number | null {
+  headingOf(id: number): { rad: number; visible: boolean } | null {
     const i = this.indexOf(id);
-    return i < 0 ? null : this.beingHeading[i]!;
+    if (i < 0) return null;
+    return { rad: this.beingHeading[i]!, visible: this.isVisible(id) };
   }
 
   /**
@@ -3016,7 +3814,7 @@ export class World3D {
    */
   headingOnScreen(id: number): { deg: number; word: string } | null {
     const i = this.indexOf(id);
-    if (i < 0 || !bandShowsDetail(this.band)) return null;
+    if (i < 0 || !bandShowsDetail(this.band) || !this.isVisible(id)) return null;
     const h = this.beingHeading[i]!;
     const step = this.beingMark[i]! * 0.7;
     const x = this.beingPos[i * 3]!;
@@ -3088,27 +3886,143 @@ export class World3D {
     for (let i = 0; i < this.instanceCount; i++) {
       flat.push({ id: this.ids[i]!, x: this.beingPos[i * 3]!, y: this.beingPos[i * 3 + 2]! });
     }
-    const groups = clusterHierarchy(flat, band === 'near' ? 14 : 34, 4, 12);
+    // Grouped tight. Round five's first MID candidate was the centroid of a
+    // gathering spread over three hundred metres: the camera stood forty
+    // metres from the middle of it, and most of "its" eighty-eight beings were
+    // a quarter of the band's own size on the far side of a valley. A MID
+    // frame is a village from a rooftop, so the groups are village-sized.
+    const groups = clusterHierarchy(flat, band === 'near' ? 9 : 18, 4, 14);
     // The distance at which a grown being stands the size this band is about.
     const px = band === 'near' ? 170 : band === 'mid' ? 62 : band === 'default' ? 14 : 0.5;
     const dist = ADULT_M / Math.max(1e-6, px * this.worldPerPx);
     // A three-quarter view, high enough to see into the settlement and low
-    // enough that a being is a figure rather than a footprint.
-    const pitch = band === 'near' ? 0.16 : band === 'mid' ? 0.42 : 0.85;
-    const flatR = dist * Math.cos(pitch);
-    const lift = dist * Math.sin(pitch);
+    // enough that a being is a figure rather than a footprint. Two of them and
+    // eight ways round, because the ONE placement round four offered was
+    // whatever the arithmetic produced, and what it produced was the inside of
+    // a hut three times out of three.
+    const pitches = band === 'near' ? [0.10, 0.20, 0.30] : band === 'mid' ? [0.30, 0.42, 0.54] : [0.78, 0.9];
+    const eye = band === 'near' ? 1.6 : 0;
+    const aim = band === 'near' ? 1.2 : 0;
+    const scout = this.scout;
+    scout.fov = this.camera.fov;
+    scout.aspect = this.camera.aspect;
+    scout.near = this.camera.near;
+    scout.far = this.camera.far;
+    scout.updateProjectionMatrix();
     const out: FrameCandidate[] = [];
     for (const g of groups) {
       const ground = this.surfaceAt(g.x + HALF, g.y + HALF);
       const centre = { x: g.x, y: ground, z: g.y };
-      out.push({
-        count: g.count,
-        centre,
-        camera: { x: centre.x - flatR * 0.72, y: ground + lift + (band === 'near' ? 1.6 : 0), z: centre.z + flatR * 0.69 },
-        target: { x: centre.x, y: ground + (band === 'near' ? 1.2 : 0), z: centre.z },
-      });
+      // Aim at open ground. If the centroid of the gathering is inside a
+      // building — which is where a gathering of six usually is — the aim is
+      // pushed out through the nearest wall rather than planted in it.
+      let aimX = centre.x;
+      let aimZ = centre.z;
+      for (let push = 0; push < 4; push++) {
+        if (this.insideStructure(aimX, ground + aim + 1, aimZ, 0.4) <= 0) break;
+        const nudge = this.nudgeClear(aimX, ground + aim + 1, aimZ);
+        aimX = nudge.x;
+        aimZ = nudge.z;
+      }
+      const target = { x: aimX, y: this.surfaceAt(aimX + HALF, aimZ + HALF) + aim, z: aimZ };
+      let best: { cam: { x: number; y: number; z: number }; seen: number } | null = null;
+      for (const pitch of pitches) {
+        const flatR = dist * Math.cos(pitch);
+        const lift = dist * Math.sin(pitch);
+        for (let a = 0; a < 8; a++) {
+          const theta = (a / 8) * Math.PI * 2;
+          const cx = target.x + Math.cos(theta) * flatR;
+          const cz = target.z + Math.sin(theta) * flatR;
+          const floor = this.surfaceAt(cx + HALF, cz + HALF) + 1.7;
+          const cy = Math.max(floor, target.y + lift + eye);
+          // Never inside or against a building, and never with its nose in a
+          // wall: a camera standing in a hut sees the inside of a hut.
+          if (this.insideStructure(cx, cy, cz, 2.2) > 0) continue;
+          this.probe.set(cx, cy, cz);
+          if (this.terrainHidesFrom(this.probe, target.x, target.y + 1, target.z)) continue;
+          scout.position.set(cx, cy, cz);
+          scout.up.set(0, 1, 0);
+          scout.lookAt(target.x, target.y, target.z);
+          scout.updateMatrixWorld(true);
+          const seen = this.countVisibleFrom(scout, g.members, px);
+          if (!best || seen > best.seen) best = { cam: { x: cx, y: cy, z: cz }, seen };
+        }
+      }
+      if (!best) continue;
+      out.push({ count: g.count, visible: best.seen, centre, camera: best.cam, target });
     }
+    // Best VIEW first, not biggest crowd first: a gathering of thirty nobody
+    // can see is not a better place to stand than a gathering of nine you can.
+    out.sort((a, b) => (b.visible === a.visible ? b.count - a.count : b.visible - a.visible));
     return out;
+  }
+
+  /** Step a point out of the building it is standing in, through the nearest wall. */
+  private nudgeClear(x: number, y: number, z: number): { x: number; z: number } {
+    let bx = x;
+    let bz = z;
+    let worst = 0;
+    const reach = SHELTER_FOOTPRINT / 2 + 1.4;
+    for (let s = 0; s < this.structures.length; s++) {
+      if (this.structures[s]!.kind !== 'shelter') continue;
+      const base = this.structureAt[s * 3 + 1]!;
+      if (y < base - 1 || y > base + SHELTER.ridge) continue;
+      const sx = this.structureAt[s * 3]!;
+      const sz = this.structureAt[s * 3 + 2]!;
+      const d = Math.hypot(x - sx, z - sz);
+      if (d >= reach || reach - d <= worst) continue;
+      worst = reach - d;
+      const ux = d < 1e-4 ? 1 : (x - sx) / d;
+      const uz = d < 1e-4 ? 0 : (z - sz) / d;
+      bx = sx + ux * reach;
+      bz = sz + uz * reach;
+    }
+    return { x: bx, z: bz };
+  }
+
+  /**
+   * How many of these beings a reader would find from that camera: inside the
+   * frame, drawn big enough to call, and with neither the land nor a building
+   * between the eye and them.
+   *
+   * Trees are left out on purpose — they ghost — and buildings are counted
+   * because a camera placement that has to dissolve half a settlement to work
+   * is a worse placement than one that does not.
+   */
+  private countVisibleFrom(scout: THREE.PerspectiveCamera, members: readonly number[], wantPx: number): number {
+    let seen = 0;
+    // `members` index the array the grouping was handed, which is the per-frame
+    // being arrays in order — so a member IS an instance index.
+    for (const i of members) {
+      if (i >= this.instanceCount) continue;
+      const x = this.beingPos[i * 3]!;
+      const foot = this.beingPos[i * 3 + 1]!;
+      const z = this.beingPos[i * 3 + 2]!;
+      const mid = foot + stageForm(this.beingStage[i]!).scale * 0.55;
+      this.probe.set(x, mid, z).project(scout);
+      if (this.probe.z > 1 || Math.abs(this.probe.x) > 0.92 || Math.abs(this.probe.y) > 0.92) continue;
+      const d = scout.position.distanceTo(this.focusTarget.set(x, mid, z));
+      const bodyPx = stageForm(this.beingStage[i]!).scale / Math.max(1e-6, d * this.worldPerPx);
+      // AT THE BAND'S OWN SIZE, not merely present. A being a quarter of the
+      // size the band promises is a being the band is not keeping its contract
+      // about, and counting it rewards exactly the sprawling candidate that
+      // has to be rejected.
+      if (bodyPx < Math.max(DETAIL_MIN_PX, wantPx * 0.45) || bodyPx > wantPx * 2.6) continue;
+      if (this.terrainHidesFrom(scout.position, x, mid, z)) continue;
+      // A wall between the eye and them, sampled along the line. The ghost rule
+      // would clear it, but a frame that needs less clearing is a better frame.
+      let walled = false;
+      for (let s = 1; s < 8 && !walled; s++) {
+        const t = s / 8;
+        const px = scout.position.x + (x - scout.position.x) * t;
+        const py = scout.position.y + (mid - scout.position.y) * t;
+        const pz = scout.position.z + (z - scout.position.z) * t;
+        if (Math.hypot(px - x, pz - z) < 2.6) break; // its own hut does not count against it
+        walled = this.insideStructure(px, py, pz, -0.6) > 0;
+      }
+      if (!walled) seen++;
+    }
+    return seen;
   }
 
   /**
@@ -3122,6 +4036,26 @@ export class World3D {
     this.camera.position.set(camera.x, camera.y, camera.z);
     this.controls.target.set(target.x, target.y, target.z);
     this.controls.update();
+  }
+
+  /**
+   * Where the buildings are and which way they face — so a reviewer can put a
+   * ruler on one, stand a being in its doorway, or check that the camera they
+   * were offered is not inside it.
+   */
+  structuresShown(): { kind: string; x: number; y: number; z: number; yaw: number }[] {
+    const out: { kind: string; x: number; y: number; z: number; yaw: number }[] = [];
+    for (let s = 0; s < this.structures.length; s++) {
+      const st = this.structures[s]!;
+      out.push({
+        kind: st.kind,
+        x: this.structureAt[s * 3]!,
+        y: this.structureAt[s * 3 + 1]!,
+        z: this.structureAt[s * 3 + 2]!,
+        yaw: hash2(st.id, st.builtBy) * Math.PI * 2,
+      });
+    }
+    return out;
   }
 
   /** The crowds the view has put a number on, and what those numbers say. */
@@ -3221,7 +4155,8 @@ export class World3D {
   scaleReport(): {
     unit: string;
     adult: number; child: number; elder: number;
-    hut: number; hutFootprint: number; tree: number; treeShortest: number;
+    hut: number; hutFootprint: number; hutDoorway: number; hutFrom: 'mesh' | 'contract';
+    tree: number; treeShortest: number;
     peak: number; seaLevel: number; worldSpan: number;
     annotationRing: number; adultOnScreenPx: number;
   } {
@@ -3237,18 +4172,26 @@ export class World3D {
       const h = this.gridHeight[i]!;
       if (h > peak) peak = h;
     }
+    // The hut is measured off the bounding box of the mesh that is IN THE
+    // SCENE, and nothing rescales an instance any more, so this is what a
+    // reviewer's ruler finds on the screenshot. Before the first hut is built
+    // there is no mesh to measure and the report says so rather than quietly
+    // answering 0 — or, worse, quoting a number nothing has checked.
     const shelter = this.structureMeshes.get('shelter');
     const shelterGeo = shelter?.geometry;
     if (shelterGeo) shelterGeo.computeBoundingBox();
     const hutBox = shelterGeo?.boundingBox ?? null;
+    const contract = shelterMeasure();
     const distance = this.camera.position.distanceTo(this.controls.target);
     return {
       unit: 'metre — 1 world unit = 1 m horizontally; the sim height index is drawn at 14 m per unit',
       adult: stageForm(STAGE_ADULT).scale,
       child: stageForm(STAGE_CHILD).scale,
       elder: stageForm(STAGE_ELDER).scale,
-      hut: hutBox ? hutBox.max.y - hutBox.min.y : 0,
-      hutFootprint: hutBox ? hutBox.max.x - hutBox.min.x : 0,
+      hut: hutBox ? hutBox.max.y - hutBox.min.y : contract.ridge,
+      hutFootprint: hutBox ? hutBox.max.x - hutBox.min.x : contract.footprint,
+      hutDoorway: contract.doorHeight,
+      hutFrom: hutBox ? 'mesh' : 'contract',
       // The tallest and the shortest pine the view actually planted.
       tree: measure(this.treeFoliage) * TREE_MAX_S + 4.5 * TREE_MAX_S,
       treeShortest: measure(this.treeFoliage) * TREE_MIN_S + 4.5 * TREE_MIN_S,
@@ -3263,6 +4206,13 @@ export class World3D {
   /** What the current band claims, and the accuracy it holds itself to. */
   promises(): ReturnType<typeof bandPromise> {
     return bandPromise(this.band);
+  }
+
+  /** Where this being stands, in scene units — the same frame `placeCamera` takes. */
+  worldPositionOf(id: number): { x: number; y: number; z: number } | null {
+    const i = this.indexOf(id);
+    if (i < 0) return null;
+    return { x: this.beingPos[i * 3]!, y: this.beingPos[i * 3 + 1]!, z: this.beingPos[i * 3 + 2]! };
   }
 
   screenPositionOf(id: number): { x: number; y: number } | null {
@@ -3293,8 +4243,12 @@ export class World3D {
     // PAUSED world be zoomed — which is how every stranger test is run.
     this.sizeMarkers();
     this.projectBeings();
+    // Who the scenery must step aside for is decided from where the beings
+    // landed on screen, and before anything is drawn.
+    this.updateSubjects();
     this.updateCrowds(now);
     this.writeMarkers(t);
+    this.updateFootprints();
     this.updateSelection(t);
     this.updateTransients(t);
     // Hover costs a raycast against every drawn body, so it is paid only when
@@ -3366,7 +4320,11 @@ export class World3D {
     if (bar.style.width !== width) bar.style.width = width;
     const px = this.bandPx;
     const size = px >= 10 ? `a being is ${Math.round(px)} px` : `a being is under a pixel · pins are ${Math.round(this.annotPx * RING_OUTER * 2)} px`;
-    const text = `${this.band} · ${size} · ${bandPromise(this.band).says}`;
+    // At NEAR the naming promise carries the radius it actually reached this
+    // frame, because "every being in frame is named" was neither true nor
+    // makeable true, and a measured claim beats a brave one.
+    const reach = this.band === 'near' ? ` · named within ${this.namedWithin.toFixed(0)} m` : '';
+    const text = `${this.band} · ${size} · ${bandPromise(this.band).says}${reach}${this.specimenOn ? ' · SPECIMEN' : ''}`;
     if (words.textContent !== text) words.textContent = text;
   }
 
@@ -3386,6 +4344,11 @@ export class World3D {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.worldPerPx = (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / h;
+    // The bands are stated in pixels of BEING, so the orbit's far stop has to
+    // be too, or the widest contract exists on a small window and not on a
+    // maximized one — which is exactly what round four found.
+    this.controls.maxDistance = maxOrbitDistance(this.worldPerPx, WORLD * 1.35);
+    if (this.xrayMat) this.xrayMat.uniforms['uWorldPerPx']!.value = this.worldPerPx;
   }
 
   dispose(): void {
@@ -3447,23 +4410,32 @@ function resourceGeometry(family: Family): THREE.BufferGeometry {
 }
 
 /**
- * What they build — low, on purpose.
+ * What they build, at the size they build it — and with a way in.
  *
- * A marker holds its size on SCREEN, which means that the closer the camera
- * gets the smaller a being is in world units, and at mid zoom round two's huts
- * stood taller than the people who built them: a reviewer's elder was a head
- * poking over a roof. Nothing in this world may hide a being, so the buildings
- * come up to about knee height on the marker and stay there.
+ * Round four drew the shelter as a SOLID five-metre box with a plank glued to
+ * the front where a door should be. Beings walk to within four units of a
+ * shelter and stop, so a settlement's people spend most of their day inside
+ * one, and inside a solid box is where a reviewer found them: six of seven
+ * targets in one frame were three tiles of blank hut wall.
+ *
+ * So the walls are walls. Four of them, the front one split into two piers and
+ * a lintel, leaving a real two-metre opening a 1.75 m adult walks through with
+ * clear air over their head — and leaving the inside of the hut somewhere a
+ * camera can see into. The numbers come from `SHELTER`, which is also what
+ * `scaleReport` is measured against, so the report and the ruler cannot part
+ * company again.
  */
 function structureGeometry(kind: string): THREE.BufferGeometry {
   if (kind === 'shelter') {
-    // Five metres square, walls to 2.4 m, ridge at 4.4 m — a one-room house a
-    // 1.75 m person walks into. The engine agrees: it counts a being as being
-    // "in shelter" within four units of one.
-    const body = new THREE.BoxGeometry(5, 2.4, 5).translate(0, 1.2, 0);
-    const roof = new THREE.ConeGeometry(4.3, 2.0, 4).rotateY(Math.PI / 4).translate(0, 3.4, 0);
-    const door = new THREE.BoxGeometry(0.9, 1.9, 0.25).translate(0, 0.95, 2.5);
-    return mergeGeometries([body, roof, door], false) ?? body;
+    const parts: THREE.BufferGeometry[] = SHELTER_PARTS.map(
+      (p) => new THREE.BoxGeometry(p.w, p.h, p.d).translate(p.x, p.y, p.z),
+    );
+    parts.push(
+      new THREE.ConeGeometry(SHELTER.roofRadius, SHELTER.roofHeight, 4)
+        .rotateY(Math.PI / 4)
+        .translate(0, SHELTER.eaves + SHELTER.roofHeight / 2, 0),
+    );
+    return mergeGeometries(parts, false) ?? parts[0]!;
   }
   if (kind === 'wall') return new THREE.BoxGeometry(4, 2.2, 1.1).translate(0, 1.1, 0);
   const lid = new THREE.BoxGeometry(2.0, 0.28, 2.0).translate(0, 1.28, 0);
@@ -3472,7 +4444,9 @@ function structureGeometry(kind: string): THREE.BufferGeometry {
 }
 
 function structureMaterial(kind: string): THREE.Material {
-  if (kind === 'shelter') return new THREE.MeshStandardMaterial({ color: 0x8a6440, roughness: 0.88 });
+  // A hut is hollow now, so the camera looks through the doorway at the INSIDE
+  // of the far wall. Single-sided walls would show it the landscape instead.
+  if (kind === 'shelter') return new THREE.MeshStandardMaterial({ color: 0x8a6440, roughness: 0.88, side: THREE.DoubleSide });
   if (kind === 'wall') return new THREE.MeshStandardMaterial({ color: 0x6f6f77, roughness: 1 });
   return new THREE.MeshStandardMaterial({ color: 0xb5945f, roughness: 0.8 });
 }

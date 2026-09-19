@@ -8,6 +8,10 @@ import {
   bandPromise,
   bandShowsBodies,
   bandShowsDetail,
+  DETAIL_MIN_PX,
+  distanceForFigurePx,
+  GHOST_NOTE,
+  maxOrbitDistance,
   ADULT_M,
   annotationOpacity,
   annotationRadius,
@@ -77,6 +81,27 @@ import {
   type ZoomBand,
 } from '../src/renderer/beings.js';
 import { PICTO_SVG } from '../src/renderer/glyphs.js';
+import {
+  doorwayClear,
+  insideParts,
+  isSpecimenId,
+  packSubjects,
+  READABLE_MARK_PX,
+  SHELTER,
+  SHELTER_FOOTPRINT,
+  SHELTER_PARTS,
+  shelterMeasure,
+  specimenPlan,
+  SPECIMEN_COLS,
+  SPECIMEN_ID_BASE,
+  SPECIMEN_ROWS,
+  SPECIMEN_SPACING,
+  subjectCovers,
+  SUBJECT_R,
+  SUBJECT_SLOTS,
+  XRAY_MIN_BODY_PX,
+  type Subject,
+} from '../src/renderer/legibility.js';
 import {
   ACT_COUNT,
   ACT_DANGER,
@@ -246,8 +271,44 @@ describe('the world is life-size, and the bands are read off how big a being IS'
 
   it('reaches every band inside the orbit the view allows', () => {
     const reached = new Set<ZoomBand>();
-    for (let d = 3; d <= WORLD * 1.35; d += 3) reached.add(bandForPixels(figurePxAt(d, WORLD_PER_PX)));
+    const stop = maxOrbitDistance(WORLD_PER_PX, WORLD * 1.35);
+    for (let d = 3; d <= stop; d += 3) reached.add(bandForPixels(figurePxAt(d, WORLD_PER_PX)));
     expect(reached).toEqual(new Set(BAND_ORDER));
+  });
+
+  /**
+   * Round four could not enter FAR at all on a maximized window, and the cause
+   * was a unit mismatch and nothing else: the bands are stated in pixels of
+   * being, which depend on the canvas, and the orbit's stop was 1.35 world
+   * spans, which does not. Making the window bigger deleted a contract.
+   */
+  it('reaches FAR on every window this view can be opened at', () => {
+    for (const height of [400, 630, 837, 1000, 1164.75, 1440, 2000]) {
+      const perPx = (2 * Math.tan((45 * Math.PI) / 360)) / height;
+      const stop = maxOrbitDistance(perPx, WORLD * 1.35);
+      // Not merely reachable AT the stop — reachable with the hysteresis
+      // crossed, from the band next door, which is how a camera arrives.
+      expect(bandForPixels(figurePxAt(stop, perPx), 'default')).toBe('far');
+      expect(bandForPixels(figurePxAt(stop, perPx))).toBe('far');
+      // And every other band still exists inside the same orbit.
+      const reached = new Set<ZoomBand>();
+      for (let d = 3; d <= stop; d += Math.max(1, stop / 900)) {
+        reached.add(bandForPixels(figurePxAt(d, perPx)));
+      }
+      expect(reached).toEqual(new Set(BAND_ORDER));
+      // A tall window pulls further back; it never pulls IN, or the wide shot
+      // would get narrower the more screen you gave it.
+      expect(stop).toBeGreaterThanOrEqual(WORLD * 1.35);
+    }
+  });
+
+  it('states the orbit stop in the same unit as the band it is there to reach', () => {
+    const perPx = (2 * Math.tan((45 * Math.PI) / 360)) / 1164.75;
+    const stop = maxOrbitDistance(perPx, 0);
+    // The stop IS a statement about how big a being is, with headroom past the
+    // edge — not a number of world spans that happens to work on one canvas.
+    expect(figurePxAt(stop, perPx)).toBeLessThan(BAND_EDGE_PX[0]! * (1 - 0.07));
+    expect(distanceForFigurePx(figurePxAt(stop, perPx), perPx)).toBeCloseTo(stop, 6);
   });
 
   it('orders the bands wide-to-close, once each', () => {
@@ -577,6 +638,42 @@ describe('the legend describes the band it is in, and nothing else', () => {
     }
   });
 
+  /**
+   * "Every being in frame is named" could not be made true — at NEAR the far
+   * side of the valley is in frame and half a pixel wide — and round four
+   * printed it over nineteen beings and four names. The claim is now a RADIUS,
+   * the view measures how far it actually reached, and the legend points the
+   * reader at that number instead of asserting one.
+   */
+  it('scopes the NEAR naming claim to something the picture can keep', () => {
+    expect(bandPromise('near').namesWithinM).toBe(NEAR_LABEL_M);
+    for (const band of ['far', 'default', 'mid'] as ZoomBand[]) {
+      expect(bandPromise(band).namesWithinM).toBeNull();
+    }
+    const note = legendFor('near').flatMap((s) => s.items)
+      .filter((i) => i.kind === 'note').map((n) => n.label).join(' ');
+    expect(note).toContain('walk to');
+    expect(note).not.toContain('every being in frame is named');
+    expect(bandPromise('near').says).not.toContain('every name');
+  });
+
+  /**
+   * The claim round four caught the view making and not keeping. It is now made
+   * in exactly the two bands that implement it, and it says what actually
+   * happens — a ghost with a footprint, and an outline on whoever is behind it
+   * — rather than the unfalsifiable "step aside".
+   */
+  it('promises the ghosting only where the ghosting happens', () => {
+    for (const band of BAND_ORDER) {
+      const notes = itemsOf(band).filter((i) => i.kind === 'note').map((n) => n.label);
+      expect(notes.includes(GHOST_NOTE)).toBe(bandShowsDetail(band));
+    }
+    expect(GHOST_NOTE).toContain('ghost');
+    expect(GHOST_NOTE).toContain('outline');
+    // It must not say "step aside", which described nothing a reader could check.
+    expect(GHOST_NOTE).not.toContain('step aside');
+  });
+
   it('says something in every band, and never an empty row', () => {
     for (const band of [...BAND_ORDER]) {
       const sections = legendFor(band);
@@ -598,6 +695,217 @@ describe('the legend describes the band it is in, and nothing else', () => {
   it('renders a colour as css', () => {
     expect(hex(HUE_WELL)).toMatch(/^#[0-9a-f]{6}$/);
     expect(hex(0x0a0b0c)).toBe('#0a0b0c');
+  });
+});
+
+// ── A hut, at the size the instrument says it is ─────────────────────────────
+
+/**
+ * Round four measured the drawn hut at 2.43–2.56 m in two independent frames,
+ * against a `scaleReport()` claiming 4.40, with the same method reproducing the
+ * adults to within 2–3%. The geometry and the report agreed; the RENDERER was
+ * quietly redrawing the instance at 55% to get it out of the way. On an item
+ * whose whole subject is that the world is true scale, the probe is the one
+ * thing that may not be wrong — so the contract lives in one place, the
+ * geometry is built from it, the report is measured off the built mesh, and
+ * nothing rescales an instance for legibility ever again.
+ */
+describe('a hut is the size the instrument says it is', () => {
+  const m = shelterMeasure();
+
+  it('stands to its stated ridge, eaves and footprint', () => {
+    expect(m.ridge).toBeCloseTo(4.4, 6);
+    expect(m.eaves).toBeCloseTo(2.4, 6);
+    expect(m.footprint).toBeCloseTo(6.08, 2);
+    // Measured off the parts rather than quoted at them, so the last bit of a
+    // double is the honest cost of adding a lintel's half-height back on.
+    expect(m.ridge).toBeCloseTo(SHELTER.ridge, 9);
+    expect(m.eaves).toBeCloseTo(SHELTER.eaves, 9);
+    expect(m.footprint).toBeCloseTo(SHELTER_FOOTPRINT, 9);
+  });
+
+  it('is measured off the parts the renderer builds from, not quoted at them', () => {
+    // The walls' own bounding box, computed here the way three computes it off
+    // the merged geometry. If a part moves, this moves; there is no second
+    // number to forget to update.
+    let maxY = -Infinity;
+    let maxX = -Infinity;
+    let minX = Infinity;
+    for (const p of SHELTER_PARTS) {
+      maxY = Math.max(maxY, p.y + p.h / 2);
+      maxX = Math.max(maxX, p.x + p.w / 2);
+      minX = Math.min(minX, p.x - p.w / 2);
+    }
+    expect(maxY).toBeCloseTo(m.eaves, 9);
+    expect(maxX - minX).toBeCloseTo(SHELTER.room, 9);
+    // The roof overhangs the walls — that is what makes the footprint bigger
+    // than the room, and it is why a reviewer's ruler finds 6.08 and not 5.
+    expect(m.footprint).toBeGreaterThan(SHELTER.room);
+  });
+
+  it('has a doorway a grown being walks through, and it is a HOLE', () => {
+    expect(m.doorHeight).toBeGreaterThanOrEqual(ADULT_M + 0.2);
+    expect(m.doorWidth).toBeGreaterThan(0.8);
+    // Round four's "door" was a solid box glued to a solid wall, so a being
+    // inside a hut was a being nobody could see. Sampled through the opening,
+    // floor to lintel, nothing may be in the way.
+    expect(doorwayClear()).toBe(true);
+    // And the wall it is cut into is still a wall on either side of it.
+    expect(insideParts(SHELTER_PARTS, 0, 1, SHELTER.room / 2 - SHELTER.wallThickness / 2)).toBe(false);
+    expect(insideParts(SHELTER_PARTS, 2.0, 1, SHELTER.room / 2 - SHELTER.wallThickness / 2)).toBe(true);
+    expect(insideParts(SHELTER_PARTS, -2.0, 1, SHELTER.room / 2 - SHELTER.wallThickness / 2)).toBe(true);
+    // The lintel is over the opening, not in it.
+    expect(insideParts(SHELTER_PARTS, 0, m.doorHeight + 0.15, SHELTER.room / 2 - SHELTER.wallThickness / 2)).toBe(true);
+  });
+
+  it('is hollow, so a being standing in one is a being you can see', () => {
+    for (const [x, z] of [[0, 0], [1.4, -1.4], [-1.6, 1.2]] as [number, number][]) {
+      expect(insideParts(SHELTER_PARTS, x, ADULT_M / 2, z)).toBe(false);
+    }
+  });
+
+  it('says the same thing in the legend as it does in the geometry', () => {
+    expect(SCALE_NOTE).toContain(`${SHELTER.ridge} m`);
+    expect(SCALE_NOTE).toContain(`${SHELTER.doorHeight} m`);
+    // A ridge two and a half times an adult: the proportion the note claims is
+    // the proportion the mesh has.
+    expect(m.ridge / ADULT_M).toBeGreaterThan(2.4);
+    expect(m.ridge / ADULT_M).toBeLessThan(2.6);
+  });
+});
+
+// ── Nothing stands in front of a being ───────────────────────────────────────
+
+describe('the beings the scenery has to step aside for', () => {
+  const subject = (x: number, y: number, z: number): Subject => ({ x, y, z, r: SUBJECT_R });
+
+  it('never loses one, however many are on screen', () => {
+    const out = new Float32Array(SUBJECT_SLOTS * 4);
+    let seed = 7;
+    const rnd = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    for (const n of [1, 5, 24, 25, 60, 300]) {
+      const src: Subject[] = [];
+      for (let i = 0; i < n; i++) src.push(subject((rnd() - 0.5) * 80, (rnd() - 0.5) * 20, -(2 + rnd() * 300)));
+      const count = packSubjects(src, out);
+      expect(count).toBeGreaterThan(0);
+      expect(count).toBeLessThanOrEqual(SUBJECT_SLOTS);
+      // The whole promise: a being left out of this list is a being a hut is
+      // still allowed to stand in front of.
+      for (const s of src) expect(subjectCovers(out, count, s)).toBe(true);
+    }
+  });
+
+  it('gives a lone being a sphere of its own, at its own size', () => {
+    const out = new Float32Array(SUBJECT_SLOTS * 4);
+    expect(packSubjects([subject(1, 2, -30)], out)).toBe(1);
+    expect(out[0]).toBeCloseTo(1, 4);
+    expect(out[1]).toBeCloseTo(2, 4);
+    expect(out[2]).toBeCloseTo(-30, 4);
+    expect(out[3]).toBeCloseTo(SUBJECT_R, 4);
+  });
+
+  it('keeps two beings on the same line of sight apart, not merged into one', () => {
+    const out = new Float32Array(SUBJECT_SLOTS * 4);
+    // Twenty metres apart in depth is two subjects, and a tree between them is
+    // in front of one and behind the other.
+    const n = packSubjects([subject(0, 0, -20), subject(0, 0, -40)], out);
+    expect(n).toBe(2);
+  });
+
+  it('answers nothing when there is nobody to protect', () => {
+    const out = new Float32Array(SUBJECT_SLOTS * 4);
+    expect(packSubjects([], out)).toBe(0);
+  });
+
+  it('only ever claims a mark big enough to be called', () => {
+    expect(READABLE_MARK_PX).toBeGreaterThanOrEqual(8);
+    expect(XRAY_MIN_BODY_PX).toBeGreaterThanOrEqual(READABLE_MARK_PX - 1);
+    // A pin holds its size on screen; a body does not. Where the band promises
+    // the body's own channels, the body is what has to be big enough — and the
+    // size it has to reach is the size that DEFINES the band that draws them.
+    expect(DETAIL_MIN_PX).toBe(BAND_EDGE_PX[1]);
+    expect(DETAIL_MIN_PX).toBeGreaterThan(READABLE_MARK_PX * 3);
+    for (const band of BAND_ORDER) {
+      if (!bandShowsDetail(band)) continue;
+      // Every being the band's own contract covers clears the bar by definition.
+      expect(DETAIL_MIN_PX).toBeLessThanOrEqual(BAND_EDGE_PX[1]!);
+    }
+    // And a DEFAULT pin clears it comfortably, or the band that promises a
+    // count would be dropping beings out of its own population.
+    const ringPx = (d: number): number => (annotationRadius(d, WORLD_PER_PX) / (d * WORLD_PER_PX)) * 2;
+    expect(ringPx(1454)).toBeGreaterThan(READABLE_MARK_PX * 1.5);
+  });
+});
+
+// ── The legibility specimen ──────────────────────────────────────────────────
+
+/**
+ * The run round four reviewed produced three unwell beings out of two hundred
+ * and fifty-one, and every one of them was off-frame or inside a hut. The
+ * condition channel scored 100% at DEFAULT and 7% at MID in the same review and
+ * neither number was about the channel. A specimen is the only way to test an
+ * encoding: put one of everything in front of the camera and look.
+ */
+describe('the legibility specimen', () => {
+  const plan = specimenPlan();
+
+  it('fills the grid exactly once, with nobody standing on anybody', () => {
+    expect(plan).toHaveLength(SPECIMEN_COLS * SPECIMEN_ROWS);
+    const seen = new Set<string>();
+    for (const c of plan) {
+      expect(c.col).toBeGreaterThanOrEqual(0);
+      expect(c.col).toBeLessThan(SPECIMEN_COLS);
+      expect(c.row).toBeGreaterThanOrEqual(0);
+      expect(c.row).toBeLessThan(SPECIMEN_ROWS);
+      seen.add(`${c.col},${c.row}`);
+    }
+    expect(seen.size).toBe(plan.length);
+    // Two paces apart: far enough that no figure hides the one behind it.
+    expect(SPECIMEN_SPACING).toBeGreaterThan(2.2);
+  });
+
+  it('covers every stage, every condition, every act and all eight headings', () => {
+    expect(new Set(plan.map((c) => c.stage))).toEqual(new Set([STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]));
+    expect(new Set(plan.map((c) => c.cond))).toEqual(new Set([0, COND_STARVING, COND_SICK, COND_HURT]));
+    expect(new Set(plan.map((c) => c.act)).size).toBe(ACT_COUNT);
+    expect(new Set(plan.map((c) => c.octant)).size).toBe(8);
+    // Every condition gets every act and every stage, so no channel can be
+    // read off another one.
+    for (const cond of [0, COND_STARVING, COND_SICK, COND_HURT]) {
+      const rows = plan.filter((c) => c.cond === cond);
+      expect(new Set(rows.map((c) => c.act)).size).toBe(ACT_COUNT);
+      expect(new Set(rows.map((c) => c.stage)).size).toBe(3);
+      expect(new Set(rows.map((c) => c.octant)).size).toBe(8);
+    }
+    // And every stage gets every act.
+    for (const stage of [STAGE_CHILD, STAGE_ADULT, STAGE_ELDER]) {
+      expect(new Set(plan.filter((c) => c.stage === stage).map((c) => c.act)).size).toBe(ACT_COUNT);
+    }
+  });
+
+  it('puts unwell beings where a NEAR camera can actually see them', () => {
+    // Dealt across the grid rather than in blocks: any three rows a close
+    // camera can hold still contain all four conditions.
+    for (let row = 0; row + 3 <= SPECIMEN_ROWS; row++) {
+      const band = plan.filter((c) => c.row >= row && c.row < row + 3);
+      expect(new Set(band.map((c) => c.cond)).size).toBe(4);
+    }
+  });
+
+  it('gives every mover a streak and every stayer none', () => {
+    const movers = plan.filter((c) => movingFor(c.act));
+    expect(movers.length).toBeGreaterThan(plan.length / 8);
+    for (const c of movers) expect([ACT_WALKING, ACT_DANGER]).toContain(c.act);
+  });
+
+  it('carries ids nothing in the world can collide with', () => {
+    const ids = plan.map((_, n) => SPECIMEN_ID_BASE - n);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(isSpecimenId(id)).toBe(true);
+    for (const real of [0, 1, 1830, 999999, -1, -12]) expect(isSpecimenId(real)).toBe(false);
   });
 });
 

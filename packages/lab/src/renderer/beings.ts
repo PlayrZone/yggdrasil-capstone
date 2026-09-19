@@ -26,6 +26,7 @@
  * Pure: no DOM, no three, no engine. It runs in Node.
  */
 
+import { SHELTER } from './legibility.js';
 import {
   ACT_COUNT,
   ACT_DANGER,
@@ -95,13 +96,31 @@ export const BAND_ORDER: readonly ZoomBand[] = ['far', 'default', 'mid', 'near']
 export const BAND_EDGE_PX: readonly number[] = [0.62, 40, 120];
 
 /**
+ * How tall a being's BODY has to stand before the detail bands claim anything
+ * about it.
+ *
+ * It is the MID edge, and that is not a coincidence — it is the definition.
+ * Forty pixels is the size at which this view says stage, activity, condition
+ * and heading become readable, so a being drawn smaller than that is a being no
+ * band promises those channels about, whichever band the camera is in.
+ *
+ * Round five's first MID frame is what this is for. The camera stood in a
+ * settlement, and `visibleIds()` answered one hundred — because out on the far
+ * side of the valley a being is ten pixels tall but its PIN still holds
+ * twenty-four, and the size test was asking about the pin. The band's contract
+ * there is the body. Every one of those ninety extra "visible" beings was
+ * round four's defect with a different number in front of it.
+ */
+export const DETAIL_MIN_PX = BAND_EDGE_PX[1]!;
+
+/**
  * How far past an edge the view must travel before it admits the band changed.
  *
  * Without this a camera resting a pixel from an edge flips the whole vocabulary
  * back and forth every frame — the legend rewrites itself, badges appear and
  * vanish, and the view looks broken rather than adaptive.
  */
-const BAND_HYSTERESIS = 0.07;
+export const BAND_HYSTERESIS = 0.07;
 
 /**
  * How tall a grown being stands on screen, in CSS pixels, at this distance.
@@ -112,6 +131,36 @@ const BAND_HYSTERESIS = 0.07;
  */
 export function figurePxAt(distance: number, worldPerPx: number): number {
   return ADULT_M / Math.max(1e-9, distance * worldPerPx);
+}
+
+/** The inverse: how far back the camera has to stand for a being this tall. */
+export function distanceForFigurePx(px: number, worldPerPx: number): number {
+  return ADULT_M / Math.max(1e-9, px * worldPerPx);
+}
+
+/** Room past the FAR edge, so the band is somewhere to BE and not a hairline. */
+const FAR_HEADROOM = 1.3;
+
+/**
+ * How far the orbit is allowed to pull back — stated in the same terms as the
+ * bands, because the alternative is a band that does not exist.
+ *
+ * Round four could not enter FAR at all on a maximized window. The reason was
+ * a unit mismatch and nothing else: the band edges are in CSS pixels of BEING,
+ * which depend on the height of the canvas, while the orbit limit was a fixed
+ * 1.35 world-spans. On a 630 px canvas 2700 m put a being at 0.49 px and FAR
+ * opened; on an 1165 px canvas the same 2700 m is 0.91 px, the camera hit the
+ * stop still in DEFAULT, and a whole contract became unreachable by making the
+ * window bigger.
+ *
+ * So the limit is now derived from the table: far enough that a being is
+ * comfortably under the FAR edge INCLUDING the hysteresis it has to cross, with
+ * headroom, and never nearer than the old span-based reach on a small window.
+ * `floor` keeps the wide shot at least as wide as it has always been.
+ */
+export function maxOrbitDistance(worldPerPx: number, floor: number): number {
+  const enterFar = distanceForFigurePx(BAND_EDGE_PX[0]! * (1 - BAND_HYSTERESIS), worldPerPx);
+  return Math.max(floor, enterFar * FAR_HEADROOM);
 }
 
 /**
@@ -162,9 +211,18 @@ export function bandForPixels(px: number, previous?: ZoomBand): ZoomBand {
   return BAND_ORDER[at]!;
 }
 
-/** How many names a band is willing to float over the world at once. */
+/**
+ * How many names a band is willing to float over the world at once.
+ *
+ * NEAR spends every node it has. Its contract is that everyone close enough to
+ * walk to is named, and a budget that runs out before the radius does turns
+ * that into a claim the picture cannot keep — which is exactly what round four
+ * found: nineteen beings in frame, four names, and a legend saying "every being
+ * in frame is named". The view now shrinks the RADIUS until the names it can
+ * actually place cover everyone inside it, and prints the radius it reached.
+ */
 export function labelBudgetFor(band: ZoomBand): number {
-  return band === 'near' ? 12 : band === 'mid' ? 10 : band === 'default' ? 7 : 2;
+  return band === 'near' ? LABEL_BUDGET_MAX : band === 'mid' ? 10 : band === 'default' ? 7 : 2;
 }
 
 /**
@@ -182,9 +240,16 @@ export function labelClearanceFor(band: ZoomBand, bandPx: number): number {
   return Math.min(band === 'near' ? 20 : 30, Math.max(11, bandPx * 0.26));
 }
 
-/** The longest leader line a band will draw before it drops the name instead. */
+/**
+ * The longest leader line a band will draw before it drops the name instead.
+ *
+ * NEAR's was 52 px, which refused every slot past the second one — and with
+ * eighteen beings in the street competing for the air over each other's heads,
+ * refusing the third slot is refusing the name. Eighty is still well short of
+ * the metre-long leaders that made round three's label web.
+ */
 export function maxLeaderFor(band: ZoomBand): number {
-  return band === 'near' ? 52 : 150;
+  return band === 'near' ? 80 : 150;
 }
 
 /**
@@ -223,6 +288,16 @@ export interface BandPromise {
   selected: number | null;
   /** Whether every being on screen gets a name, some do, or only the found one. */
   names: 'found' | 'some' | 'all';
+  /**
+   * Where `names` is `all`, the radius that "all" is scoped to, in metres.
+   *
+   * "Every being in frame is named" was false and could not be made true: at
+   * NEAR the far side of the valley is in frame and half a pixel wide. "Every
+   * being you could walk to" is a promise the picture can keep, and the view
+   * reports the radius it actually reached this frame so the claim is measured
+   * rather than asserted.
+   */
+  namesWithinM: number | null;
   /** One line, for the band indicator over the canvas. */
   says: string;
 }
@@ -230,11 +305,11 @@ export interface BandPromise {
 const PROMISES: Record<ZoomBand, BandPromise> = {
   far: {
     band: 'far', count: 0.10, condition: null, stage: null, activity: null, heading: null,
-    selected: 1, names: 'found', says: 'how many · where · which is selected',
+    selected: 1, names: 'found', namesWithinM: null, says: 'how many · where · which is selected',
   },
   default: {
     band: 'default', count: 0.10, condition: 0.70, stage: null, activity: null, heading: null,
-    selected: 1, names: 'some', says: 'every being countable · how it is',
+    selected: 1, names: 'some', namesWithinM: null, says: 'every being countable · how it is',
   },
   // MID and NEAR promise no COUNT, and that is the world being life-size
   // rather than a retreat. Thirty metres from a being, the far side of the
@@ -244,11 +319,13 @@ const PROMISES: Record<ZoomBand, BandPromise> = {
   // pull back for, and that is what the chip over the canvas says.
   mid: {
     band: 'mid', count: null, condition: 0.80, stage: 0.80, activity: 0.80, heading: 0.80,
-    selected: 1, names: 'some', says: 'facing · age · doing · how it is · pull back to count',
+    selected: 1, names: 'some', namesWithinM: null,
+    says: 'facing · age · doing · how it is · nothing hides · pull back to count',
   },
   near: {
     band: 'near', count: null, condition: 0.90, stage: 0.90, activity: 0.90, heading: 0.90,
-    selected: 1, names: 'all', says: 'the whole figure, and every name',
+    selected: 1, names: 'all', namesWithinM: NEAR_LABEL_M,
+    says: 'the whole figure · everyone you could walk to, named',
   },
 };
 
@@ -1127,6 +1204,15 @@ export function placeLabels(
 export interface FrameCandidate {
   /** How many beings are in this gathering. */
   count: number;
+  /**
+   * How many of them a reader would actually be able to find from the camera
+   * offered below — in frame, big enough, and with nothing solid in the way.
+   *
+   * Round four's candidates were scored on how many beings were near the
+   * centroid, which put the top MID candidate and the top two NEAR candidates
+   * INSIDE a building. Proximity to a crowd is not a view of it.
+   */
+  visible: number;
   centre: { x: number; y: number; z: number };
   camera: { x: number; y: number; z: number };
   target: { x: number; y: number; z: number };
@@ -1198,8 +1284,26 @@ export interface LegendSection {
 
 const SELECT_HEX = '#ffd34d';
 
-/** The one sentence a reader needs to trust anything they measure off the frame. */
-export const SCALE_NOTE = 'everything with a body is life-size — one unit is one metre, an adult is 1.75 m, a hut comes to twice their head';
+/**
+ * The one sentence a reader needs to trust anything they measure off the frame.
+ *
+ * The hut's numbers come from the shelter's own contract rather than from a
+ * memory of it. Round four's version said "a hut comes to twice their head"
+ * over a hut that was drawn at 2.5 m and a probe that reported 4.4 — a sentence
+ * that was wrong about the picture, wrong about the report, and impossible to
+ * check without a ruler. Ridge and doorway are numbers; a reviewer can measure
+ * both, and a 1.75 m adult standing in the doorway settles it at a glance.
+ */
+export const SCALE_NOTE = 'everything with a body is life-size — one unit is one metre, an adult is 1.75 m, '
+  + `a hut's ridge stands at ${SHELTER.ridge} m over a ${SHELTER.doorHeight} m doorway they walk through`;
+
+/**
+ * What the view does about the fact that a village is full of things taller
+ * than the people in it. Stated where a reader can check it, because round four
+ * printed the promise and did not keep it.
+ */
+export const GHOST_NOTE = 'anything standing between you and a being turns to a ghost, footprint left on the ground · '
+  + 'and nobody hides: a being behind a tree, a wall or a hill keeps a pale outline';
 
 /**
  * The counting rule, stated as arithmetic rather than as an invitation to
@@ -1308,7 +1412,9 @@ export function legendFor(band: ZoomBand): LegendSection[] {
       name: '',
       items: [
         { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
-        { kind: 'note', label: `every being in frame is named · trees and huts step aside · ${SCALE_NOTE}` },
+        { kind: 'note', label: 'every being close enough to walk to is named — the chip over the frame says how far that reached' },
+        { kind: 'note', label: GHOST_NOTE },
+        { kind: 'note', label: SCALE_NOTE },
       ],
     });
   } else {
@@ -1317,6 +1423,7 @@ export function legendFor(band: ZoomBand): LegendSection[] {
       items: [
         { kind: 'chip', label: 'a crowd, and how many are in it' },
         { kind: 'swatch', color: SELECT_HEX, round: true, label: 'selected' },
+        { kind: 'note', label: GHOST_NOTE },
         { kind: 'note', label: SCALE_NOTE },
       ],
     });

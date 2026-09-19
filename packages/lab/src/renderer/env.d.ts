@@ -17,17 +17,33 @@ import type { BandPromise, FrameCandidate, ZoomBand } from './beings.js';
  */
 export interface WorldProbe {
   drawnIds(): number[];
+  /**
+   * The beings a reader could actually FIND in this frame: in the frustum,
+   * drawn big enough to call, not folded into a crowd's number, and not lost
+   * behind the land. The only honest population for a stranger test to draw
+   * targets from — round four drew them from `drawnIds()` and sixteen of
+   * twenty-nine targets turned out to have three body pixels or fewer.
+   */
+  visibleIds(): number[];
+  /** Whether this being is readable, and which of the four ways it is not. */
+  visibilityOf(id: number): {
+    visible: boolean; markPx: number; bodyPx: number; inFrame: boolean; collapsed: boolean; behindLand: boolean; reason: string;
+  } | null;
   screenPositionOf(id: number): { x: number; y: number } | null;
-  /** What this being is doing, how it is, and the marks that say so. */
-  stateOf(id: number): { act: number; cond: number; picto: number; hue: number; ring: number; core: boolean } | null;
+  /** Where it stands, in scene units — the frame `placeCamera` takes. */
+  worldPositionOf(id: number): { x: number; y: number; z: number } | null;
+  /** What this being is doing, how it is, the marks that say so — and whether they can be read. */
+  stateOf(id: number): {
+    act: number; cond: number; picto: number; hue: number; ring: number; core: boolean; visible: boolean;
+  } | null;
   /** 0 child, 1 adult, 2 elder — the form it was drawn with. */
-  stageOf(id: number): number | null;
-  /** The one word for how it is: `well`, `starving`, `sick`, `in danger`. */
-  conditionOf(id: number): string | null;
-  /** The one word for what it is doing: `walking`, `asleep`, `eating`, … */
-  activityOf(id: number): string | null;
+  stageOf(id: number): { stage: number; word: string; visible: boolean } | null;
+  /** How it is: `well`, `starving`, `sick`, `in danger`. */
+  conditionOf(id: number): { word: string; visible: boolean } | null;
+  /** What it is doing: `walking`, `asleep`, `eating`, … */
+  activityOf(id: number): { word: string; visible: boolean } | null;
   /** Which way it faces in the world, in radians, exactly as drawn. */
-  headingOf(id: number): number | null;
+  headingOf(id: number): { rad: number; visible: boolean } | null;
   /** Which way its pointer aims ON SCREEN — degrees clockwise from up, and N/NE/E/… */
   headingOnScreen(id: number): { deg: number; word: string } | null;
   /**
@@ -42,8 +58,20 @@ export interface WorldProbe {
   nameOf(id: number): string;
   /** The names floating over the world right now — only ones actually drawn. */
   labelsShown(): string[];
+  /**
+   * The naming claim, measured rather than asserted: how far out every readable
+   * being got a name this frame, how many that was, and how many are drawn.
+   * NEAR's legend points at this number, so the claim can never outrun it.
+   */
+  labelAudit(): { claim: string; withinM: number; expected: number; shown: number };
   /** The crowd counts drawn over the world, and where each one sits. */
   clustersShown(): { count: number; x: number; y: number }[];
+  /**
+   * Where the buildings stand and which way each one faces, in scene units —
+   * enough to put a ruler on a hut, stand in its doorway, or check that a
+   * camera you were offered is not inside one.
+   */
+  structuresShown(): { kind: string; x: number; y: number; z: number; yaw: number }[];
   /**
    * How this frame asks to be counted. Every being in the frustum is either a
    * pin drawn for itself or part of exactly one chip's number, so
@@ -80,7 +108,11 @@ export interface WorldProbe {
   scaleReport(): {
     unit: string;
     adult: number; child: number; elder: number;
-    hut: number; hutFootprint: number; tree: number; treeShortest: number;
+    /** Measured off the bounding box of the mesh in the scene, in metres. */
+    hut: number; hutFootprint: number; hutDoorway: number;
+    /** `mesh` once a hut exists to measure; `contract` before the first is built. */
+    hutFrom: 'mesh' | 'contract';
+    tree: number; treeShortest: number;
     peak: number; seaLevel: number; worldSpan: number;
     annotationRing: number; adultOnScreenPx: number;
   };
@@ -94,6 +126,21 @@ export interface WorldProbe {
   conditionShownOf(id: number): string | null;
   /** Whether the picture says it is on the move — the streak channel. */
   movingShownOf(id: number): boolean | null;
+  /**
+   * Lay out (or clear) the LEGIBILITY SPECIMEN: a grid of synthetic beings on
+   * flat ground in front of the camera covering every life stage, every
+   * condition, every activity and all eight headings, drawn by the same code
+   * path as the world's own beings and readable only through these probes —
+   * they carry no names.
+   *
+   * Dev-only and display-only. Nothing here reaches the sim, and the grid
+   * disappears with `specimen(false)` or a new world. It exists because a run
+   * with three unwell beings in two hundred and fifty-one cannot test the
+   * condition channel however carefully it is scored.
+   */
+  specimen(on: boolean): { ids: number[]; count: number; centre: { x: number; y: number; z: number } } | null;
+  /** The ids of the specimen beings, in layout order. */
+  specimenIds(): number[];
 }
 
 declare global {

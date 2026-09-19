@@ -282,7 +282,10 @@ export function App(): React.ReactElement {
         // screenshot can be scored against the ground truth behind it.
         window.__ygg = {
           drawnIds: () => world.drawnIds(),
+          visibleIds: () => world.visibleIds(),
+          visibilityOf: (id) => world.visibilityOf(id),
           screenPositionOf: (id) => world.screenPositionOf(id),
+          worldPositionOf: (id) => world.worldPositionOf(id),
           stateOf: (id) => world.stateOf(id),
           stageOf: (id) => world.stageOf(id),
           conditionOf: (id) => world.conditionOf(id),
@@ -292,7 +295,9 @@ export function App(): React.ReactElement {
           headingCheck: (id, said) => world.headingCheck(id, said),
           nameOf: (id) => world.nameOf(id),
           labelsShown: () => world.labelsShown(),
+          labelAudit: () => world.labelAudit(),
           clustersShown: () => world.clustersShown(),
+          structuresShown: () => world.structuresShown(),
           countAudit: () => world.countAudit(),
           frameCandidates: (band) => world.frameCandidates(band),
           placeCamera: (camera, target) => world.placeCamera(camera, target),
@@ -307,6 +312,8 @@ export function App(): React.ReactElement {
           stageShownOf: (id) => world.stageShownOf(id),
           conditionShownOf: (id) => world.conditionShownOf(id),
           movingShownOf: (id) => world.movingShownOf(id),
+          specimen: (on) => world.specimen(on),
+          specimenIds: () => world.specimenIds(),
         };
         const payload = worldPayloadRef.current;
         if (payload) {
