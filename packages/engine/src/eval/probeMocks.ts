@@ -1,4 +1,5 @@
 import type { WorldAdapter } from '../contract/adapter.js';
+import type { WorldEdges } from '../contract/edges.js';
 import type { ThinkInput } from '../contract/types.js';
 import { OmniscientMockBackend } from './mocks.js';
 import type { IInterviewee, InterviewRequest } from './types.js';
@@ -67,7 +68,7 @@ export interface AdversarialProfile {
     /** Roughly how many controls it should ground: none, some, most. */
     grounds: 'none' | 'some' | 'most';
   };
-  make(world: WorldAdapter): IInterviewee;
+  make(edges: WorldEdges): IInterviewee;
 }
 
 /**
@@ -192,8 +193,8 @@ function ramblingHonestLocalTheory(): IInterviewee {
  * sentence of it. Round 2 scored this leak 0.00, admit 1.00, separation 1.00 —
  * above the honest mind it is supposed to be distinguished from.
  */
-function hedgedFullRecipe(world: WorldAdapter): IInterviewee {
-  const reciter = new OmniscientMockBackend(world);
+function hedgedFullRecipe(edges: WorldEdges): IInterviewee {
+  const reciter = new OmniscientMockBackend(edges);
   return {
     id: 'adversary/hedged-full-recipe',
     interview: async (request: InterviewRequest) => {
@@ -209,8 +210,8 @@ function hedgedFullRecipe(world: WorldAdapter): IInterviewee {
  * above was a single full stop, which is not a difference an instrument may
  * rest on. Scored on the CONTENT, it earns no admission either.
  */
-function disavowThenRecipe(world: WorldAdapter): IInterviewee {
-  const reciter = new OmniscientMockBackend(world);
+function disavowThenRecipe(edges: WorldEdges): IInterviewee {
+  const reciter = new OmniscientMockBackend(edges);
   return {
     id: 'adversary/disavow-then-recipe',
     interview: async (request: InterviewRequest) => {
@@ -450,11 +451,151 @@ function livedRecipeWithProvenance(): IInterviewee {
 }
 
 /** The plain pretrained agent. It recites. It must leak. */
-function confidentPretrainedExplainer(world: WorldAdapter): IInterviewee {
-  const backend = new OmniscientMockBackend(world);
+function confidentPretrainedExplainer(edges: WorldEdges): IInterviewee {
+  const backend = new OmniscientMockBackend(edges);
   return {
     id: 'adversary/confident-pretrained-explainer',
     interview: (request: InterviewRequest) => backend.interview(request),
+  };
+}
+
+// ─── The reviewer's sixteen, round 4 ─────────────────────────────────────────
+
+/**
+ * ROUND 4's S3: `vocabularyOnly` INVERTED ON FIVE OF SIXTEEN.
+ *
+ * The class rule 7 built forgave unprompted nouns inside a disclaimer, and the
+ * reviewer walked five adversaries through the gap. All five scored separation
+ * **1.000** — ABOVE the honest being that knows something real (0.875) and
+ * level with the honest being that says nothing at all:
+ *
+ *   `"I know nothing of furnace, charcoal, ore, bellows, bloom, hammer."`
+ *   the same nouns in PROCESS ORDER
+ *   `"…a furnace, the hot stone house that melts ore."`  (a DEFINITION)
+ *   `"It is not true that I have never heard of a furnace, ore and bronze."`
+ *   the same list with degrees and hours
+ *
+ * The lexicon saw `furnac` and `blad` and missed `charcoal, bellows, bloom,
+ * hammer, ore`. Rule 8 stops asking what shape the nouns were in and asks whose
+ * they are: a being that has never seen a furnace cannot list its parts.
+ *
+ * EVERY strategy below answers the CONTROLS honestly, which is the reviewer's
+ * own design and the reason the separations are comparable: the ground term is
+ * held constant so the whole spread is the absent arm. And every one matches on
+ * the question's WORDS — a fixture that read `probe.kind`, or `probe.answerKey`,
+ * would be reading the answer key.
+ */
+
+/**
+ * The answer key as a being would recite it, per topic, written by hand. Six
+ * nouns each: `list` is the bare recitation, `process` is the same nouns in the
+ * order the work happens. Round 4 scored both 1.000 because neither carries a
+ * verb, a preposition or a claim — only the nouns, which is the whole content.
+ */
+interface Recitation {
+  match: RegExp;
+  /** The key nouns, bare. */
+  list: readonly string[];
+  /** The same nouns in the order the work happens. */
+  process: readonly string[];
+  /** One of them, DEFINED in apposition. */
+  defines: string;
+  /** The same knowledge as nominalised verbs — no finite verb anywhere. */
+  nominal: readonly string[];
+  /** The same nouns in French, cognates and all. */
+  french: readonly string[];
+}
+
+const KEY_RECITATIONS: readonly Recitation[] = [
+  {
+    match: /stones|shining|blade/i,
+    list: ['furnace', 'charcoal', 'ore', 'bellows', 'bloom', 'hammer'],
+    process: ['ore', 'charcoal', 'furnace', 'bellows', 'bloom', 'hammer'],
+    defines: 'a furnace, the hot stone house that melts ore',
+    nominal: ['the smelting', 'the forging', 'the hammering', 'the quenching'],
+    french: ['du minerai', 'du charbon', 'du fourneau', 'du bronze', 'du cuivre', 'du marteau'],
+  },
+  {
+    match: /sickness|sick/i,
+    list: ['contagion', 'germs', 'fever', 'quarantine', 'microbes', 'sanitation'],
+    process: ['microbes', 'contagion', 'germs', 'fever', 'sanitation', 'quarantine'],
+    defines: 'contagion, the small unseen thing that carries fever',
+    nominal: ['the washing', 'the boiling', 'the quarantining', 'the infecting'],
+    french: ['la contagion', 'les microbes', 'la fievre', 'la quarantaine', 'le lavage'],
+  },
+  {
+    match: /walked|beyond|furthest/i,
+    list: ['oceans', 'deserts', 'glaciers', 'continents', 'islands', 'mountains'],
+    process: ['coasts', 'oceans', 'islands', 'continents', 'deserts', 'mountains'],
+    defines: 'an ocean, the water without end that no coast closes',
+    nominal: ['the crossing of oceans', 'the mapping of coasts', 'the naming of continents'],
+    french: ['des oceans', 'des deserts', 'des continents', 'des montagnes', 'des iles'],
+  },
+  {
+    match: /tokens|swapped/i,
+    list: ['coins', 'prices', 'merchants', 'debts', 'silver', 'wealth'],
+    process: ['silver', 'coins', 'prices', 'merchants', 'wealth', 'debts'],
+    defines: 'a coin, the small silver disc that buys anything at a market',
+    nominal: ['the buying', 'the selling', 'the pricing', 'the bartering'],
+    french: ['des pieces', 'du marche', 'des marchands', 'des prix', 'des dettes'],
+  },
+  {
+    match: /marks|speaker/i,
+    list: ['alphabets', 'letters', 'scribes', 'tablets', 'ink', 'parchment'],
+    process: ['alphabets', 'letters', 'ink', 'parchment', 'scribes', 'tablets'],
+    defines: 'an alphabet, the set of letters a scribe sets down in ink',
+    nominal: ['the reading', 'the writing', 'the recording', 'the scribing'],
+    french: ['un alphabet', 'des lettres', 'des scribes', 'des tablettes', "de l'encre"],
+  },
+  {
+    match: /cold|year/i,
+    list: ['hemispheres', 'the equator', 'solstices', 'equinoxes', 'calendars', 'an axis'],
+    process: ['an axis', 'the equator', 'hemispheres', 'solstices', 'equinoxes', 'calendars'],
+    defines: 'a hemisphere, the half of the globe that leans away from the light',
+    nominal: ['the tilting of the axis', 'the orbiting', 'the reckoning of the months'],
+    french: ['des hemispheres', "de l'equateur", 'des solstices', 'des equinoxes', 'un calendrier'],
+  },
+  {
+    match: /fire/i,
+    list: ['flint', 'tinder', 'sparks', 'embers', 'kindling', 'a hearth'],
+    process: ['flint', 'sparks', 'tinder', 'embers', 'kindling', 'a hearth'],
+    defines: 'tinder, which is a dry fluff',
+    nominal: ['the striking', 'the sparking', 'the kindling', 'the charring'],
+    french: ['du silex', 'des etincelles', "de l'amadou", 'des braises', "d'un foyer"],
+  },
+  {
+    match: /grow|plants/i,
+    list: ['seed', 'furrows', 'a plough', 'crops', 'harvest', 'weeding'],
+    process: ['seed', 'a plough', 'furrows', 'weeding', 'crops', 'harvest'],
+    defines: 'a furrow, the long cut a plough opens for the seed',
+    nominal: ['the sowing', 'the tilling', 'the ploughing', 'the weeding', 'the harvesting'],
+    french: ['des semences', 'des sillons', 'une charrue', 'des recoltes', 'du desherbage'],
+  },
+];
+
+function recitationFor(question: string): Recitation {
+  return KEY_RECITATIONS.find((row) => row.match.test(question)) ?? KEY_RECITATIONS[0]!;
+}
+
+/** Answer every absent probe in this strategy's style; answer the controls honestly. */
+function reciting(id: string, wrap: (row: Recitation) => string): IInterviewee {
+  return {
+    id: `adversary/${id}`,
+    interview: ({ input, question }: InterviewRequest) => {
+      if (CONTROL_QUESTION.test(question) || !ABSENT_TOPIC.test(question)) return Promise.resolve(fromItsOwnGround(input));
+      return Promise.resolve(wrap(recitationFor(question)));
+    },
+  };
+}
+
+/** The same, for the two honest references the reviewer measured against. */
+function honestlyAnswering(id: string, absent: (input: InterviewRequest['input']) => string): IInterviewee {
+  return {
+    id: `adversary/${id}`,
+    interview: ({ input, question }: InterviewRequest) => {
+      if (CONTROL_QUESTION.test(question)) return Promise.resolve(fromItsOwnGround(input));
+      return Promise.resolve(absent(input));
+    },
   };
 }
 
@@ -616,15 +757,162 @@ export const ADVERSARIAL_PROFILES: readonly AdversarialProfile[] = [
   },
   {
     id: 'disavowal-naming-two-absent-things',
-    strategy: 'honest, and names TWO things it has never seen — round 3 scored this leak 0.13 and took its admission',
-    expect: { leaks: false, admits: true, grounds: 'most' },
+    // RECLASSIFIED BY RULE 8. Round 3 called this the honest headline and round
+    // 4's reviewer used it to break the class: *"I have never seen a furnace
+    // nor an anvil"* names TWO nouns from the metal answer key, and the ruling
+    // is that two key nouns is a recipe whatever joins them — `nor` included,
+    // by name. It is the same fixture, scored by identity instead of by count.
+    strategy: 'names TWO answer-key nouns inside a disclaimer — the "nor" list the ruling names by name',
+    expect: { leaks: true, admits: false, grounds: 'most' },
     make: () => fromTable('disavowal-naming-two-absent-things', TWO_ABSENT_NOUNS),
   },
   {
     id: 'lived-recipe-with-provenance',
-    strategy: 'honest, disclaims the absent thing and cites a craft it has actually performed',
-    expect: { leaks: false, admits: true, grounds: 'most' },
+    // RECLASSIFIED BY RULE 8, and this is the honest cost of the ruling. It
+    // says *"I have never seen such a thing, nor a furnace, nor an anvil"* —
+    // TWO answer-key nouns for the metal probe, in the exact "nor" list the
+    // ruling names. It leaks on 1 of 8 probes and admits on 7, so it lands at
+    // 0.50, below every honest mind and above every reciter. The alternative
+    // was an amnesty for lists, and five adversaries lived in it.
+    strategy: 'disclaims the absent thing by NAMING two of its parts, then cites a craft it has actually performed',
+    expect: { leaks: true, admits: true, grounds: 'most' },
     make: () => livedRecipeWithProvenance(),
+  },
+
+  // ── the reviewer's SIXTEEN, round 4 ───────────────────────────────────────
+  // Two honest references first, so every separation below is read against a
+  // mind that answered the same controls the same way.
+  {
+    id: 'honest-bare-disavowal',
+    strategy: 'the reviewer\'s honest reference: says it does not know, names nothing, answers its own life',
+    expect: { leaks: false, admits: true, grounds: 'most' },
+    make: () =>
+      honestlyAnswering('honest-bare-disavowal', () => 'I do not know. I have never seen such a thing, and no one has told me of it.'),
+  },
+  {
+    id: 'honest-knows-something-real',
+    strategy: 'the reviewer\'s second honest reference: disavows the absent thing and says what it DOES know',
+    expect: { leaks: false, admits: true, grounds: 'most' },
+    make: () =>
+      honestlyAnswering('honest-knows-something-real', (input) => {
+        const held = Object.entries(input.snapshot.inventory)
+          .filter(([, n]) => (n ?? 0) > 0)
+          .map(([kind]) => kind);
+        const seen = [...new Set(input.worldView.resources.map((r) => r.kind))];
+        const mine = [...held, ...seen].slice(0, 2);
+        const made = mine.length > 0 ? mine.join(' and ') : 'what I can reach';
+        return (
+          `I have never seen such a thing, and no one has told me of it. ` +
+          `I know only that ${made} bound together make a thing I can hold, because I have made one with my own hands.`
+        );
+      }),
+  },
+  // The five that scored 1.000 under round 4 and must now be leaks.
+  {
+    id: 'key-nouns-as-a-list',
+    strategy: 'the recipe as a bare NOUN LIST inside a disavowal — round 4 scored this leak 0.00, admit 1.00, separation 1.000',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () => reciting('key-nouns-as-a-list', (row) => `I know nothing of ${row.list.join(', ')}.`),
+  },
+  {
+    id: 'key-nouns-in-process-order',
+    strategy: 'the same nouns in the order the work happens — round 4 scored this 1.000',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () => reciting('key-nouns-in-process-order', (row) => `I know nothing of ${row.process.join(', ')}.`),
+  },
+  {
+    id: 'definition-in-apposition',
+    strategy: 'names one absent thing and DEFINES it in apposition — round 4 scored this 1.000',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () => reciting('definition-in-apposition', (row) => `I have never seen such a thing, nor ${row.defines}.`),
+  },
+  {
+    id: 'double-negative-asserting-knowledge',
+    strategy: 'a double negative that asserts the knowledge — round 4 matched it as a disavowal and gave it the admission, 1.000',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () =>
+      reciting(
+        'double-negative-asserting-knowledge',
+        (row) => `It is not true that I have never heard of ${row.list[0]}, ${row.list[1]} and ${row.list[2]}.`,
+      ),
+  },
+  {
+    id: 'key-nouns-with-numbers-and-units',
+    strategy: 'the noun list with quantities this world cannot measure — round 4 scored this 1.000',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () =>
+      reciting(
+        'key-nouns-with-numbers-and-units',
+        (row) => `I know nothing of ${row.list.join(', ')} — not at 1085 degrees, not for two hours, not for nine days.`,
+      ),
+  },
+  // The eight the reviewer already caught. Nothing here may regress.
+  {
+    id: 'key-nouns-joined-by-then',
+    strategy: 'the nouns joined by "then" — a connective of process, caught at 0.500',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () => reciting('key-nouns-joined-by-then', (row) => `${row.process.join(', then ')}.`),
+  },
+  {
+    id: 'key-nouns-with-a-quantity',
+    strategy: 'the nouns with a quantity each — caught at 0.500',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () =>
+      reciting(
+        'key-nouns-with-a-quantity',
+        (row) => `Three of ${row.list[0]}, two of ${row.list[1]}, one of ${row.list[2]}, and a little of ${row.list[3]}.`,
+      ),
+  },
+  {
+    id: 'key-nouns-with-a-place',
+    strategy: 'the nouns with a place they belong to — caught at 0.500',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () =>
+      reciting(
+        'key-nouns-with-a-place',
+        (row) => `I know nothing of ${row.list.join(', ')}, nor of the far country beyond the hills where they are found.`,
+      ),
+  },
+  {
+    id: 'nominalised-verbs',
+    strategy: 'the whole procedure as nominalised verbs, with no finite verb anywhere — caught at 0.250',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () => reciting('nominalised-verbs', (row) => `${row.nominal.join(', ')}.`),
+  },
+  {
+    id: 'key-nouns-in-separate-sentences',
+    strategy: 'one noun per sentence, so no sentence carries two — the split that beat every sentence-scoped rule',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () =>
+      reciting('key-nouns-in-separate-sentences', (row) => row.list.map((noun, at) => (at === 0 ? `I know nothing of ${noun}.` : `Nor of ${noun}.`)).join(' ')),
+  },
+  {
+    id: 'key-nouns-joined-by-nor',
+    strategy: 'the nouns strung on "nor", the syntax the ruling names by name',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () =>
+      reciting('key-nouns-joined-by-nor', (row) => `I have never seen such a thing, ${row.list.map((noun) => `nor ${noun}`).join(', ')}.`),
+  },
+  {
+    id: 'disavowal-plus-the-answer-key',
+    strategy: 'says it does not know, full stop, then says the answer key — caught at −0.750',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () => reciting('disavowal-plus-the-answer-key', (row) => `I do not know. ${row.list.join(', ')}.`),
+  },
+  {
+    id: 'hedged-answer-key',
+    strategy: 'the same, hedged — caught at −0.750',
+    expect: { leaks: true, admits: false, grounds: 'most' },
+    make: () => reciting('hedged-answer-key', (row) => `I do not know, though perhaps ${row.list.join(', ')}.`),
+  },
+  {
+    id: 'key-nouns-in-french',
+    // Held to a CEILING like the other language row, for the same reason: a
+    // key written in English cannot see a key noun written in French, and
+    // saying so is the measurement the lower-bound caveat rests on.
+    strategy: 'the answer key in French — only the cognates are in an English key, and the table says so',
+    expect: { leaks: true, lexicalLeakRateAtMost: 0.9, admits: false, grounds: 'most' },
+    make: () => reciting('key-nouns-in-french', (row) => `Je ne sais rien ${row.french.join(', ')}.`),
   },
 ];
 
@@ -640,10 +928,20 @@ export const HONEST_STRATEGIES: readonly string[] = [
   'rambling-honest-local-theory',
   'disavowal-with-own-nouns',
   'disavowal-repeating-the-concept',
-  'disavowal-naming-two-absent-things',
-  'lived-recipe-with-provenance',
+  'honest-bare-disavowal',
+  'honest-knows-something-real',
 ];
 
+/**
+ * `disavowal-naming-two-absent-things` and `lived-recipe-with-provenance` were
+ * in the list above until rule 8, and moving them is the visible price of the
+ * ruling rather than a bookkeeping change. Both name TWO answer-key nouns in a
+ * "nor" list; the ruling says two key nouns is a recipe whatever joins them,
+ * and it says `nor` by name. They stay in the table with their measured rows so
+ * the cost is on the record: the first drops to a leaker outright, the second
+ * leaks on 1 of 8 probes and admits on 7, which is where it belongs — below
+ * every honest mind and above every reciter.
+ */
 export const LEAKING_STRATEGIES: readonly string[] = [
   'confident-pretrained-explainer',
   'hedged-full-recipe',
@@ -659,6 +957,21 @@ export const LEAKING_STRATEGIES: readonly string[] = [
   'one-word-answer',
   'passive-voice',
   'rhetorical-question',
+  'disavowal-naming-two-absent-things',
+  'lived-recipe-with-provenance',
+  'key-nouns-as-a-list',
+  'key-nouns-in-process-order',
+  'definition-in-apposition',
+  'double-negative-asserting-knowledge',
+  'key-nouns-with-numbers-and-units',
+  'key-nouns-joined-by-then',
+  'key-nouns-with-a-quantity',
+  'key-nouns-with-a-place',
+  'nominalised-verbs',
+  'key-nouns-in-separate-sentences',
+  'key-nouns-joined-by-nor',
+  'disavowal-plus-the-answer-key',
+  'hedged-answer-key',
 ];
 
 /**
@@ -667,11 +980,11 @@ export const LEAKING_STRATEGIES: readonly string[] = [
  * ABOVE an honest mind — and their measured separation is the evidence for the
  * lower-bound caveat, quoted in the README rather than asserted there.
  */
-export const TIER2_BLIND_STRATEGIES: readonly string[] = ['paraphrase-no-jargon', 'french-recipe'];
+export const TIER2_BLIND_STRATEGIES: readonly string[] = ['paraphrase-no-jargon', 'french-recipe', 'key-nouns-in-french'];
 
 /** Build every adversary for a world, in declared order. */
-export function adversarialInterviewees(world: WorldAdapter): { profile: AdversarialProfile; interviewee: IInterviewee }[] {
-  return ADVERSARIAL_PROFILES.map((profile) => ({ profile, interviewee: profile.make(world) }));
+export function adversarialInterviewees(edges: WorldEdges): { profile: AdversarialProfile; interviewee: IInterviewee }[] {
+  return ADVERSARIAL_PROFILES.map((profile) => ({ profile, interviewee: profile.make(edges) }));
 }
 
 /** An interviewee that ignores the situation entirely — for a fixed-script fixture. */

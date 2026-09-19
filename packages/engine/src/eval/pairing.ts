@@ -18,6 +18,13 @@ import type { ArmId, BlindTrace } from './types.js';
 export interface TracePair {
   /** Bookkeeping only. It is never sent to a judge — see `LlmTraceJudge`. */
   pairId: string;
+  /**
+   * THE CLUSTER (S1): the seed both of these traces came from. Never sent to a
+   * judge either, and never an arm — both arms of a seed carry the same string.
+   * `judgeTraces` groups by it, because a pair is not an independent
+   * observation and a run is.
+   */
+  cluster: string;
   left: BlindTrace;
   right: BlindTrace;
 }
@@ -37,6 +44,13 @@ export interface PairingManifest {
   unpaired: number;
   /** True when left/right was balanced by construction, not by coin flips. */
   balancedPlacement: true;
+  /**
+   * PAIRS NEVER CROSS A RUN (S1). One pair is two beings of the SAME seed, so a
+   * cluster is a clean unit; a pair made of arm A in seed 3 and arm B in seed 7
+   * would carry both runs' differences and belong to neither. Per cluster:
+   * how many pairs it contributed and how many traces went unpartnered in it.
+   */
+  byCluster: { cluster: string; pairs: number; unpaired: number }[];
   placements: PairPlacement[];
 }
 
@@ -62,6 +76,8 @@ export function pairTraces(
   groups: [ArmId, ArmId] = ['A', 'B'],
 ): PairingResult {
   const byId = new Map(traces.map((t) => [t.traceId, t]));
+  // The key's own rows carry the cluster; `handlesOf` carries only the handle.
+  const clusterOf = new Map(key.clusters().map((row) => [row.traceId, row.seed]));
   const take = (arm: ArmId): BlindTrace[] =>
     key
       .handlesOf(arm)
@@ -74,17 +90,42 @@ export function pairTraces(
   shuffle(first, rng);
   shuffle(second, rng);
 
-  const n = Math.min(first.length, second.length);
-  const placement = balancedFlags(n, rng);
+  // WITHIN A CLUSTER, ALWAYS. Ordering the clusters by name rather than by the
+  // order the traces happened to arrive keeps the pairing reproducible.
+  const bucket = (list: readonly BlindTrace[]): Map<string, BlindTrace[]> => {
+    const out = new Map<string, BlindTrace[]>();
+    for (const trace of list) {
+      const cluster = clusterOf.get(trace.traceId) ?? '(unclustered)';
+      const rows = out.get(cluster);
+      if (rows) rows.push(trace);
+      else out.set(cluster, [trace]);
+    }
+    return out;
+  };
+  const firstBy = bucket(first);
+  const secondBy = bucket(second);
+  const clusters = [...new Set([...firstBy.keys(), ...secondBy.keys()])].sort();
+
   const pairs: TracePair[] = [];
   const placements: PairPlacement[] = [];
-  for (let i = 0; i < n; i++) {
-    const one = first[i]!;
-    const other = second[i]!;
-    const firstOnLeft = placement[i]!;
-    const pairId = `pair-${(i + 1).toString(36).padStart(3, '0')}`;
-    pairs.push({ pairId, left: firstOnLeft ? one : other, right: firstOnLeft ? other : one });
-    placements.push({ pairId, leftGroup: firstOnLeft ? 0 : 1 });
+  const byCluster: { cluster: string; pairs: number; unpaired: number }[] = [];
+  let unpaired = 0;
+  for (const cluster of clusters) {
+    const mine = firstBy.get(cluster) ?? [];
+    const theirs = secondBy.get(cluster) ?? [];
+    const n = Math.min(mine.length, theirs.length);
+    const spare = Math.abs(mine.length - theirs.length);
+    unpaired += spare;
+    byCluster.push({ cluster, pairs: n, unpaired: spare });
+    const placement = balancedFlags(n, rng);
+    for (let i = 0; i < n; i++) {
+      const one = mine[i]!;
+      const other = theirs[i]!;
+      const firstOnLeft = placement[i]!;
+      const pairId = `pair-${(pairs.length + 1).toString(36).padStart(3, '0')}`;
+      pairs.push({ pairId, cluster, left: firstOnLeft ? one : other, right: firstOnLeft ? other : one });
+      placements.push({ pairId, leftGroup: firstOnLeft ? 0 : 1 });
+    }
   }
 
   return {
@@ -93,8 +134,9 @@ export function pairTraces(
       seed,
       groups,
       pairs: pairs.length,
-      unpaired: Math.abs(first.length - second.length),
+      unpaired,
       balancedPlacement: true,
+      byCluster,
       placements,
     },
   };

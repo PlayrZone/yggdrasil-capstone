@@ -1,6 +1,7 @@
 import { actionForCore, kindsWithTag } from '../contract/actions.js';
 import type { ActionBinding } from '../contract/actions.js';
 import type { WorldAdapter } from '../contract/adapter.js';
+import type { WorldEdges } from '../contract/edges.js';
 import type { Intent, MindOutput, ObservedResource, ThinkInput, Utterance } from '../contract/types.js';
 import { encodeOutput } from '../contract/wire.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
@@ -28,9 +29,17 @@ import { isInterview, questionIn } from './interview.js';
 abstract class ScriptedBackend implements IMindBackend {
   abstract readonly modelId: string;
   protected readonly world: WorldAdapter;
+  /**
+   * A MOCK SITS AT AN EDGE (W1-B4 r4). It plays the model, so it writes the
+   * model's wire format, and only the world's codec can cross between an opaque
+   * place and the fields a model sends. The codec is HANDED here — it is a
+   * capability the world gave its edges, not something a lookup can produce.
+   */
+  private readonly edges: WorldEdges;
 
-  constructor(world: WorldAdapter) {
-    this.world = world;
+  constructor(edges: WorldEdges) {
+    this.edges = edges;
+    this.world = edges.adapter;
   }
 
   /** Satisfies `IInterviewee`, so a mock can be a probe subject directly. */
@@ -57,7 +66,7 @@ abstract class ScriptedBackend implements IMindBackend {
    */
   complete(prompt: ThinkPrompt, input: ThinkInput): Promise<string> {
     if (isInterview(prompt)) return Promise.resolve(this.answer(questionIn(prompt) ?? '', input));
-    return Promise.resolve(JSON.stringify(encodeOutput(this.world, this.decide(input))));
+    return Promise.resolve(JSON.stringify(encodeOutput(this.edges.codec, this.decide(input))));
   }
 
   /** Direct access for a caller that already holds the situation. */

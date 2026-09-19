@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blindTraces, foragerAdapter, judgeTraces, pairTraces, runAb, verifyCommitment, wilsonInterval } from '../src/index.js';
+import { blindTraces, foragerAdapter, foragerWorld, judgeTraces, pairTraces, runAb, verifyCommitment, wilsonInterval } from '../src/index.js';
 import type { ArmId, BlindTrace, RawBeingTrace, SealedTraceKey, TraceJudgement, TracePair } from '../src/index.js';
 
 /**
@@ -471,7 +471,10 @@ describe('W1-E · the key is sealed until every judgement is recorded', () => {
       id: 'seal-watcher',
       compare: (pair: TracePair): Promise<TraceJudgement> => {
         if (result.key.unsealed) sealedAtEveryCall = false;
-        expect(Object.keys(pair).sort()).toEqual(['left', 'pairId', 'right']);
+        // S1: a pair now names its CLUSTER — the seed both traces came from. It is
+        // the same string for both arms, so it is not an arm tell; the assertion
+        // below still holds that no arm reaches a judge.
+        expect(Object.keys(pair).sort()).toEqual(['cluster', 'left', 'pairId', 'right']);
         expect(JSON.stringify(pair)).not.toMatch(/"arm"/);
         return Promise.resolve({
           preference: 'tie' as const,

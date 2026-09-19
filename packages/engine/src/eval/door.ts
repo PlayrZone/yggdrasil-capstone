@@ -1,4 +1,6 @@
 import type { WorldAdapter } from '../contract/adapter.js';
+import type { WorldEdges } from '../contract/edges.js';
+import { encodeOutput } from '../contract/wire.js';
 import { FireworksMindBackend } from '../consciousness/FireworksMindBackend.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import { MockMindBackend } from '../consciousness/MockMindBackend.js';
@@ -63,6 +65,12 @@ export type BackendSpec =
 
 export interface DoorContext {
   world: WorldAdapter;
+  /**
+   * The world's edges (W1-B4 r4): its adapter and its codec, handed at
+   * construction. A MOCK writes the model's wire format and therefore needs
+   * the codec; no lookup produces one, so it travels with the context.
+   */
+  edges: WorldEdges;
   /** Required for every paid kind. Absent is a refusal, never a free pass. */
   budget?: CallBudget | undefined;
   /**
@@ -108,9 +116,12 @@ export function openBackend(spec: BackendSpec, context: DoorContext): IMindBacke
   const label = context.label ?? describeBackendSpec(spec);
   switch (spec.kind) {
     case 'mock':
-      return spec.mind === 'faithful' ? new FaithfulMockBackend(context.world) : new OmniscientMockBackend(context.world);
+      return spec.mind === 'faithful' ? new FaithfulMockBackend(context.edges) : new OmniscientMockBackend(context.edges);
     case 'reflex':
-      return new MockMindBackend({ world: context.world });
+      return new MockMindBackend({
+        world: context.world,
+        writeReply: (output) => JSON.stringify(encodeOutput(context.edges.codec, output)),
+      });
     case 'fireworks': {
       const budget = requireBudget(spec, context);
       if (!context.apiKey) {

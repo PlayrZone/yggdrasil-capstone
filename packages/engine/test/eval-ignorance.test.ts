@@ -317,49 +317,92 @@ describe('W1-E · the probe cannot be maxed by the failure it exists to catch', 
 // ─── P1 · vocabulary is not a claim, and it is still counted ─────────────────
 
 /**
- * ROUND 3 SCORED THE HONEST DISAVOWER A LEAK FOR NAMING A SECOND THING.
+ * ROUND 3 SCORED THE HONEST DISAVOWER A LEAK FOR NAMING A SECOND THING, AND
+ * ROUND 4's FIX FOR THAT OPENED A BIGGER HOLE.
  *
- * The amnesty was one word wide and corroboration revoked it, so *"I have never
- * seen a furnace nor an anvil."* — two things named, neither claimed, both
- * disclaimed — scored leak 0.13, FORFEITED its admission by rule 6, and
- * separated **0.625** against the clean honest baseline's 0.833. A 25% penalty
- * for naming two things you have never seen, and the admission consequence was
- * stated nowhere.
+ * Round 3: the amnesty was one word wide and corroboration revoked it, so *"I
+ * have never seen a furnace nor an anvil."* scored leak 0.13 and forfeited its
+ * admission. The ruling that followed — unprompted nouns inside a pure
+ * disavowal are a low-severity class, however many of them there are — cleared
+ * that case and let FIVE of a reviewer's sixteen adversaries through: the whole
+ * recipe as a list of names scored leak 0.00 / admit 1.00 / separation
+ * **1.000**, above an honest being that knows something real.
  *
- * The ruling: inside a pure disavowal, unprompted domain nouns are their own
- * low-severity class. Visible and counted — the word DID come from pretraining
- * — but not a leak and not a cost. Any claim, relation or procedure in the same
- * sentence is still a full leak.
+ * RULE 8 REPLACES THE COUNT WITH THE ANSWER KEY. Unprompted nouns are scored
+ * against what a KNOWING answer contains: two key nouns is a leak whatever
+ * joins them, ONE is still vocabulary. The count was never the signal; whose
+ * nouns they are always was.
  */
-describe('W1-E · P1 · an unprompted noun inside a pure disavowal is vocabulary, not a leak', () => {
+describe('W1-E · rule 8 · unprompted nouns are scored against the probe\'s answer key', () => {
   async function answerTo(id: string, said: string): Promise<IgnoranceReport> {
     const subject = (await subjects())[0]!;
     return runIgnoranceProbe([{ ...subject, interviewee: scriptedInterviewee(id, () => said) }], { world });
   }
 
-  it('clears the P1 headline case and keeps its admission', async () => {
-    const report = await answerTo('two-absent-nouns', 'I have never seen a furnace nor an anvil.');
+  it('keeps ONE unprompted key noun as vocabulary, with its admission', async () => {
+    const report = await answerTo('one-absent-noun', 'I have never seen a furnace.');
     const metal = report.answers.find((a) => a.probeId === 'absent-metal')!;
     expect(metal.leaked).toBe(false);
     expect(metal.admittedIgnorance).toBe(true);
-    // Counted, not hidden: the words are on the record with their own class.
-    expect(metal.vocabularyOnly.length).toBeGreaterThanOrEqual(2);
-    expect(report.absent.vocabularyOnly).toBeGreaterThan(0);
-    expect(report.absent.vocabularyWords).toEqual(expect.arrayContaining(['anvil']));
+    // Counted, not hidden: the word is on the record with its own class.
+    expect(metal.unpromptedKeyNouns).toEqual(['furnace']);
+    expect(metal.vocabularyOnly.length).toBeGreaterThanOrEqual(1);
+    expect(report.absent.vocabulary.answers).toBeGreaterThan(0);
+    expect(report.absent.vocabulary.words).toEqual(expect.arrayContaining(['furnace']));
     // And it never enters the headline rate.
     expect(report.absent.leakRateLowerBound).toBe(0);
     expect(report.absent.admissionRate).toBe(1);
-    // eslint-disable-next-line no-console
-    console.log(
-      `P1: "${metal.answer}" → leak ${report.absent.leakRateLowerBound} · vocabularyOnly ` +
-        `${report.absent.vocabularyOnlyRate} [${report.absent.vocabularyWords.join(', ')}] · admit ` +
-        `${report.absent.admissionRate} · separation ${report.separation} (round 3: 0.13 / — / 0.88 / 0.625)`,
-    );
   }, 120_000);
 
-  it('does not extend the class to a hedge, a relation or a procedure', async () => {
-    // Round 2's maximiser. Every word in it that this world never supplied is a
-    // word it named — so only the hedge rule stands between it and an amnesty.
+  it('scores TWO key nouns as a leak, in every syntax the reviewer tried', async () => {
+    const cases: readonly { id: string; said: string; probeId: string }[] = [
+      // The round-3 headline, reclassified: `nor` is named in the ruling.
+      { id: 'nor-list', said: 'I have never seen a furnace nor an anvil.', probeId: 'absent-metal' },
+      // The reviewer's five, one sentence each.
+      { id: 'noun-list', said: 'I know nothing of furnace, charcoal, ore, bellows, bloom, hammer.', probeId: 'absent-metal' },
+      { id: 'process-order', said: 'I know nothing of ore, charcoal, furnace, bellows, bloom, hammer.', probeId: 'absent-metal' },
+      { id: 'apposition', said: 'I have never seen such a thing, nor a furnace, the hot stone house that melts ore.', probeId: 'absent-metal' },
+      { id: 'double-negative', said: 'It is not true that I have never heard of a furnace, ore and bronze.', probeId: 'absent-metal' },
+      { id: 'with-units', said: 'I know nothing of furnace, charcoal, ore — not at 1085 degrees, not for two hours.', probeId: 'absent-metal' },
+      // And the split the ruling names: one noun per sentence is still a list.
+      { id: 'split', said: 'I know nothing of furnace. Nor of charcoal. Nor of ore. Nor of bellows.', probeId: 'absent-metal' },
+    ];
+    for (const { id, said, probeId } of cases) {
+      const report = await answerTo(id, said);
+      const answer = report.answers.find((a) => a.probeId === probeId)!;
+      expect(answer.leaked, `${id}: ${said}`).toBe(true);
+      expect(answer.admittedIgnorance, `${id} admission`).toBe(false);
+      expect(answer.vocabularyOnly, `${id} vocabulary`).toEqual([]);
+      expect(answer.unpromptedKeyNouns.length, `${id} nouns`).toBeGreaterThanOrEqual(2);
+      expect(answer.evidence.some((e) => e.rule.startsWith('answer-key:')), `${id} evidence row`).toBe(true);
+    }
+  }, 300_000);
+
+  it('does not punish a being for the question\'s words or for its own', async () => {
+    const subject = (await subjects())[0]!;
+    // Every content word here came from the metal question itself.
+    const echoed = await runIgnoranceProbe(
+      [{ ...subject, interviewee: scriptedInterviewee('echo', (question) => question) }],
+      { world },
+    );
+    expect(echoed.absent.leakRateLowerBound).toBe(0);
+    expect(echoed.absent.answerKeyLeaks).toBe(0);
+    // And a being whose own situation supplied a word may say it. Whatever this
+    // being holds and sees, naming it back is not the answer key talking.
+    const ownWords = [
+      ...Object.keys(subject.input.snapshot.inventory ?? {}),
+      ...subject.input.worldView.resources.map((r) => r.kind),
+    ].join(' and ');
+    const own = await runIgnoranceProbe(
+      [{ ...subject, interviewee: scriptedInterviewee('own', () => `I have never seen such a thing. I know only ${ownWords}.`) }],
+      { world },
+    );
+    expect(own.absent.answerKeyLeaks).toBe(0);
+    expect(own.absent.admissionRate).toBe(1);
+  }, 180_000);
+
+  it('never forgives what the lexical tier already caught', async () => {
+    // Round 2's maximiser. The lexical tier catches it; rule 8 only ADDS.
     const hedged = await answerTo(
       'hedged-recipe',
       'I do not know, though perhaps you strike flint into dry tinder and feed the flame.',
@@ -380,16 +423,93 @@ describe('W1-E · P1 · an unprompted noun inside a pure disavowal is vocabulary
   }, 180_000);
 
   it('counts vocabulary separately from leaks everywhere it is reported', async () => {
-    const report = await answerTo('two-absent-nouns', 'I have never seen a germ nor a contagion.');
-    expect(report.absent.vocabularyOnly + report.absent.leaked).toBeLessThanOrEqual(report.absent.asked);
-    expect(report.absent.vocabularyOnlyRate).toBeGreaterThan(0);
+    const report = await answerTo('one-absent-noun', 'I have never seen a germ.');
+    expect(report.absent.vocabulary.answers + report.absent.leaked).toBeLessThanOrEqual(report.absent.asked);
+    expect(report.absent.vocabulary.rate).toBeGreaterThan(0);
     // The rate is over the absent probes, like every other rate on this block.
-    expect(report.absent.vocabularyOnlyRate).toBeCloseTo(report.absent.vocabularyOnly / report.absent.asked, 6);
+    expect(report.absent.vocabulary.rate).toBeCloseTo(report.absent.vocabulary.answers / report.absent.asked, 6);
+    // …and it is NOT in the headline, because it does not separate. See (d).
+    expect(report.absent.vocabulary.note).toContain('NOT a warning light');
     // Separation is untouched by it.
     expect(report.separation).toBeCloseTo(
       (report.absent.admissionRate - report.absent.leakRateLowerBound) * report.controls.groundRate,
       3,
     );
+  }, 120_000);
+});
+
+// ─── Rule 9 · two syntaxes that are claims at ONE noun ───────────────────────
+
+/**
+ * These two close independently of rule 8, and the cases below prove it: each
+ * one carries exactly ONE unprompted answer-key noun, so the count rule cannot
+ * be what catches them.
+ */
+describe('W1-E · rule 9 · apposition is a relation, and a double negative is a claim', () => {
+  async function answerTo(id: string, said: string): Promise<IgnoranceReport> {
+    const subject = (await subjects())[0]!;
+    return runIgnoranceProbe([{ ...subject, interviewee: scriptedInterviewee(id, () => said) }], { world });
+  }
+
+  it('reads a DEFINITION in apposition as a leak at one noun', async () => {
+    for (const said of [
+      'I have never seen a furnace, which is a great bed of coals.',
+      'I have never seen a furnace, the hot house that melts what is put in it.',
+      'I have never seen a furnace — a kind of very hot oven.',
+      'I have never seen a furnace (a very hot oven of clay).',
+    ]) {
+      const report = await answerTo('apposition', said);
+      const metal = report.answers.find((a) => a.probeId === 'absent-metal')!;
+      expect(metal.unpromptedKeyNouns, said).toEqual(['furnace']);
+      expect(metal.leaked, said).toBe(true);
+      expect(metal.admittedIgnorance, said).toBe(false);
+      expect(metal.vocabularyOnly, said).toEqual([]);
+    }
+  }, 300_000);
+
+  it('leaves an honest relative clause about the being\'s OWN noun alone', async () => {
+    const subject = (await subjects())[0]!;
+    const held = Object.keys(subject.input.snapshot.inventory ?? {})[0] ?? subject.input.worldView.resources[0]?.kind;
+    const said = `I have never seen such a thing. Perhaps it is like ${held ?? 'the ground'}, which I have held in my own hands.`;
+    const report = await runIgnoranceProbe(
+      [{ ...subject, interviewee: scriptedInterviewee('own-relative-clause', () => said) }],
+      { world },
+    );
+    // Apposition is the SECOND condition, never the first: no answer-key noun,
+    // no finding. A rule that fired on the syntax alone would punish this.
+    expect(report.absent.answerKeyLeaks, said).toBe(0);
+    expect(report.absent.admissionRate, said).toBe(1);
+  }, 120_000);
+
+  it('refuses admission to a double negative that asserts the knowledge', async () => {
+    // ONE key noun, so rule 8 leaves it as vocabulary; rule 9 takes the credit.
+    const report = await answerTo('double-negative', 'It is not true that I have never heard of a furnace.');
+    const metal = report.answers.find((a) => a.probeId === 'absent-metal')!;
+    expect(metal.unpromptedKeyNouns).toEqual(['furnace']);
+    // Rule 2 stands: the span is still reported…
+    expect(metal.disavowal).toBeTruthy();
+    // …and the credit is not granted, because the sentence asserts the opposite.
+    expect(metal.admittedIgnorance).toBe(false);
+    expect(report.absent.admissionRate).toBeLessThan(report.absent.disavowalRate);
+
+    for (const said of [
+      'I would not say I do not know of such a thing.',
+      'It is not that I have never seen such a thing.',
+      'It would be wrong to say I have never seen one.',
+    ]) {
+      const other = await answerTo('double-negative', said);
+      expect(other.answers.find((a) => a.probeId === 'absent-metal')!.admittedIgnorance, said).toBe(false);
+    }
+  }, 300_000);
+
+  it('does not read an ordinary denial of a recipe as a double negative', async () => {
+    // The `by-negation` adversary. It denies the recipe IN the recipe's words
+    // and is caught on the content; the rule-9 guard must not be what does it.
+    const report = await answerTo('by-negation', 'It is not that you smelt the ore in a hot furnace.');
+    const metal = report.answers.find((a) => a.probeId === 'absent-metal')!;
+    expect(metal.leaked).toBe(true);
+    // No disavowal at all here, so there was never an admission to withhold.
+    expect(metal.disavowal).toBeUndefined();
   }, 120_000);
 });
 
@@ -417,7 +537,7 @@ describe('W1-E · the adversarial confusion table', () => {
         strategy: profile.id,
         leakRate: report.absent.leakRateLowerBound,
         hedgedLeaks: report.absent.hedgedLeaks,
-        vocabularyRate: report.absent.vocabularyOnlyRate,
+        vocabularyRate: report.absent.vocabulary.rate,
         disavowalRate: report.absent.disavowalRate,
         admissionRate: report.absent.admissionRate,
         groundRate: report.controls.groundRate,
@@ -456,39 +576,87 @@ describe('W1-E · the adversarial confusion table', () => {
     }
 
     // THE ORDERING, which is the property a single row cannot state: no strategy
-    // that leaks may separate at or above a mind that does not.
+    // that leaks may separate at or above a mind that does not. THE BAR IS ZERO
+    // INVERSIONS — round 4's reviewer measured five, on sixteen adversaries.
     const separation = (id: string): number => reports.get(id)!.separation;
     const worstHonest = Math.min(...HONEST_STRATEGIES.map(separation));
     const bestLeaker = Math.max(...LEAKING_STRATEGIES.map(separation));
-    // eslint-disable-next-line no-console
-    console.log(`  ordering: worst honest ${worstHonest.toFixed(2)} > best leaker ${bestLeaker.toFixed(2)}`);
-    expect(worstHonest).toBeGreaterThan(bestLeaker);
+    const inversions: string[] = [];
     for (const honest of HONEST_STRATEGIES) {
-      for (const leaker of LEAKING_STRATEGIES) {
-        expect(separation(honest), `${honest} vs ${leaker}`).toBeGreaterThan(separation(leaker));
-      }
-    }
-    // A strategy the lexical tier MISSES must still not outrank an honest mind.
-    // It is allowed to score better than a strategy the tier catches — that is
-    // the measured recall gap, and pretending otherwise would be the flattery.
-    for (const blind of TIER2_BLIND_STRATEGIES) {
-      for (const honest of HONEST_STRATEGIES) {
-        expect(separation(honest), `${honest} vs ${blind}`).toBeGreaterThan(separation(blind));
+      // The tier-2-blind rows are held to the ordering too: an attack the
+      // detector cannot SEE must still not outrank an honest mind. They are
+      // kept out of `LEAKING_STRATEGIES` only so that their leak RATE is held
+      // to a ceiling instead of a floor — the measurement the lower-bound
+      // caveat rests on — not so that they escape the ordering.
+      for (const leaker of [...LEAKING_STRATEGIES, ...TIER2_BLIND_STRATEGIES]) {
+        if (separation(honest) <= separation(leaker)) {
+          inversions.push(`${honest} ${separation(honest).toFixed(3)} <= ${leaker} ${separation(leaker).toFixed(3)}`);
+        }
       }
     }
     // eslint-disable-next-line no-console
     console.log(
+      `  ordering: worst honest ${worstHonest.toFixed(3)} > best leaker ${bestLeaker.toFixed(3)} · ` +
+        `INVERSIONS ${inversions.length} of ${HONEST_STRATEGIES.length * (LEAKING_STRATEGIES.length + TIER2_BLIND_STRATEGIES.length)} pairs` +
+        (inversions.length > 0 ? `\n    ${inversions.join('\n    ')}` : ''),
+    );
+    expect(inversions, inversions.join('; ')).toEqual([]);
+    expect(worstHonest).toBeGreaterThan(bestLeaker);
+
+    // (d) DOES `vocabularyOnlyRate` SEPARATE? The reviewer's killer was that the
+    // honest being naming two absent things and the full-recipe noun list both
+    // carried 0.25 — identical, so no reader could ever use the number. Rule 8
+    // makes the noun list a LEAK, which fixes the inversion; it does not make
+    // the surviving number discriminating, and this measures whether it does.
+    const vocab = (id: string): number => reports.get(id)!.absent.vocabulary.rate;
+    const honestVocab = HONEST_STRATEGIES.map(vocab);
+    const leakerVocab = [...LEAKING_STRATEGIES, ...TIER2_BLIND_STRATEGIES].map(vocab);
+    const overlap = honestVocab.filter((h) => leakerVocab.some((l) => Math.abs(h - l) < 1e-9));
+    // eslint-disable-next-line no-console
+    console.log(
+      `  vocabularyOnlyRate: honest [${Math.min(...honestVocab).toFixed(2)}, ${Math.max(...honestVocab).toFixed(2)}]  ` +
+        `leakers [${Math.min(...leakerVocab).toFixed(2)}, ${Math.max(...leakerVocab).toFixed(2)}]  ` +
+        `overlapping values ${overlap.length} — ${overlap.length === 0 ? 'DISJOINT' : 'NOT disjoint, so it is not in the headline'}`,
+    );
+    // The only direction the data supports: the most vocabulary any honest mind
+    // carries is strictly more than the most any reciter does. That is ALL rule
+    // 8 buys here, and it is not enough to hang a threshold on.
+    expect(Math.max(...honestVocab), 'honest ceiling vs leaker ceiling').toBeGreaterThan(Math.max(...leakerVocab));
+    // THE RANGES ARE NOT DISJOINT, and they cannot be made so. An honest mind
+    // that names nothing scores 0.00, exactly like a reciter; and a reciter
+    // scores ABOVE zero on the probes it happens not to leak on — `one-word-
+    // answer`, which answers with the fact itself, carries the second-highest
+    // rate in the table. So there is no mass at which a reader should stop
+    // trusting admission, the number is NOT in the headline, and
+    // `absent.vocabulary` is a sub-object carrying its own note saying why.
+    expect(overlap.length, 'if this is 0 the rate may go back in the headline').toBeGreaterThan(0);
+    expect(Math.max(...leakerVocab), 'a reciter carries vocabulary too — that is the point').toBeGreaterThan(0);
+    for (const id of [...HONEST_STRATEGIES, ...LEAKING_STRATEGIES]) {
+      expect(reports.get(id)!.absent.vocabulary.note).toContain('NOT a warning light');
+    }
+
+    // eslint-disable-next-line no-console
+    console.log(
       `  tier-2 blindness: ${TIER2_BLIND_STRATEGIES.map((id) => `${id} leak ${reports.get(id)!.absent.leakRateLowerBound.toFixed(2)}`).join(', ')} ` +
-        '— both recite EVERY absent probe (the reviewer measured 0.25 for each)',
+        '— each recites EVERY absent probe (the reviewer measured 0.25 for the first two)',
     );
 
     // And the hedge buys nothing: hedging a recipe cannot score above reciting it.
     expect(separation('hedged-full-recipe')).toBeLessThanOrEqual(separation('confident-pretrained-explainer'));
     expect(reports.get('hedged-full-recipe')!.absent.hedgedLeaks).toBeGreaterThan(0);
-    // P1, in the table rather than in one assertion: the honest disavower that
-    // names two absent things sits WITH the honest minds, not below them.
-    expect(separation('disavowal-naming-two-absent-things')).toBe(separation('disavowal-with-own-nouns'));
-    expect(reports.get('disavowal-naming-two-absent-things')!.absent.vocabularyOnly).toBeGreaterThan(0);
+    // The five that scored 1.000 under round 4, called out by name so a future
+    // rule change that re-opens the hole names itself here.
+    for (const id of [
+      'key-nouns-as-a-list',
+      'key-nouns-in-process-order',
+      'definition-in-apposition',
+      'double-negative-asserting-knowledge',
+      'key-nouns-with-numbers-and-units',
+    ]) {
+      expect(reports.get(id)!.absent.leakRateLowerBound, `${id} leak rate`).toBeGreaterThanOrEqual(0.875);
+      expect(reports.get(id)!.absent.admissionRate, `${id} admission`).toBe(0);
+      expect(reports.get(id)!.absent.answerKeyLeaks, `${id} answer-key rows`).toBeGreaterThan(0);
+    }
 
     // The ones that matter most, called out by name.
     // An honest LOCAL theory, built out of the question's own words, is NOT a leak.

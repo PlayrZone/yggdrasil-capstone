@@ -1,14 +1,19 @@
 import type { WorldAdapter } from '../contract/adapter.js';
+import type { WorldEdges } from '../contract/edges.js';
 import type { ThinkInput } from '../contract/types.js';
 import type { IMindBackend } from '../consciousness/IMindBackend.js';
 import type { ThinkPrompt } from '../consciousness/prompt.js';
 import type { ProvenanceLevel } from '../learning/ILearner.js';
 import type { CognitionOutcome, CognitionRecordV2, ICognitionSink, RunManifest, RunSummary } from '../record/types.js';
 import { Experiment } from '../runner/Experiment.js';
+import { ThinkOutcomeCounters, observeThinkOutcomes } from '../consciousness/LlmMind.js';
+import type { ThinkOutcome } from '../consciousness/LlmMind.js';
 import type { ScenarioId } from '../runner/options.js';
-import { foragerAdapter } from '../worlds/forager/adapter.js';
+import { foragerWorld } from '../worlds/forager/adapter.js';
 import { buildArm, contrastsFor } from './arms.js';
 import type { ArmSpec, BuiltArm } from './arms.js';
+import { attestRun, reportOf, thinkOutcomeBreaches } from './attest.js';
+import type { RunAttestation, ThinkOutcomeReport } from './attest.js';
 import { ArmRouterBackend } from './baseline/BaselineAgentBackend.js';
 import { BudgetExhaustedError, RunHalt } from './budget.js';
 import type { CallBudget } from './budget.js';
@@ -16,7 +21,15 @@ import { describeBackendSpec, isPaidSpec } from './door.js';
 import { INTEGRITY_THRESHOLDS, computeArmMetrics, integrityBreaches, metricValues } from './metrics.js';
 import type { ArmIntegrity, ArmMetrics, ArmObservation } from './metrics.js';
 import type { ProbeSubject } from './ignorance.js';
-import { minimumDetectableEffect, multipleComparisonNote, pairedBootstrap } from './stats.js';
+import {
+  DECLARED_CONTRAST_FAMILY,
+  JUDGE_GATE,
+  hashJudgeGate,
+  holmAdjusted,
+  minimumDetectableEffect,
+  multipleComparisonNote,
+  pairedBootstrap,
+} from './stats.js';
 import type { DesignPower, MultipleComparisonNote, PairedResult, PairedSample } from './stats.js';
 import { blindTraces, buildTraces } from './trace.js';
 import type { BlindingManifest, SealedTraceKey } from './trace.js';
@@ -81,8 +94,14 @@ export interface AbSpec {
   chunk?: number;
   provenance?: ProvenanceLevel;
   outcomeWindowTicks?: number;
-  /** The world every arm is held to. Default the forager continent. */
-  world?: WorldAdapter;
+  /**
+   * The world every arm is held to, as its EDGES (W1-B4 r4): the adapter and
+   * the codec the world handed out at construction. Default the forager
+   * continent. The instrument sits at an edge — it reads recorded places back
+   * and its mocks write the model's wire format — so it is handed the codec
+   * rather than looking one up.
+   */
+  world?: WorldEdges;
   /** Traces shorter than this are dropped before blinding. Default 2. */
   minTraceMoments?: number;
   /** Prefix for run ids, so two A/B runs in one process do not collide. */
@@ -102,6 +121,19 @@ export interface AbSpec {
   blindSecret?: string;
   /** Declared before the run and echoed verbatim in the result. */
   preRegistered?: readonly PreRegisteredQuestion[];
+  /**
+   * THE PLAN'S OWN CEILING ON COMPLETIONS (S7).
+   *
+   * Thinks per being are a function of TICKS and the trait cadence, and nothing
+   * in this spec used to cap them: block (b) of the pilot was priced by a tick
+   * count the README never stated, the reviewer counted 918 calls where the
+   * table said 1,024, and a slower cadence would have overrun in the other
+   * direction with nothing to notice. The allowance is handed down from the
+   * budget by `allowanceFor`, counted at the transport, and a run that reaches
+   * it HALTS rather than quietly costing more than the plan said. It is not a
+   * budget — the budget is the money; this is the arithmetic.
+   */
+  callAllowance?: number;
 }
 
 export interface AbConfig {
@@ -146,8 +178,20 @@ export interface ContrastResult {
 export interface RunIntegrity {
   /** Every backend error the run saw. Surfaced, never folded into behaviour. */
   backendErrors: readonly { at: string; message: string }[];
-  /** Share of thinks that fell back to the world's reflex policy, per arm. */
+  /**
+   * WHAT EVERY THINK DID, COUNTED AT THE SOURCE (S6). `LlmMind` reports
+   * `ok | retried-ok | fell-back(reason)` per think; this is the tally per arm.
+   * The row-derived `fallbackRateByArm` below stays beside it and is now known
+   * to be a FLOOR: it counts only thinks that failed twice, so a 5% plant that
+   * the retry rescues reads 0 there and reads 0.05 here.
+   */
+  thinkOutcomes: Record<string, ThinkOutcomeReport>;
+  /** Share of thinks that fell back, per arm, as the CORPUS ROWS see it. A floor. */
   fallbackRateByArm: Record<string, number>;
+  /** Completions this run asked the transport for, retries included (S7). */
+  completions: number;
+  /** The plan's ceiling on that, when one was handed down. */
+  callAllowance: number | null;
   /** The full counters, per arm, pooled over seeds. */
   byArm: Record<string, ArmIntegrity>;
   /** The thresholds those counters were read against, echoed so a reader need not look them up. */
@@ -177,7 +221,7 @@ export interface AbManifest {
 /** A run that cannot answer anything, and says so instead of printing numbers. */
 export interface AbUnusable {
   usable: false;
-  reason: 'budget-exhausted';
+  reason: 'budget-exhausted' | 'allowance-exceeded';
   detail: string;
   mode: AbMode;
   seeds: readonly string[];
@@ -208,6 +252,12 @@ export interface AbVerdict {
   sentPrompts: Partial<Record<ArmId, readonly SentPrompt[]>>;
   manifest: AbManifest;
   integrity: RunIntegrity;
+  /**
+   * The run's integrity claim, BOUND to this run's traces, seeds and gate rule
+   * by a MAC keyed on the blinding secret. This — not `integrity` — is what
+   * `judgeTraces` will accept, so a forged, replayed or edited claim is refused.
+   */
+  attestation: RunAttestation;
 }
 
 export type AbResult = AbVerdict | AbUnusable;
@@ -221,7 +271,8 @@ interface ArmRun {
 }
 
 export async function runAb(spec: AbSpec, config: AbConfig, mode: AbMode = 'population'): Promise<AbResult> {
-  const world = spec.world ?? foragerAdapter;
+  const edges = spec.world ?? foragerWorld.edges;
+  const world = edges.adapter;
   const prefix = spec.runIdPrefix ?? 'ab';
   const seeds = spec.seeds;
   if (seeds.length === 0) throw new Error('an A/B run needs at least one seed');
@@ -242,13 +293,20 @@ export async function runAb(spec: AbSpec, config: AbConfig, mode: AbMode = 'popu
   const sentPrompts: Partial<Record<ArmId, SentPrompt[]>> = {};
   const integrityByArm = new Map<ArmId, ArmIntegrity[]>();
 
+  // COUNTED AT THE SOURCE (S6), per arm, across every seed. `LlmMind` reports
+  // into a process-wide hub; the filter is the backend OBJECT, because two arms
+  // of one A/B share a model id and an agent id space and differ only in transport.
+  const thinkCounters = new Map<ArmId, ThinkOutcomeCounters>();
+  for (const id of armIds) thinkCounters.set(id, new ThinkOutcomeCounters());
+  const allowance = new AllowanceLedger(spec.callAllowance, halt);
+
   let built: BuiltArm[] = [];
   for (const seed of seeds) {
-    built = config.arms.map((armSpec) => buildArm(armSpec, { world, budget: config.budget, apiKey: config.apiKey, halt }));
+    built = config.arms.map((armSpec) => buildArm(armSpec, { world, edges, budget: config.budget, apiKey: config.apiKey, halt }));
     const runs =
       mode === 'population'
-        ? await runPopulation(spec, world, prefix, seed, built, halt)
-        : await runMixed(spec, world, prefix, seed, built, halt);
+        ? await runPopulation(spec, edges, prefix, seed, built, halt, thinkCounters, allowance)
+        : await runMixed(spec, edges, prefix, seed, built, halt, thinkCounters, allowance);
     if (halt.stopped) break;
 
     const metrics: Partial<Record<ArmId, ArmMetrics>> = {};
@@ -273,14 +331,16 @@ export async function runAb(spec: AbSpec, config: AbConfig, mode: AbMode = 'popu
     minMoments: spec.minTraceMoments ?? 2,
   });
   const manifest = buildManifest(spec, config, mode, world, blinded.manifest, spentBefore);
-  const integrity = integrityOf(halt, integrityByArm);
+  const thinkOutcomes: Record<string, ThinkOutcomeReport> = {};
+  for (const [arm, counters] of thinkCounters) thinkOutcomes[arm] = reportOf(counters);
+  const integrity = integrityOf(halt, integrityByArm, thinkOutcomes, allowance, spec.callAllowance ?? null);
 
   if (halt.stopped) {
     // NO verdict fields. A flag next to a metric table is a table somebody
     // quotes; an object with no table is not.
     return {
       usable: false,
-      reason: 'budget-exhausted',
+      reason: allowance.exceeded ? 'allowance-exceeded' : 'budget-exhausted',
       detail: halt.detail,
       mode,
       seeds,
@@ -303,7 +363,48 @@ export async function runAb(spec: AbSpec, config: AbConfig, mode: AbMode = 'popu
     sentPrompts,
     manifest,
     integrity,
+    // Minted here, where the key and the counters are both in hand, and BEFORE
+    // anything unseals: `bind` is a MAC, not a disclosure.
+    attestation: attestRun(blinded.key, {
+      degraded: integrity.degraded,
+      reasons: integrity.reasons,
+      thinkOutcomes,
+      seeds,
+      ruleHash: hashJudgeGate(JUDGE_GATE),
+    }),
   };
+}
+
+/**
+ * THE PLAN'S ARITHMETIC, ENFORCED (S7). Counts completions across the whole run
+ * and latches the halt at the allowance, so a tick count that produces more
+ * thinks than the recipe priced stops the run instead of silently overrunning
+ * it. Absent an allowance it counts and never stops.
+ */
+class AllowanceLedger {
+  private spent = 0;
+  exceeded = false;
+
+  constructor(
+    private readonly limit: number | undefined,
+    private readonly halt: RunHalt,
+  ) {}
+
+  get calls(): number {
+    return this.spent;
+  }
+
+  charge(): void {
+    this.spent++;
+    if (this.limit === undefined || this.spent <= this.limit || this.exceeded) return;
+    this.exceeded = true;
+    this.halt.halt(
+      'allowance-exceeded',
+      `the run asked for completion ${this.spent} and the plan allowed ${this.limit}: thinks per being are a ` +
+        'function of ticks and the trait cadence, so a block that overruns its allowance has not been priced — ' +
+        'it halts rather than costing more than the recipe says',
+    );
+  }
 }
 
 // ─── Contrasts and their statistics ──────────────────────────────────────────
@@ -314,7 +415,7 @@ function contrastsOf(
   spec: AbSpec,
 ): ContrastResult[] {
   const preRegistered = spec.preRegistered ?? [];
-  return contrastsFor(armIds).map(({ label, isolates, pair }) => {
+  const rowsOut = contrastsFor(armIds).map(({ label, isolates, pair }) => {
     const names = new Set<string>();
     for (const row of perSeed) {
       for (const arm of pair) {
@@ -352,6 +453,41 @@ function contrastsOf(
       design: minimumDetectableEffect(perSeed.length),
     };
   });
+
+  // HOLM, ACROSS THE DECLARED FAMILY, IN CODE (S8).
+  //
+  // `holmAdjusted` existed and `contrastsOf` never called it, so the four
+  // declared primary questions were uncorrected and `multipleComparisonNote`
+  // counted only one contrast's exploratory rows. The p that is corrected is
+  // the LARGER of the permutation test's and the sign test's, because a verdict
+  // needs both to clear alpha and a family correction on the friendlier of two
+  // required tests would be a correction on the wrong number.
+  const primaries = rowsOut
+    .filter((c): c is typeof c & { primary: PairedResult } => c.primary !== null)
+    .map((c) => ({
+      label: c.label,
+      p: Math.max(c.primary.permutation?.p ?? 1, c.primary.sign?.p ?? 1),
+    }));
+  const family = Math.max(DECLARED_CONTRAST_FAMILY, primaries.length);
+  const adjusted = new Map(
+    holmAdjusted(primaries.length > 0 ? padFamily(primaries, family) : []).map((r) => [r.label, r.adjusted]),
+  );
+  for (const contrast of rowsOut) {
+    if (contrast.primary) contrast.primary.familyAdjustedP = adjusted.get(contrast.label) ?? null;
+  }
+  return rowsOut;
+}
+
+/**
+ * A family is as big as it was DECLARED, not as big as the rows that happened
+ * to run. Four questions are pre-registered; a run that answers two of them
+ * still owes the correction for four, or a smaller run would be an easier one.
+ * The absent members enter at p = 1, where they cost nothing but the divisor.
+ */
+function padFamily(rows: readonly { label: string; p: number }[], family: number): { label: string; p: number }[] {
+  const out = [...rows];
+  for (let i = out.length; i < family; i++) out.push({ label: `(declared-but-not-run-${i})`, p: 1 });
+  return out;
 }
 
 function valueOf(metrics: ArmMetrics, metric: string): number {
@@ -364,7 +500,13 @@ function setDefault(map: Map<ArmId, ArmIntegrity[]>, arm: ArmId): ArmIntegrity[]
   return fresh;
 }
 
-function integrityOf(halt: RunHalt, byArm: ReadonlyMap<ArmId, readonly ArmIntegrity[]>): RunIntegrity {
+function integrityOf(
+  halt: RunHalt,
+  byArm: ReadonlyMap<ArmId, readonly ArmIntegrity[]>,
+  thinkOutcomes: Record<string, ThinkOutcomeReport>,
+  allowance: AllowanceLedger,
+  declaredAllowance: number | null,
+): RunIntegrity {
   const fallbackRateByArm: Record<string, number> = {};
   const pooled: Record<string, ArmIntegrity> = {};
   const reasons: string[] = [];
@@ -374,6 +516,12 @@ function integrityOf(halt: RunHalt, byArm: ReadonlyMap<ArmId, readonly ArmIntegr
     fallbackRateByArm[arm] = total.fallbackRate;
     reasons.push(...integrityBreaches(arm, total));
   }
+  // S6: the SOURCE counters, which see a rescued retry and a swallowed backend
+  // error. Only arms that actually ran are judged — a spec with four declared
+  // arms and two run ones must not be degraded by the two that never started.
+  const ran: Record<string, ThinkOutcomeReport> = {};
+  for (const arm of Object.keys(thinkOutcomes)) if ((thinkOutcomes[arm]?.thinks ?? 0) > 0) ran[arm] = thinkOutcomes[arm]!;
+  reasons.push(...thinkOutcomeBreaches(ran));
   const notes: string[] = [];
   if (halt.backendErrors.length > 0) {
     notes.push(`${halt.backendErrors.length} backend errors, first: ${halt.backendErrors[0]?.message ?? ''}`);
@@ -391,9 +539,20 @@ function integrityOf(halt: RunHalt, byArm: ReadonlyMap<ArmId, readonly ArmIntegr
         'the arms and no aggregate over them may be a verdict.',
     );
   }
+  for (const arm of Object.keys(ran).sort()) {
+    const row = ran[arm]!;
+    notes.push(
+      `${arm} thinks (at the source): ${row.thinks} — ${row.ok} clean, ${row.retriedOk} rescued by the retry, ` +
+        `${row.fellBack} fell back (${row.fellBackByReason.backend} backend, ${row.fellBackByReason['invalid-reply']} invalid reply); ` +
+        `fallback ${row.fallbackRate}, retry ${row.retryRate}.`,
+    );
+  }
   return {
     backendErrors: halt.backendErrors,
+    thinkOutcomes,
     fallbackRateByArm,
+    completions: allowance.calls,
+    callAllowance: declaredAllowance,
     byArm: pooled,
     thresholds: INTEGRITY_THRESHOLDS,
     degraded: reasons.length > 0,
@@ -468,53 +627,70 @@ function buildManifest(
 
 async function runPopulation(
   spec: AbSpec,
-  world: WorldAdapter,
+  edges: WorldEdges,
   prefix: string,
   seed: string,
   arms: readonly BuiltArm[],
   halt: RunHalt,
+  counters: ReadonlyMap<ArmId, ThinkOutcomeCounters>,
+  allowance: AllowanceLedger,
 ): Promise<ArmRun[]> {
   const runs: ArmRun[] = [];
   for (const arm of arms) {
     if (halt.stopped) break;
-    runs.push(await runOneArm(spec, world, `${prefix}-${seed}-${arm.id}`, seed, arm, halt));
+    runs.push(await runOneArm(spec, edges, `${prefix}-${seed}-${arm.id}`, seed, arm, halt, counters, allowance));
   }
   return runs;
 }
 
 async function runOneArm(
   spec: AbSpec,
-  world: WorldAdapter,
+  edges: WorldEdges,
   runId: string,
   seed: string,
   arm: BuiltArm,
   halt: RunHalt,
+  counters: ReadonlyMap<ArmId, ThinkOutcomeCounters>,
+  allowance: AllowanceLedger,
 ): Promise<ArmRun> {
-  const capture = new CapturingBackend(arm.mind);
+  const capture = new CapturingBackend(arm.mind, allowance);
   const sink = new CollectingSink();
-  const exp = buildExperiment(spec, seed, runId, capture, sink);
-  const cohort = exp.agentIds.slice(0, spec.cohortSize);
-  for (const id of cohort) exp.makeConscious(id);
-  const positions = new PositionLedger();
-  positions.sample(exp, cohort);
-  await advance(exp, spec, positions, cohort, halt);
+  const tally = counters.get(arm.id);
+  const stop = observeThinkOutcomes((outcome) => {
+    if (outcome.backend === capture) tally?.observeThink(outcome);
+  });
+  try {
+    const exp = buildExperiment(spec, seed, runId, capture, sink);
+    const cohort = exp.agentIds.slice(0, spec.cohortSize);
+    for (const id of cohort) exp.makeConscious(id);
+    const positions = new PositionLedger();
+    positions.sample(exp, cohort);
+    await advance(exp, spec, positions, cohort, halt);
 
-  return {
-    arm: arm.id,
-    observation: observe(exp, spec, runId, seed, arm, cohort, sink, positions),
-    traces: buildTraces({ runId, arm: arm.id, records: sink.records, outcomes: sink.outcomes, events: exp.eventLog }, world),
-    subjects: subjectsFrom(cohort, capture, arm),
-  };
+    return {
+      arm: arm.id,
+      observation: observe(exp, spec, runId, seed, arm, cohort, sink, positions),
+      traces: buildTraces(
+        { runId, arm: arm.id, seed, records: sink.records, outcomes: sink.outcomes, events: exp.eventLog },
+        edges,
+      ),
+      subjects: subjectsFrom(cohort, capture, arm),
+    };
+  } finally {
+    stop();
+  }
 }
 
 /** Mixed cohort: one Experiment, two minds behind one backend. */
 async function runMixed(
   spec: AbSpec,
-  world: WorldAdapter,
+  edges: WorldEdges,
   prefix: string,
   seed: string,
   arms: readonly BuiltArm[],
   halt: RunHalt,
+  counters: ReadonlyMap<ArmId, ThinkOutcomeCounters>,
+  allowance: AllowanceLedger,
 ): Promise<ArmRun[]> {
   const runId = `${prefix}-${seed}-mixed`;
   const sink = new CollectingSink();
@@ -527,29 +703,41 @@ async function runMixed(
     first.mind,
     second.mind,
   );
-  const capture = new CapturingBackend(router);
-  const exp = buildExperiment(spec, seed, runId, capture, sink);
-  const cohort = exp.agentIds.slice(0, spec.cohortSize);
-  const assignment = new Map<number, BuiltArm>(cohort.map((id, at) => [id, at % 2 === 0 ? first : second]));
-  armOf = (id) => (assignment.get(id) ?? first).id;
-  for (const id of cohort) exp.makeConscious(id);
-  const positions = new PositionLedger();
-  positions.sample(exp, cohort);
-  await advance(exp, spec, positions, cohort, halt);
+  const capture = new CapturingBackend(router, allowance);
+  // ONE backend for two arms here, so the arm is read off the BEING, which is
+  // what the router itself routes on. Held raw and split after the assignment
+  // exists, because the assignment needs the Experiment's founders.
+  const seen: ThinkOutcome[] = [];
+  const stop = observeThinkOutcomes((outcome) => {
+    if (outcome.backend === capture) seen.push(outcome);
+  });
+  try {
+    const exp = buildExperiment(spec, seed, runId, capture, sink);
+    const cohort = exp.agentIds.slice(0, spec.cohortSize);
+    const assignment = new Map<number, BuiltArm>(cohort.map((id, at) => [id, at % 2 === 0 ? first : second]));
+    armOf = (id) => (assignment.get(id) ?? first).id;
+    for (const id of cohort) exp.makeConscious(id);
+    const positions = new PositionLedger();
+    positions.sample(exp, cohort);
+    await advance(exp, spec, positions, cohort, halt);
+    for (const outcome of seen) counters.get(armOf(outcome.agentId))?.observeThink(outcome);
 
-  const runs: ArmRun[] = [];
-  for (const arm of arms) {
-    const mine = cohort.filter((id) => assignment.get(id)?.id === arm.id);
-    const records = sink.records.filter((r) => mine.includes(r.beingId));
-    const outcomes = sink.outcomes.filter((o) => mine.includes(o.beingId));
-    runs.push({
-      arm: arm.id,
-      observation: observe(exp, spec, runId, seed, arm, mine, { records, outcomes }, positions),
-      traces: buildTraces({ runId, arm: arm.id, records, outcomes, events: exp.eventLog }, world),
-      subjects: subjectsFrom(mine, capture, arm),
-    });
+    const runs: ArmRun[] = [];
+    for (const arm of arms) {
+      const mine = cohort.filter((id) => assignment.get(id)?.id === arm.id);
+      const records = sink.records.filter((r) => mine.includes(r.beingId));
+      const outcomes = sink.outcomes.filter((o) => mine.includes(o.beingId));
+      runs.push({
+        arm: arm.id,
+        observation: observe(exp, spec, runId, seed, arm, mine, { records, outcomes }, positions),
+        traces: buildTraces({ runId, arm: arm.id, seed, records, outcomes, events: exp.eventLog }, edges),
+        subjects: subjectsFrom(mine, capture, arm),
+      });
+    }
+    return runs;
+  } finally {
+    stop();
   }
-  return runs;
 }
 
 function buildExperiment(spec: AbSpec, seed: string, runId: string, backend: IMindBackend, sink: ICognitionSink): Experiment {
@@ -654,7 +842,10 @@ function subjectsFrom(cohort: readonly number[], capture: CapturingBackend, arm:
 class CapturingBackend implements IMindBackend {
   private readonly inputs = new Map<number, ThinkInput>();
 
-  constructor(private readonly inner: IMindBackend) {}
+  constructor(
+    private readonly inner: IMindBackend,
+    private readonly allowance: AllowanceLedger,
+  ) {}
 
   get modelId(): string {
     return this.inner.modelId;
@@ -662,6 +853,9 @@ class CapturingBackend implements IMindBackend {
 
   complete(prompt: ThinkPrompt, input: ThinkInput): Promise<string> {
     this.inputs.set(input.snapshot.id, input);
+    // Counted HERE, at the transport, because a retry is a completion and the
+    // plan's arithmetic is in completions. See `AllowanceLedger`.
+    this.allowance.charge();
     return this.inner.complete(prompt, input);
   }
 

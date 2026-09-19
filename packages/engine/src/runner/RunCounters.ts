@@ -1,13 +1,8 @@
+import { ThinkOutcomeCounters } from '../consciousness/LlmMind.js';
 import type { SimEvent } from '../contract/types.js';
 
 const EVENT_LOG_CAP = 400;
 
-/**
- * The run's cumulative tallies and the capped tail of its event stream. The
- * event log is bounded, so anything a report needs over a whole run is counted
- * here instead of recomputed from it. Written only by the runtime's first bus
- * listener, in emission order.
- */
 export class RunCounters {
   eventCount = 0;
   birthCount = 0;
@@ -22,6 +17,12 @@ export class RunCounters {
   buildCount = 0;
   /** Phase 3 Exp 1: per-agent count of crafts COMPLETED (actor of a Crafted event). */
   readonly craftsByAgent = new Map<number, number>();
+  /**
+   * What this run's thinks actually did. Fed by whoever subscribes to
+   * `observeThinkOutcomes` for this run's backend — the W1-E runner does, per
+   * arm, so an A/B attests degradation per arm rather than per process.
+   */
+  readonly thinks = new ThinkOutcomeCounters();
 
   observe(event: SimEvent): void {
     this.eventCount++;

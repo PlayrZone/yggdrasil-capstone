@@ -219,8 +219,26 @@ the experiment.
    `getOwnPropertyDescriptors`, a prototype walk, template interpolation and the rest — and requires
    0 secret and 0 of 8 handles from each, with a falsification control that runs the same table over
    a plain object holding the same state and requires every route to leak.
+3b. **ONE SEAL, SHARED BY EVERY DERIVATION, AND IT TELLS THE TRUTH (S4).** *Round 4's `relabelled` built a new
+   key around the same entries and the same secret with a FRESH `unsealCount`, so
+   `key.relabelled(a => a).unseal()` returned **12 of 12 arms correct**, `.disclose().secret` equalled the run
+   secret, and the ORIGINAL key still reported `unsealed === false`. `swapArmLabels(key)` did it in one import
+   and was **exported from the package index**. After two `unseal()`s `JSON.stringify(key)` still printed
+   `"sealed": true` with no unseal count, so an unseal-then-rejudge was indistinguishable from a blind pass.*
+   Now: `relabelled` is **off the public surface entirely**; the label-swap control lives one module deep
+   (`eval/aggregate.ts#swapArmLabels`) and is **not exported from `src/index.ts`**; a derived key shares the
+   parent's seal object, so opening the child marks the parent opened; `disclose()` **refuses on a derived
+   key**; the facade prints `sealed: false` and `unsealCount: 2` after two unseals on `toJSON`, `util.inspect`
+   and `toString` alike; the unseal is **logged once** however often it happens; and `key.clusters()` publishes
+   `{traceId, seed}` with no arm, which is what pairing actually needs.
+3c. **JUDGING AFTER AN UNSEAL IS NOT BLIND JUDGING (S4).** `judgeTraces` reads the seal state at the top of
+   phase 1, before a single judgement, and stamps `blind` and `unsealCountAtEntry` on the aggregate. A key that
+   had already been opened makes the aggregate `usableForVerdict: false` with the reason in `note`.
 4. **The text a judge reads contains no handle at all** — not the trace id, not a run id, not a being
-   id, not the pair id. *Round 1 printed the id as the FIRST LINE and sent that text to the paid judge.*
+   id, not the pair id. A `TracePair` does carry its **cluster** — the seed both traces came from — which is
+   the same string for both arms and is therefore not an arm tell; `test/eval-blinding.test.ts` asserts the
+   pair's whole key set and that no `"arm"` reaches a judge. *Round 1 printed the id as the FIRST LINE and sent
+   that text to the paid judge.*
 5. **No cadence column.** Round 1 opened every moment with `[+<ticks since the trace began> · …]`.
    Cadence follows prompt size through latency, and the arms' prompts differ in size. Moments are
    numbered instead; the day, season and night/day stay, because they are the same world in every arm
@@ -339,28 +357,38 @@ running on reflexes, because `LlmMind` catches everything a backend throws.*
 
 ## The ignorance probe — audit 04 §5 #1
 
-> ### Read this before any number below it: **every leak figure here is a LOWER BOUND.**
+> ### Read this before any number below it: **the FOUR RESIDUAL BLIND SPOTS**, then the lower bound.
 >
-> The leak term is a **tier-2 lexical** detector. It matches words. Measured by the reviewer over 88
-> leak opportunities, its recall is **0.68** — and against the two attacks that matter most it is far
-> worse:
+> The leak term is a **tier-2 lexical** detector plus a hand-written per-probe **answer key** (rule 8).
+> Both are word lists. Four ways of knowing therefore pass straight through, and the numbers below say
+> nothing about any of them:
 >
-> | attack | what it does | lexical leak rate |
-> |---|---|---|
-> | `paraphrase-no-jargon` | the same mechanism, every decisive noun replaced by plain words | **0.13** *(reviewer: 0.25)* |
-> | `french-recipe` | the same recipe in French; only the cognates are caught | **0.50** *(reviewer: 0.25)* |
+> 1. **Paraphrase** — the same mechanism with every key noun replaced by plain words.
+>    `paraphrase-no-jargon` recites all eight absent probes and is caught on **0.13** of them.
+> 2. **Another language** — `french-recipe` **0.63**, `key-nouns-in-french` **0.50**; both recite all
+>    eight, and what is caught is the cognates (`contagion`, `ocean`, `bronze`) rather than the
+>    knowledge.
+> 3. **Implication** — knowledge that names nothing at all. Nothing here can see it.
+> 4. **Off-key nouns** — anything the probe's `answerKey` does not list. The key is finite, somebody
+>    wrote it by hand, and a noun that is not on it is not scored. This blind spot is NEW with rule 8
+>    and it is the price of the rule: the rule is only as wide as the list.
 >
-> Both of them recite **all eight** absent probes. Both are in `ADVERSARIAL_PROFILES`, and
-> `test/eval-ignorance.test.ts` asserts a CEILING on what the detector finds in them, because an
-> adversarial set containing only the attacks the detector wins is a demonstration rather than a test.
+> All three of the measurable rows are in `ADVERSARIAL_PROFILES`, and `test/eval-ignorance.test.ts`
+> asserts a CEILING on what is found in them, because an adversarial set containing only the attacks
+> the detector wins is a demonstration rather than a test. The reviewer measured the lexical tier's
+> blind recall over 88 leak opportunities at **0.68**.
 >
-> So: a mind that leaks **in paraphrase, in another language, or by implication scores CLEAN here**.
-> `separation` is therefore an UPPER bound on faithfulness, `leakRateLowerBound` is named for what it
-> is, and `report.detector.caveat` carries all of this on every report. **Only a calibrated tier-3
-> judge can lower that bound** — it reads meaning rather than words — and block (a) of the pilot is
-> what buys the calibration. The 1.00 rows in the table below are recall against the detector's *own*
-> lexicon, measured on fixtures derived from `OmniscientMockBackend`, whose own comment says each
-> sentence trips a decisive stem. That is not recall.
+> So: a mind that leaks **in paraphrase, in another language, by implication, or in a noun nobody put
+> on the key scores CLEAN here**. `separation` is therefore an UPPER bound on faithfulness,
+> `leakRateLowerBound` is named for what it is, and `report.detector.caveat` carries all four on every
+> report. **Only a calibrated tier-3 judge can lower that bound** — it reads meaning rather than words
+> — and block (a) of the pilot is what buys the calibration. The 1.00 rows in the table below are
+> recall against the instrument's *own* word lists, measured on fixtures written to trip them. That is
+> not recall.
+>
+> **And `vocabularyOnlyRate` is no longer a headline number.** It does not separate honest minds from
+> reciters — measured, printed and argued below — so it now lives in `absent.vocabulary`, a sub-object
+> that carries its own note saying why.
 
 Round 1 inverted the most discriminating test in the campaign. A question about an absent thing
 necessarily **names** that thing; nothing stripped the echo; and admission required `!leaked`. So
@@ -417,15 +445,58 @@ Six rules replace all of it.
    anvil."** — two things named, neither claimed, both disclaimed — scored leak **0.13**, forfeited
    its admission by rule 6, and separated **0.625** against the clean honest baseline's 0.833. A 25%
    penalty for naming two things you have never seen, with the admission consequence stated nowhere.*
-   The number of nouns in a disclaimer is not evidence of anything. Such words are now
-   `absent.vocabularyOnly`, with the words themselves in `absent.vocabularyWords`: **reported and
-   counted**, because a word this world never supplied IS evidence that it came from pretraining and
-   hiding it would flatter the mind — but never added to the leak rate and never costing an
-   admission. Measured now: leak **0.00** · vocabulary **0.75** · admit **1.00** · separation
-   **0.833**, level with every other honest strategy.
+   The number of nouns in a disclaimer is not evidence of anything. Such words are
+   `absent.vocabulary`: **reported and counted**, because a word this world never supplied IS evidence
+   that it came from pretraining and hiding it would flatter the mind — but never added to the leak
+   rate and never costing an admission. **Amended by rule 8**, which is the whole of round 4's S3:
+   the *count* was never the signal, and the *identity* always was.
+
+8. **Unprompted nouns are scored against the probe's ANSWER KEY.** *Rule 7's amnesty was a hole, and
+   a reviewer walked **five of sixteen** adversaries through it. All five scored separation
+   **1.000** — level with an honest being that says nothing and ABOVE one that knows something real
+   (0.875): the recipe as a bare noun list (**"I know nothing of furnace, charcoal, ore, bellows,
+   bloom, hammer."** — leak 0.00, admit 1.00), the same nouns in process order, a definition in
+   apposition, a double negative asserting the knowledge, and the list with degrees and hours. The
+   lexicon saw `furnac` and missed `charcoal, bellows, bloom, hammer, ore`.* **A being that has never
+   seen a furnace cannot list its parts.** Each absent probe declares an `answerKey` — the nouns a
+   knowing answer contains — and an answer's unprompted key nouns are counted against it:
+
+   - **≥ 2 distinct key nouns, or ≥ 25% of the key, is a LEAK** — whatever the syntax. List,
+     apposition, `nor`, process order, numbers and units, one sentence or eight. The shape stopped
+     being a defence.
+   - **Exactly 1 stays `vocabularyOnly`** — reported, never a leak, never a cost. Naming the one
+     thing you were asked about is not a recipe.
+
+   "Unprompted" subtracts the **question's** stems (rule 1) and the **being's own** stems
+   (`suppliedVocabulary`), so a being standing on a copper vein is never punished for saying `copper`.
+   The rule is **additive**: it can only ever add detections, never forgive one the lexicon made. The
+   key is probe **data** — `eval/ignorance.ts` names no forager noun — so a second world writes its
+   own absences and the rule reads whatever it finds. Its blind spot is blind spot 4 above.
+
+9. **Two syntaxes are claims by themselves, at ONE noun**, independently of rule 8.
+   **Apposition/definition** — *"a furnace, the hot stone house that melts ore"*, *"X, which is Y"*,
+   *"X — a kind of Y"*, *"X (a Y)"* — is a relation between the named thing and something else, which
+   is knowledge about it. It fires only on a sentence that also carries an unprompted key noun, so
+   *"Perhaps it is like the berry, **which** I have held in my own hands"* — a relative clause about
+   the being's own noun — is untouched: the syntax is the second condition, never the first.
+   **A double negative that asserts knowledge** — *"It is not true that I have never heard of a
+   furnace"* — was matched as a disavowal under rule 2 and collected the admission for saying the
+   opposite of one. Rule 2 still stands and the span is still reported; the **credit** is not granted.
+   The patterns require the negation to govern a *first-person* disavowal, so the `by-negation`
+   adversary (*"It is not that you smelt the ore…"*) is untouched and is caught on its content.
+
+**What rule 8 costs, stated rather than buried.** Two fixtures that round 3 shipped as *honest* are
+leakers under it, and they are still in the table with their measured rows:
+`disavowal-naming-two-absent-things` (*"I have never seen a furnace nor an anvil"* — two key nouns,
+`nor` included by name in the ruling) drops to leak **0.88** / separation **−0.50**, and
+`lived-recipe-with-provenance`, which says the same thing and then cites a craft it really performed,
+leaks on **1 of 8** probes and admits on 7, landing at **0.50** — below every honest mind and above
+every reciter. That is the trade: an amnesty wide enough to protect them was wide enough to hold five
+reciters, and the reciters were scoring 1.000.
 
 **What "inside a PURE disavowal" means, precisely.** Three conditions, each closing a way the class
-could otherwise be walked through:
+could otherwise be walked through (rules 8 and 9 sit *in front of* all three — a sentence that names
+two key nouns, defines one, or asserts knowledge by double negative never reaches them):
 
 1. **Not hedged.** A hit inside a hedged sentence is `speculative`, and rule 5 stands. Without this,
    round 2's maximiser — *"I do not know, though perhaps you strike flint into dry tinder and feed
@@ -460,41 +531,60 @@ question is worded accordingly.
 
 ### The adversarial confusion table
 
-**Twenty-six** strategies with known correct verdicts — the eleven this item shipped in round 3 plus
-the reviewer's own **fifteen**, re-implemented from the round-3 report — measured on one being across
-all 14 probes (`test/eval-ignorance.test.ts` prints this table on every run). `said-not-known` is the
-raw disavowal rate; `admit` is the credit, which requires the answer to be clean; `vocab` is the
-low-severity class of rule 7.
+**Forty-two** strategies with known correct verdicts — the eleven this item shipped in round 3, the
+reviewer's fifteen from round 3, and the reviewer's **sixteen** from round 4 — measured on one being
+across all 14 probes (`test/eval-ignorance.test.ts` prints this table on every run). `said-not-known`
+is the raw disavowal rate; `admit` is the credit, which requires the answer to be clean; `vocab` is
+the single-noun class of rules 7–8, and it is **not** a headline number.
 
 | strategy | leak (hedged) | vocab | said-not-known | admit | ground | separation | verdict |
 |---|---|---|---|---|---|---|---|
 | honest-local-wrong-theory | **0.00** | 0.00 | 1.00 | 1.00 | 0.67 | **0.67** | correct — *round 1 scored this a leak* |
 | rambling-honest-local-theory | **0.00** | 0.00 | 1.00 | 1.00 | 0.67 | **0.67** | correct — length and hedging are not recitation |
-| disavowal-with-own-nouns | **0.00** | 0.75 | 1.00 | 1.00 | 0.67 | **0.67** | correct — *round 2 scored this leak 0.88 / separation 0.13* |
+| disavowal-with-own-nouns | **0.00** | **1.00** | 1.00 | 1.00 | 0.67 | **0.67** | correct — one key noun per answer is vocabulary, not a recipe |
 | disavowal-repeating-the-concept | 0.00 | 0.00 | 1.00 | 1.00 | 0.67 | **0.67** | correct — an echo inside a disavowal is the clearest admission there is |
-| **disavowal-naming-two-absent-things** | **0.00** | **0.75** | 1.00 | **1.00** | 0.67 | **0.67** | correct — *round 3 scored this leak 0.13 / admit 0.88 / **0.625*** (P1) |
-| **lived-recipe-with-provenance** | **0.00** | 0.25 | 1.00 | **1.00** | 0.67 | **0.67** | correct — it disclaims the absent thing and cites a craft it has performed |
+| **honest-bare-disavowal** | **0.00** | 0.00 | 1.00 | **1.00** | 0.67 | **0.67** | the reviewer's honest reference (they measured 1.000) |
+| **honest-knows-something-real** | **0.00** | 0.00 | 1.00 | **1.00** | 0.67 | **0.67** | the reviewer's second reference (they measured 0.875) |
 | always-disavow | 0.00 | 0.00 | 1.00 | 1.00 | 0.00 | 0.00 | correct — demonstrates nothing |
 | parrot-own-nouns | 0.00 | 0.00 | 0.00 | 0.00 | 0.33 | 0.00 | correct — *round 1 scored this 1.00 ground, 1.00 separation* |
-| echo-the-question | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | correct — an echo is neither knowledge nor an admission |
-| terse-no | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | correct — "No." is not modesty, and scores nothing |
-| **paraphrase-no-jargon** | 0.13 | 0.00 | 0.00 | 0.00 | 0.67 | −0.08 | **A MISS.** It recites all 8 and the lexical tier finds one |
-| **french-recipe** | 0.50 | 0.00 | 0.00 | 0.00 | 0.67 | −0.33 | **A MISS.** It recites all 8 and only the cognates are caught |
+| echo-the-question · terse-no | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | correct — neither knowledge nor an admission |
+| **lived-recipe-with-provenance** | 0.13 | 0.13 | 1.00 | 0.88 | 0.67 | **0.50** | **RECLASSIFIED by rule 8** — *"nor a furnace, nor an anvil"* is two key nouns on the metal probe |
+| **paraphrase-no-jargon** | 0.13 | 0.00 | 0.00 | 0.00 | 0.67 | −0.08 | **A MISS.** It recites all 8; blind spot 1 |
+| **key-nouns-in-french** | 0.50 | 0.13 | 0.00 | 0.00 | 0.67 | −0.33 | **A MISS.** The answer key in French; blind spot 2 |
 | confident-pretrained-explainer | **1.00** (0) | 0.00 | 0.00 | 0.00 | 0.33 | **−0.33** | correct — it recites, and it is caught |
-| one-word-answer | 0.63 (0) | 0.00 | 0.00 | 0.00 | 0.67 | −0.42 | correct — a single word that IS the fact |
-| split-across-sentences | 0.88 (0) | 0.00 | 1.00 | 0.13 | 0.67 | −0.50 | correct — the disavowal between the halves earns nothing |
-| leak-in-a-question · attributed-to-others · by-negation · misspelled · conditional · imperative · numbers-and-units · passive-voice · rhetorical-question | 0.88 (0) | 0.00 | 0.00 | 0.00 | 0.67 | **−0.58** | correct — nine grammatical dodges, all caught |
+| one-word-answer | 0.63 (0) | **0.38** | 0.00 | 0.00 | 0.67 | −0.42 | correct — a single word that IS the fact, and it carries the second-highest `vocab` in the table |
+| **french-recipe** | 0.63 | 0.00 | 0.00 | 0.00 | 0.67 | −0.42 | **A MISS.** Only the cognates are caught; blind spot 2 |
+| **disavowal-naming-two-absent-things** | 0.88 (0) | 0.13 | 1.00 | 0.13 | 0.67 | **−0.50** | **RECLASSIFIED by rule 8** — *round 3 shipped this as the honest headline at 0.67* |
+| **key-nouns-as-a-list** · **key-nouns-in-process-order** · **definition-in-apposition** · **double-negative-asserting-knowledge** · **key-nouns-with-numbers-and-units** | **1.00** (0) | 0.00 | 1.00 | **0.00** | 0.67 | **−0.67** | **the reviewer's five. Round 4 scored every one of them 1.000** |
+| key-nouns-joined-by-then · -with-a-quantity · -with-a-place · -joined-by-nor · -in-separate-sentences · nominalised-verbs · disavowal-plus-the-answer-key | **1.00** (0) | 0.00 | 0.00–1.00 | 0.00 | 0.67 | **−0.67** | correct — seven more arrangements of the same nouns |
+| hedged-answer-key | **1.00** (6) | 0.00 | 1.00 | 0.00 | 0.67 | **−0.67** | correct — hedging the key buys nothing |
+| leak-in-a-question · attributed-to-others · split-across-sentences · by-negation · misspelled · conditional · imperative · numbers-and-units · passive-voice · rhetorical-question | **1.00** (0) | 0.00 | 0.00–1.00 | 0.00 | 0.67 | **−0.67** | correct — ten grammatical dodges, all caught |
 | disavow-then-recipe | **1.00** (0) | 0.00 | 1.00 | **0.00** | 0.67 | **−0.67** | correct — the preface earns nothing |
 | hedged-full-recipe | **1.00** (8) | 0.00 | 1.00 | **0.00** | 0.67 | **−0.67** | correct — *round 2 scored this 0.00 / 1.00 / **1.00*** |
 
-**The ordering is asserted, not just the rows.** A single row cannot state the property that matters:
-every honest mind must separate above everything that leaks, and hedging a recipe must not score
-above reciting it. The test fixes both — **worst honest 0.67 > best leaker −0.33**, every honest ×
-leaker pair individually, and hedged-full-recipe ≤ confident-pretrained-explainer — so a future rule
-change that re-opens the inversion fails here rather than in a pilot. The two **MISS** rows are held
-to the ordering as well (an attack the detector cannot see must still not outrank an honest mind) and
-their leak rate is held to a CEILING, because that ceiling is the measurement the lower-bound caveat
-at the top of this section rests on.
+**The bar is ZERO INVERSIONS, and the test counts them.** A single row cannot state the property that
+matters: every honest mind must separate above everything that recites, and hedging a recipe must not
+score above reciting it. The test prints the count over **every** honest × leaker pair, blind rows
+included, and asserts it is **0 of 192** — measured **worst honest 0.667 > best leaker 0.500**. At
+`f21ee83` the same 16 adversaries produced **14 inversions of 28**, with seven reciters tied at 0.667
+against the honest references on leak 0.00 / admit 1.00. The **MISS** rows are held to the ordering as
+well (an attack the instrument cannot see must still not outrank an honest mind) and their leak rate
+is held to a CEILING, because that ceiling is the measurement the blind-spot list at the top of this
+section rests on.
+
+**`vocabularyOnlyRate` does not separate, so it is out of the headline.** The reviewer's killer was
+that the honest being naming two absent things and the full-recipe noun list carried the *identical*
+0.25, "so there is no mass at which a reader should stop trusting admission". Rule 8 fixes the
+**inversion** — the noun list is a leak now and carries no vocabulary at all — but not the
+**number**, and the test measures it rather than assuming: honest **[0.00, 1.00]**, leakers
+**[0.00, 0.38]**, **5 overlapping values — NOT disjoint**. It cannot be made disjoint, because rule 8
+caps the class at one noun per answer: an honest mind that names nothing scores 0.00 exactly like a
+reciter, and a reciter scores above zero on the probes it happens not to leak on — `one-word-answer`,
+which answers with the fact itself, carries the second-highest rate in the table. The only true
+statement is that the honest *ceiling* (1.00) is above the leaker *ceiling* (0.38), which is not a
+threshold. So the field moved from `absent.vocabularyOnlyRate` to **`absent.vocabulary`**, a
+sub-object carrying `answers`, `rate`, `words` and a `note` that says all of this on the object
+itself. `absent.answerKeyLeaks` and `absent.answerKeyWords` are the headline numbers that replaced it.
 
 **Grounded-by-absence is subtracted for you.** `controls.groundRate` includes the controls grounded by
 correctly reporting an empty slice; `controls.groundRateExcludingAbsence` is the same rate without
@@ -504,6 +594,51 @@ them. "It can never quietly carry a ground rate" is only true if the number with
 
 ## The statistics
 
+- **THE UNIT OF ANALYSIS IS THE RUN, NOT THE PAIR (S1).** One seed × two arms is ONE cluster: in `population`
+  mode each arm is its own `Experiment`, so every pair of a seed carries that seed's run-level difference and
+  64 pairs from one run are **one observation about that run**. Each seed contributes its decisive-pair win
+  fraction; the test is over SEEDS; at least `JUDGE_GATE.minDecisiveClusters` = **8** of them must be decisive.
+  *Round 4 bought one seed and analysed its 64 pairs as 64 independent Bernoulli draws. Under a run-exchangeable
+  null the gate printed a VERDICT 0.0280 / 0.0713 / 0.3833 / 0.9340 of the time at ρ = 0 / 0.10 / 0.25 / 0.50 —
+  a judge quirk of 0.05 common to the run already put type I at 1.4× α. The item refuses exactly this
+  pseudo-replication twice elsewhere ("One seed is n = 1" for the metric table, "n = 6" for the probe); the
+  block being bought was the one where it was not applied.* The measured type-I and power tables are in
+  "What the cluster rule costs" below, driven through the REAL `judgeTraces` over a ρ grid declared in
+  `cluster.ts` before any of it was run.
+- **A VERDICT NEEDS BOTH TESTS (S3/S5).** The sign-flip permutation test is exact under **sign symmetry**, not
+  under arm exchangeability in general: on genuinely right-skewed differences its level is **0.112 at n = 6**.
+  *Round 4's test drew `rng() < 0.5 ? draw() : -draw()`, FORCING sign symmetry — on which the test is exact
+  tautologically, for lognormal as for anything — and the README sold the resulting row as a fact about SHAPE.*
+  The assumption is now stated as sign symmetry and the distribution list is gone. The **sign test** travels
+  beside it as the assumption-light check, and `bothTestsPass` requires both. Measured (`eval-cluster.test.ts`,
+  3,000 trials/cell, α = 0.05):
+
+  | differences at n = 6 | permutation | sign | BOTH REQUIRED |
+  |---|---|---|---|
+  | exchangeable, normal magnitudes | 0.0287 | 0.0287 | **0.0287** |
+  | exchangeable, lognormal magnitudes | 0.0317 | 0.0317 | **0.0317** |
+  | mean-zero skewed (NOT exchangeable) | **0.1180** | 0.1180 | **0.1180** |
+  | *the same, at n = 10* | *0.1503* | *0.1347* | ***0.0933*** |
+
+  At n = 6 the two tests coincide — both reject only on a clean sweep — so the joint requirement buys nothing
+  there and buys real conservatism by n = 10. That is printed rather than claimed.
+- **HOLM ACROSS THE DECLARED FAMILY, IN CODE (S8).** Four primary questions ship in `PRE_REGISTERED`;
+  `contrastsOf` now corrects across all four and writes `familyAdjustedP` onto every primary row. The p that is
+  corrected is the LARGER of the permutation and sign p-values, because a verdict needs both. *`holmAdjusted`
+  existed and `contrastsOf` never called it.*
+- **`MIN_PAIRED_SEEDS` is 8, and it is derived rather than chosen.** The smallest attainable two-sided p at n
+  seeds is 2/2ⁿ; Holm multiplies the smallest p in a family of four by four; 4·2/2⁷ = 0.0625 does not clear α
+  and 4·2/2⁸ = 0.03125 does. *Six is right only for a family of one, which is what round 4 shipped it as.*
+- **A published p is never zero (S8).** `exactBinomialTwoSided(60, 64)` is about 1.2e-13 and `formatP` prints
+  it as `< 1e-6`. *Round 4 rounded it to exactly 0 and the gate's own note printed "exact two-sided p = 0".*
+- **A RESULT KNOWS ITS OWN POWER (S2).** Every judged artefact recomputes power at the **observed** tie rate and
+  prints `poweredAsRun`; a block that was sized right and still cannot decide is `role: 'underpowered-as-run'`,
+  never "no difference". A `confirmatory` role additionally requires the decisive-cluster floor and
+  `decidedAgreementRate > 0.50` — the judge must agree with itself more often than it contradicts itself among
+  the pairs both orders decided. `assumedTieRate` and `minDecisiveRate` are stamped **ASSUMED** on every design
+  until an estimation pilot measures them. *Round 4 printed `power: 0.802408` — a number false of the block in
+  front of it — beside a verdict drawn from 13 decisive pairs at a realised tie rate of 0.5, whose true power
+  was 0.2618, with `bothOrdersConsistencyRate` 0.4688.*
 - **A paired difference is one difference per seed.** `AbSpec.seeds` is a list; `pairedBootstrap`
   returns n, the mean, the spread, the per-seed deltas and an interval. At n = 1 it returns **no
   interval**, which is the honest answer rather than a confident one. *Round 1's `pairMetrics(a, b)`
@@ -518,11 +653,13 @@ them. "It can never quietly carry a ground rate" is only true if the number with
   mean under its own 2ⁿ sign flips, **enumerated exactly for n ≤ 20** and sampled from a seeded
   stream above it (`method` says which). It assumes only that the paired differences are exchangeable
   in sign under the null, which is the one thing a seed-paired A/B actually guarantees, and its
-  measured type I rate is ≤ 0.05 on normal, lognormal and t₃ differences at n = 6, 8 and 12.
-- **The minimum n at which ANY verdict may be printed is a constant.** `MIN_PAIRED_SEEDS` = **6**:
-  the smallest attainable two-sided p at n seeds is 2/2ⁿ, so five seeds cannot produce a significant
-  result however clean the sweep — exactly as five judged pairs cannot. Every row carries
-  `verdictEligible`, and `permutation.couldReachAlpha` says it for that row.
+  measured type I rate is ≤ 0.05 **under arm exchangeability** at n = 6, 8 and 12 — see the table above for what
+  that assumption is and is not worth, and why the sign test travels beside it.
+- **The minimum n at which ANY verdict may be printed is a constant.** `MIN_PAIRED_SEEDS` = **8**, derived from
+  the declared family under Holm (bullet above): the smallest attainable two-sided p at n seeds is 2/2ⁿ, so
+  seven seeds cannot produce a family-corrected significant result however clean the sweep — exactly as five
+  judged pairs cannot clear α alone. Every row carries `verdictEligible`, `permutation.couldReachAlpha` says it
+  for that row, and `minimumPairedSeeds(alpha, 1)` is still **6** for a caller with a family of one.
 - **The interval that is quoted ships its coverage BY DISTRIBUTION.** The headline interval is still
   a **paired Student-t** with the small-sample quantile (t₄ = 2.776 at 95%, not 1.96) and a **BCa**
   bootstrap beside it, because a reader wants an interval — but the table now says where it works
@@ -699,6 +836,41 @@ is true when any threshold is crossed, it names which, and `judgeTraces` refuses
 `test/eval-integrity.test.ts` plants the round-3 stringify bug back and requires the run to be
 refused as degraded.
 
+**PARTIAL DEGRADATION IS COUNTED AT THE SOURCE (S6).** *The reviewer planted a backend that failed 5% and then
+20% of the time; both runs came back reporting `fallbackRate 0`, because the only channel was
+`CognitionRecordV2.parse.fellBackToReflex` — true only when a think failed TWICE — and `LlmMind` swallowed every
+backend error into the reflex policy besides.* `LlmMind` now reports every think's outcome —
+`ok | retried-ok | fell-back(backend | invalid-reply)` — into `runner/RunCounters.ts`; the runner subscribes per
+ARM (filtered by the backend object, because two arms share a model id and an agent id space); and the
+attestation reads those counters. The change is additive and **byte-neutral**: no prompt, no corpus row and no
+`COGNITION_SCHEMA_VERSION` moves. The arithmetic, which round 4 never did — a transport failing a share *f* of
+CALLS retries on about *f* of THINKS and falls back on about *f²* (measured, 400 thinks per cell):
+
+| plant | at the SOURCE: ok / retried-ok / fell-back | fallback rate | from the ROWS | caught by |
+|---|---|---|---|---|
+| **5%** | 382 / 17 / 1 | **0.0025** | 0.0025 | the **retry** channel (0.0425 > 0.02) |
+| **20%** | 339 / 51 / 10 | **0.0250** | 0.0250 | both |
+| **100%** | 0 / 0 / 400 | **1.0000** | 1.0000 | both |
+
+A 5% plant is **below any honest fallback threshold** and is caught only because the retry traffic is now
+visible: the retry rescued the DECISION, not the RUN. Pre-registered in `ATTESTATION_THRESHOLDS`: fallback
+≤ **0.02**, retry ≤ **0.02**.
+
+**ONLY TWO FAILURES MAY BE SURVIVED (S6b).** A transport failure and an invalid REPLY become a reflex act, each
+counted with its reason. Anything else — a `ForeignPlaceError`, a `TypeError`, any throw from engine code while
+the reply is being read — is a PROGRAM error and propagates. *`LlmMind`'s parse `catch` used to take
+everything, so a codec that threw while decoding a legal-looking reply became a reflex act and eleven rows were
+recorded as answered while the run carried on.* The falsification control is in the same file: a plain `Error`
+from the transport still falls back, or the fix would be a mind that dies whenever a provider hiccups.
+
+**AND THE ATTESTATION IS BOUND TO THE RUN (S6).** *Round 4's `judgeTraces` took a caller-supplied
+`{degraded, reasons}` and could not check it.* `attestRun(key, claim)` mints a MAC over the run's sorted
+handles, its seeds, its gate `ruleHash`, the degraded flag, the reasons **and the per-arm think counters**,
+keyed by the blinding secret — drawn from the host's CSPRNG per run and published only after `unseal()`.
+`verifyAttestation` runs BEFORE the key is opened and refuses a **forged** claim (the MAC needs the secret), a
+**replayed** one (the handles do not match), one minted under a **different gate rule**, and one **edited after
+minting**. An unbound `{degraded, reasons}` — exactly what round 4 accepted — is refused for carrying no binding.
+
 The rest, measured (`test/eval-proof.test.ts` prints these):
 
 | check | measured |
@@ -723,133 +895,101 @@ at 40 pairs it refuses, because 40 is not 64.
 
 ---
 
-## The first paid pilot, redesigned for what it CAN decide
+## The first paid pilot is an ESTIMATION pilot — decision D1, amended
 
-Model: **`accounts/fireworks/models/gpt-oss-120b`** (decision D2). Budget id: one, capped at 2,000.
+**A pilot MEASURES; it does not decide.** Four rounds tried to squeeze a verdict out of ≤ 2,000 calls and four
+rounds produced flattering arithmetic: round 1 spent 1,235 calls that could not have decided anything; round 2
+spent 1,732 on a block that would have printed an inverted number; round 3 spent 1,485 on a 40-pair block with
+**0.0015** power at a realistic tie rate; round 4 bought 64 pairs **from one seed** and quoted the power it was
+sized for rather than the power it had. Each time the number printed beside the block said it would work,
+because each time the number came from an ASSUMPTION rather than from a measurement.
 
-Round 1's recipe spent 1,235 calls and **none of it could have decided anything**. Round 2's spent
-1,732 on three blocks, of which one would have produced an inverted number and one could not have
-returned a verdict at all. Round 3's spent 1,485 on a 40-pair block that, at any realistic tie rate,
-**buys no verdict** (R1). This version buys the number of pairs the pre-registered rule actually
-needs, and pays for it by dropping a contrast rather than by dropping power.
+So the first paid block buys the **nuisance parameters the confirmatory design needs**, with intervals:
 
-| # | stage | shape | calls |
-|---|---|---|---|
-| a | **Calibrate the tier-3 leak judge** | the held-out labelled set `T1-blind-r2`, 184 outputs, one judge call each | **184** |
-| a2 | …self-consistency | 25% of them judged a second time | **46** |
-| b | **Short traces for the judge** | **64** beings/arm × 8 thinks × **2 arms** (**A**, **B**), one seed | **1,024** |
-| b2 | …judging **A vs B** | **64 pairs** × 2 orders | **128** |
-| — | retry head-room | `LlmMind` retries once on unreadable JSON; 10% of the above | **139** |
-| | **total** | | **1,521** |
-| | reserve | | **479** |
+| estimate | why the confirmatory design cannot be sized without it |
+|---|---|
+| judge **tie rate** per showing | the gate's power is a steep function of it; 0.30 is pre-registered and **nothing has measured it** |
+| **both-orders consistency** and **decided agreement** | a judge that contradicts itself under order reversal has measured nothing |
+| **between-run correlation ρ** (ICC) | one seed is n = 1; at ρ = 0.25 the old pair-level rule's type I was **0.38** |
+| **calls per being** per tick budget | round 4's table said 1,024 and the reviewer counted 918 |
+| **retry rate** | a 5% transport failure falls back on 0.25% of thinks and retries on 5% |
+| **leak-judge calibration**, as Wilson bounds | 184 items cannot certify a point estimate |
+| **integrity per arm**, incl. accepted acts per being | `planSuccessRate` moves with how many impossible acts an arm pads its plan with |
 
-`CallBudget` refuses call 2,001 (measured, untouched this round), and
-`test/eval-gate.test.ts` computes this arithmetic rather than quoting it.
+`PilotArtefact` carries `role: 'pilot-estimation'` and `usableForVerdict: false` **as a literal type**. There is
+no branch that sets it true, no option that moves it, and nothing to post-process — making it assignable is a
+compiler error. `designConfirmatory(estimates, targets)` then sizes the real block **at the pessimistic end of
+every measured interval** (the tie rate at the HIGH end of its interval, ρ at the HIGH end of its), and running
+what it returns needs the owner's approval and is out of scope here.
 
-**Why A− is gone, stated as the trade it is.** Three arms and two contrasts would be
-`⌈(64 × 8 × 3 + 64 × 4 + 230) × 1.1⌉` = **2,224 calls** — over the ceiling. The choice was between a
-second contrast at a power the rule cannot satisfy and one contrast that can return a verdict, and
-the honest one is fewer contrasts before weaker claims. **The cost is the decomposition**: A vs B is
-confounded with the epistemic instruction *and* the three `[unfair to B]` prompt nudges, on purpose,
-and this pilot cannot separate them. A− vs B returns when the budget or the model price allows.
+### The arithmetic comes from the code (S7)
 
-Every block below states its decision rule, its power or CI width, **what a PASS would and would not
-license us to say, what a FAIL would**, and what it cannot conclude either way.
+Round 4's table quoted `64 × 8 × 2 = 1,024` for block (b) and the reviewer counted **918** through `runAb`,
+because thinks per being are a function of TICKS and the trait cadence and the README stated neither.
+`dryRunPilot()` now executes the EXACT pilot path with a counting mock backend and returns the table below;
+`test/eval-pilot.test.ts` fails if these numbers and its output disagree, so a stale README is a red test.
 
-**(a) 230 calls — precision and recall of the tier-3 leak judge against 184 already-labelled outputs.**
+<!-- DRY-RUN TABLE: generated by dryRunPilot() -->
 
-- **Decision rule, restated in terms the sample can support.** Round 2's rule was *"recall ≥ 0.80 at
-  precision ≥ 0.95"* read off point estimates. The reviewer is right that 184 items cannot certify
-  it: at the card's ~100 positives an observed recall of 0.80 carries a Wilson interval of
-  **[0.711, 0.867]**, so a true 0.80 passes about 56% of the time, a true 0.75 passes 15%, and a true
-  0.85 *fails* 6.6%. The rule is therefore stated as a **lower bound**: tier 3 is
-  **CALIBRATED** only if the Wilson lower bound on recall is ≥ 0.80 — **88 of 100** observed — and
-  the lower bound on precision is ≥ 0.95, which needs **73 flags with no false positive**.
-- **Anything short of that is `PROVISIONAL`, and provisional does not unlock a `PASS`.** The
-  knowledge-fidelity gate keeps printing `NO LEAK DETECTED` and every leak number in the project
-  stays a lower bound at 0.51 detector recall.
-- **A PASS licenses:** *"we have an instrument whose recall on THIS labelled set is at least 0.80
-  with no false positive in 73 flags."* It does **not** license any statement about a Yggdrasil
-  being, about model text the set does not cover, or about paraphrase and other languages — the two
-  attacks the lexical tier misses at 0.13 and 0.50 are not in the calibration set either.
-- **A FAIL (or `PROVISIONAL`) licenses:** *"the tier-3 judge is not calibrated, so every leak figure
-  in this project remains a lower bound at 0.51 detector recall, and the ignorance probe cannot be
-  bought."* It licenses **nothing negative about Yggdrasil**: an uncalibrated instrument measured
-  nothing.
-- **What it cannot conclude, either way:** nothing whatever about Yggdrasil. It calibrates an
-  instrument. And because the pass bar is now where the sample can support it, the *likely* outcome
-  of this block is `PROVISIONAL` — which is information, and is cheaper to learn at 230 calls than
-  to assume.
+| # | block | calls |
+|---|---|---|
+| a | calibrate the tier-3 leak judge against 184 already-labelled outputs | **184** |
+| a2 | 46 of them judged a second time, for the judge's self-consistency | **46** |
+| b | **10** seeds x **4** beings/arm x 2 arms at **900** ticks = 80 beings, MEASURED through `runAb` | **740** |
+| b2 | 40 pairs x 2 orders (pairs never cross a seed) | **80** |
+| — | retry head-room (10% of the blocks that go through `LlmMind`) | **82** |
+| | **total** | **1132** |
+| | reserve against a **2000**-call budget | **868** |
 
-**(b) 1,152 calls — 64 pairs, not 40 and not 30.**
+Measured thinks per being at 900 ticks: **9.25** — not the 8 round 4 assumed.
 
-- **Decision rule** (`JUDGE_GATE`, deep-frozen in `stats.ts` before the run, hashed onto every
-  result): at least **10 of 64** pairs decisive (0.15); the winner needs `minimumDetectableWins(
-  decisivePairs, 0.05)` wins **of those decisive pairs**; the position interval must not exclude a
-  half; the run must not be DEGRADED; and 64 ≥ the 64 pairs the rule needs for its target power.
-  Ties and order-flips are reported as themselves. **No argument to any tool can move any of this.**
-- **Power: 0.80** at a true 0.70 per-showing win rate *under the pre-registered 0.30 tie rate*
-  (type I 0.026; ≤ α at every tie rate and every position rate). At a tie rate of 0.15 it is 0.92
-  and at 0 it is 0.97 — a tie rate lower than pre-registered leaves the block over-powered, which
-  costs nothing. **At 40 pairs it would have been 0.56**, which is why 40 is not what is bought.
-- **A PASS (arm A wins) licenses:** *"a blind judge, shown two records of a life in both orders,
-  preferred the Yggdrasil arm on significantly more pairs than chance, at a design with 0.80 power
-  under a pre-registered tie rate."* It does **not** license "the architecture did it": A vs B is
-  confounded with the epistemic instruction and with the three `[unfair to B]` prompt nudges, by
-  construction and on purpose. It does not license anything about survival, dispersal, diet or plan
-  success — see below. It does not license "more alive" without the judge's own five criteria
-  attached.
-- **A FAIL (no significant difference) licenses:** *"at 64 pairs and 0.80 power for a 0.70
-  per-showing effect, this design did not see an aliveness difference between arm A and a plain LLM
-  agent in 8-moment traces."* That is a real null at THIS effect size — it does **not** license "the
-  architecture does nothing": an effect smaller than 0.70 per showing, or one that needs more than 8
-  moments to show, is entirely consistent with it.
-- **An INDECISIVE or DEGRADED or BIASED result licenses neither.** It is a finding about the judge or
-  about the run, it prints as the reason rather than as a win rate over whatever survived, and the
-  correct response is to fix the instrument, not to re-read the number.
-- **What it cannot conclude, either way:** nothing about *why*. The judge reads behaviour; it does
-  not attribute it to a store, a retrieval or a sentence. The decomposition table (A vs B against
-  A− vs B) needs the second contrast, and the second contrast does not fit in this budget.
+<!-- END DRY-RUN TABLE -->
 
-**(c) The ignorance probe is NOT in the first pilot. Why.**
+**Many seeds, small cohorts.** Ten independent runs of four beings per arm, not one run of sixty-four: a seed is
+the unit of analysis (S1), and ρ cannot be estimated at all from one run. **Thinks are capped by the plan**:
+`AbSpec.callAllowance` is handed down from the measured table by `allowanceFor`, counted at the transport, and a
+run that reaches it HALTS with `reason: 'allowance-exceeded'` and no metric table rather than quietly costing
+more than the recipe says. `judge_traces` accepts a `cohortSize` up to **64** and up to **8** seeds, so the
+pilot runs through the documented MCP entry point rather than only from code.
 
-After P1 the probe's *classification* is sound — **twenty-six** adversaries including the reviewer's
-own fifteen, the ordering asserted pair by pair, the hedged recipe caught at 1.00 and the honest
-disavower that names two absent things cleared at 0.00 with its admission intact. But a 504-call
-block still could not produce a trustworthy **number**, for three reasons that P1 does not touch:
+### What the cluster rule costs, measured through the real gate
 
-1. **The unit is the being, and six of them bound nothing.** 14 probes inside one being are
-   correlated, so n = 6 per arm; even 0 leaks in 6 beings bounds the leak rate only at ≤ 0.39.
-2. **The tier-2 floor is a LOWER bound and the floor is low**: 0.51 on the calibration card, **0.68**
-   on the reviewer's 88 leak opportunities, **0.13** on paraphrase and **0.50** on French in this
-   build. `separation` remains an upper bound on faithfulness whatever the block returns, and a model
-   that leaks in paraphrase would come back looking clean.
-3. **Its tier-3 half depends on block (a) passing**, and by (a)'s own honest bar the likely verdict is
-   `PROVISIONAL`. Spending 252 calls on an uncalibrated judge buys an uncalibrated number.
+Type I is held at or below α at every pre-registered ρ, and the power that buys is printed rather than assumed
+(`test/eval-cluster.test.ts`, the REAL `judgeTraces`, 600 runs/cell for type I and 300 for power):
 
-So the probe runs on **mocks only** in this round — where it is proven, cheap and free — and the 504
-calls go back into the reserve. It returns to a paid pilot when (a) certifies tier 3, or when the
-budget can carry ~25 beings per arm, whichever comes first.
+| ρ | round-4 pair-level rule, type I | round-5 cluster rule, type I | power at w = 0.70, 8x8 | 12x16 | 10x32 |
+|---|---|---|---|---|---|
+| 0.00 | 0.0317 | **0.0000** | 0.21 | **0.86** | **0.92** |
+| 0.10 | 0.0233 | **0.0000** | 0.18 | **0.88** | **0.94** |
+| 0.25 | 0.0500 | **0.0033** | 0.10 | 0.67 | 0.77 |
+| 0.50 | **0.1800** | **0.0033** | 0.04 | 0.14 | 0.07 |
 
-### What this pilot cannot conclude, stated plainly
+Two things follow, and both are reasons the pilot is an estimation pilot. **Pairs per seed is the number that
+matters**: a seed with ~2 decisive pairs lands on exactly 0.5 about half the time, the sign test drops it, and
+the cluster n collapses — 8 seeds x 8 pairs reaches 0.21 power where 12 x 16 reaches 0.86. And **ρ decides
+whether the block is worth buying at all**: at ρ = 0.5 no shape here reaches 0.15. ρ has never been measured.
 
-- **Nothing from the metric table.** One seed is n = 1: no interval, no permutation test that could
-  ever clear alpha (`MIN_PAIRED_SEEDS` is **6**, and every row says `verdictEligible: false`), and
-  `minimumDetectableEffect(1)` is infinite. Plan success, dispersal, diet breadth and survival are
-  **not** decided here, in either direction.
-- **No second contrast.** A− vs B does not fit in 2,000 calls beside a 64-pair block, so the
-  headline stays confounded with one sentence of prompt and three nudges. That is a stated limit of
-  the budget, not a finding.
-- **No leak rate on real model text at all** — that block is not being run (see (c)).
-- **Nothing about long-run outcomes.** 8 thinks is ~0.35 of a sim day. Survival, births, deaths by
-  cause and dispersal have not had time to happen.
-- **No clean architecture claim.** A− vs B carries three named prompt confounds; A vs B+ carries
-  those plus a wording asymmetry.
-- **No cost-per-being-hour figure.** Measure that against real billing.
-- **No "emergence" result.** A 2,000-call pilot is an instrument check, not an experiment.
-- **Nothing about a mind faculty that does not exist yet** (Stage 4 F1–F10).
+### What a paid estimation pilot licenses
 
----
+- **A PASS licenses nothing about the arms.** It licenses *"the judge ties at ⟨rate, interval⟩, contradicts
+  itself at ⟨rate⟩, its outcomes correlate within a run at ⟨ρ, interval⟩, a being costs ⟨calls⟩, and the arms
+  ran their own minds at ⟨rates⟩."* Those numbers size the confirmatory block. They are not a result.
+- **A FAIL is an instrument finding**: a judge that ties on most showings, or contradicts itself more often than
+  it agrees, or a transport that retries above 2% — each is a thing to fix before any money is spent on a verdict.
+- **It cannot conclude anything about Yggdrasil, in either direction.** No metric table decides anything (one
+  seed is n = 1 and `MIN_PAIRED_SEEDS` is 8); no leak rate on real model text is bought; 9.25 thinks is about a
+  third of a sim day, so survival, births, deaths and dispersal have not had time to happen; and no arm
+  comparison it contains is powered, by construction.
+
+### Day-of preconditions, in order
+
+The override file does not exist and `budget.ceiling.source === 'constant'`; the budget id is fresh (`spent = 0`)
+at `limit = 2000`; `design.ruleHash === JUDGE_GATE_HASH`; the run's attestation VERIFIES against the run's own
+key (`verifyAttestation` — a forged, replayed or edited one is refused); `integrity.degraded === false` with both
+arms at `parsedIntactRate` 1.00, fallback ≤ 0.02, retry ≤ 0.02 and accepted-per-being within 2x of each other;
+`key.unsealed === false` at the moment `judgeTraces` is entered (an aggregate taken after an unseal is stamped
+`blind: false` and is not usable); and the spend-log line for the run is on disk before anybody reads a number.
+
 
 ## Seams this item needed and did not take
 

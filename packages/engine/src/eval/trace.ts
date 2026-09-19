@@ -1,9 +1,10 @@
 import type { WorldAdapter } from '../contract/adapter.js';
+import type { WorldEdges } from '../contract/edges.js';
 import type { Intent, MindOutput, SimEvent } from '../contract/types.js';
 import type { CognitionOutcome, CognitionRecordV2 } from '../record/types.js';
 import { detectLexicalLeaks, stemWord, suppliedNames } from '../training/leakMatch.js';
 import { deserializeThinkInput } from '../record/serialize.js';
-import { commitTo, keyedStream, randomBlindSecret } from './commit.js';
+import { commitTo, keyedStream, randomBlindSecret, sha256Hex } from './commit.js';
 import { admitsIgnorance } from './disavowal.js';
 import type { ArmId, BlindTrace, MomentOutcome, RawBeingTrace, TraceFeatures, TraceKey, TraceMoment } from './types.js';
 
@@ -63,14 +64,30 @@ import type { ArmId, BlindTrace, MomentOutcome, RawBeingTrace, TraceFeatures, Tr
 export interface TraceSource {
   runId: string;
   arm: ArmId;
+  /**
+   * THE CLUSTER THIS TRACE BELONGS TO (S1). One seed × two arms is ONE
+   * independent run, and until round 5 nothing downstream knew that: 64 pairs
+   * out of one seed were analysed as 64 independent Bernoulli draws. The seed
+   * travels with the trace so `pairTraces` can pair WITHIN a run and
+   * `judgeTraces` can test ACROSS runs. It is not an arm and it is the same
+   * string for both arms, so it is safe to carry past the blinding.
+   */
+  seed?: string;
   records: readonly CognitionRecordV2[];
   outcomes: readonly CognitionOutcome[];
   /** Optional: the capped event tail, for what happened AROUND the being. */
   events?: readonly SimEvent[];
 }
 
-/** Build one raw trace per being that thought at least once. */
-export function buildTraces(source: TraceSource, world: WorldAdapter): RawBeingTrace[] {
+/**
+ * Build one raw trace per being that thought at least once.
+ *
+ * It takes the world's EDGES rather than its adapter (W1-B4 r4): reading a
+ * recorded `ThinkInput` back means decoding places, and only the codec the
+ * world handed its edges can do that. The instrument is an edge; a mind is not.
+ */
+export function buildTraces(source: TraceSource, edges: WorldEdges): RawBeingTrace[] {
+  const world = edges.adapter;
   const outcomeById = new Map(source.outcomes.map((o) => [o.cognitionId, o]));
   const byBeing = new Map<number, CognitionRecordV2[]>();
   for (const record of source.records) {
@@ -86,9 +103,9 @@ export function buildTraces(source: TraceSource, world: WorldAdapter): RawBeingT
     const moments = rows.map((record, index) => {
       const next = rows[index + 1]?.tick ?? Number.POSITIVE_INFINITY;
       const happenedAround = around.filter((e) => e.tick >= record.tick && e.tick < next).map((e) => e.type);
-      return momentOf(record, outcomeById.get(record.id), world, start, happenedAround);
+      return momentOf(record, outcomeById.get(record.id), edges, start, happenedAround);
     });
-    traces.push({ runId: source.runId, arm: source.arm, beingId, moments });
+    traces.push({ runId: source.runId, arm: source.arm, seed: source.seed ?? source.runId, beingId, moments });
   }
   return traces;
 }
@@ -96,11 +113,12 @@ export function buildTraces(source: TraceSource, world: WorldAdapter): RawBeingT
 function momentOf(
   record: CognitionRecordV2,
   outcome: CognitionOutcome | undefined,
-  world: WorldAdapter,
+  edges: WorldEdges,
   start: number,
   around: readonly string[],
 ): TraceMoment {
-  const input = deserializeThinkInput(record.thinkInput, world);
+  const world = edges.adapter;
+  const input = deserializeThinkInput(record.thinkInput, edges);
   const decided = record.resolvedOutput ?? record.parsedOutput;
   const perceived = new Map<string, number>();
   for (const r of input.worldView.resources) perceived.set(r.kind, (perceived.get(r.kind) ?? 0) + 1);
@@ -192,7 +210,26 @@ interface SealedState {
   secret: string;
   publicSeed: string;
   commitment: string;
-  unsealCount: number;
+  /**
+   * ONE SEAL, SHARED BY EVERY DERIVATION (S4).
+   *
+   * Round 4's `relabelled` built a NEW key around the same entries and the same
+   * secret with a FRESH `unsealCount`, so `key.relabelled(a => a).unseal()`
+   * returned all twelve arms, `.disclose().secret` returned the run secret, and
+   * the original still reported `unsealed === false`. The seal is now an object
+   * every derivation holds a reference to: opening a child opens the parent,
+   * because they are the same secret about the same traces.
+   */
+  seal: Seal;
+  /** False on the original; true on anything `relabelArms` produced. */
+  derived: boolean;
+}
+
+/** Shared, mutable, one per blinding. */
+interface Seal {
+  count: number;
+  /** The first unseal, recorded once — a second one adds to the count, not to the log. */
+  log: readonly string[];
 }
 
 const SEALED = new WeakMap<SealedTraceKey, SealedState>();
@@ -203,9 +240,17 @@ function stateOf(key: SealedTraceKey): SealedState {
   return held;
 }
 
-/** What every disclosure route is allowed to show. Reveals neither arm nor secret. */
+/**
+ * What every disclosure route is allowed to show. Reveals neither arm nor
+ * secret — and, since S4, TELLS THE TRUTH ABOUT THE SEAL. Round 4's facade
+ * printed `"sealed": true` after two `unseal()`s, so an unseal-then-rejudge was
+ * indistinguishable from a blind pass in every artefact a reader holds.
+ */
 interface SealedFacade {
-  sealed: true;
+  sealed: boolean;
+  unsealCount: number;
+  /** True when this handle came out of a relabelling rather than out of `blindTraces`. */
+  derived: boolean;
   size: number;
   publicSeed: string;
   commitment: string;
@@ -214,13 +259,14 @@ interface SealedFacade {
 const INSPECT = Symbol.for('nodejs.util.inspect.custom');
 
 export class SealedTraceKey {
-  constructor(entries: readonly TraceKey[], publicSeed: string, secret: string) {
+  constructor(entries: readonly TraceKey[], publicSeed: string, secret: string, derivation?: { seal: Seal }) {
     SEALED.set(this, {
       entries: entries.map((e) => ({ ...e })),
       secret,
       publicSeed,
       commitment: commitTo(secret),
-      unsealCount: 0,
+      seal: derivation?.seal ?? { count: 0, log: [] },
+      derived: derivation !== undefined,
     });
   }
 
@@ -238,9 +284,19 @@ export class SealedTraceKey {
     return stateOf(this).entries.length;
   }
 
-  /** Has anybody looked? The blinding tests assert this is still 0 mid-judging. */
+  /** Has anybody looked — through THIS handle or any derivation of it? */
   get unsealed(): boolean {
-    return stateOf(this).unsealCount > 0;
+    return stateOf(this).seal.count > 0;
+  }
+
+  /** How many times, so an artefact can carry the number rather than a boolean. */
+  get unsealCount(): number {
+    return stateOf(this).seal.count;
+  }
+
+  /** The first unseal, in words. Empty while the key is sealed. */
+  get unsealLog(): readonly string[] {
+    return stateOf(this).seal.log;
   }
 
   /** Every handle, in the order the traces were returned in. No arms. */
@@ -255,6 +311,16 @@ export class SealedTraceKey {
       .map((e) => e.traceId);
   }
 
+  /**
+   * Which CLUSTER each handle came from — the seed, never the arm. Safe to hand
+   * anywhere `handlesOf` is not: both arms of a seed carry the same string, so
+   * it partitions the traces into independent runs and says nothing about which
+   * mind produced one.
+   */
+  clusters(): readonly { traceId: string; seed: string }[] {
+    return stateOf(this).entries.map((e) => ({ traceId: e.traceId, seed: e.seed }));
+  }
+
   /** Which arms are represented at all. */
   arms(): readonly ArmId[] {
     return [...new Set(stateOf(this).entries.map((e) => e.arm))];
@@ -267,8 +333,32 @@ export class SealedTraceKey {
    */
   unseal(): readonly TraceKey[] {
     const state = stateOf(this);
-    state.unsealCount++;
+    state.seal.count++;
+    // LOGGED ONCE. A second unseal is a bigger count, not a second line: the
+    // question an auditor asks is "was this key ever opened before judging",
+    // and one honest line answers it without growing with every report.
+    if (state.seal.log.length === 0) {
+      state.seal.log = [
+        `unsealed for the first time (${state.derived ? 'through a DERIVED handle' : 'through the original handle'}, ` +
+          `${state.entries.length} handles, seed ${state.publicSeed})`,
+      ];
+    }
     return state.entries.map((e) => ({ ...e }));
+  }
+
+  /**
+   * BIND SOMETHING TO THIS RUN — a message authentication code over a caller's
+   * digest, keyed by the blinding secret.
+   *
+   * It is what makes a run attestation unforgeable and unreplayable (S6): the
+   * secret is drawn from the host's CSPRNG per run and published only after
+   * `unseal()`, so a `{degraded: false}` claim minted for one run cannot be
+   * moved onto another, and a claim edited after the fact no longer matches. It
+   * reveals nothing about the arms: a MAC over the caller's own bytes.
+   */
+  bind(digest: string): string {
+    const state = stateOf(this);
+    return sha256Hex(`yggdrasil/run-attest/v1:${state.secret}:${state.commitment}:${digest}`);
   }
 
   /**
@@ -282,7 +372,14 @@ export class SealedTraceKey {
    */
   disclose(): { secret: string; publicSeed: string; commitment: string } {
     const state = stateOf(this);
-    if (state.unsealCount === 0) {
+    // A DERIVED KEY IS A CONTROL, NOT AN AUDITOR. `swapArmLabels(key).disclose()`
+    // handed over the run secret in one line and left the original reading
+    // `unsealed === false`; a label-swap control needs the arms it was built to
+    // permute and has no business with the secret they were drawn from.
+    if (state.derived) {
+      throw new Error('a derived key never discloses: disclose() belongs to the key blindTraces returned, not to a relabelling of it');
+    }
+    if (state.seal.count === 0) {
       throw new Error('the blinding secret is disclosed only after unseal(): a sealed key that answers questions is not sealed');
     }
     return { secret: state.secret, publicSeed: state.publicSeed, commitment: state.commitment };
@@ -300,24 +397,45 @@ export class SealedTraceKey {
 
   /** `String(key)` and template interpolation. */
   toString(): string {
-    const { size, publicSeed, commitment } = this.facade();
-    return `SealedTraceKey(sealed, ${size} handles, seed ${publicSeed}, commitment ${commitment.slice(0, 12)})`;
+    const { sealed, unsealCount, size, publicSeed, commitment } = this.facade();
+    return (
+      `SealedTraceKey(${sealed ? 'sealed' : `UNSEALED ×${unsealCount}`}, ${size} handles, ` +
+      `seed ${publicSeed}, commitment ${commitment.slice(0, 12)})`
+    );
   }
 
   private facade(): SealedFacade {
     const state = stateOf(this);
-    return { sealed: true, size: state.entries.length, publicSeed: state.publicSeed, commitment: state.commitment };
+    return {
+      sealed: state.seal.count === 0,
+      unsealCount: state.seal.count,
+      derived: state.derived,
+      size: state.entries.length,
+      publicSeed: state.publicSeed,
+      commitment: state.commitment,
+    };
   }
+}
 
-  /** Swap which arm every handle belongs to — the label-swap control. */
-  relabelled(swap: (arm: ArmId) => ArmId): SealedTraceKey {
-    const state = stateOf(this);
-    return new SealedTraceKey(
-      state.entries.map((e) => ({ ...e, arm: swap(e.arm) })),
-      state.publicSeed,
-      state.secret,
-    );
-  }
+/**
+ * THE LABEL-SWAP CONTROL, and why it is not a method any more.
+ *
+ * `key.relabelled(a => a)` was a public method that minted a fresh seal around
+ * the same secret, so one line reopened the blinding and the original went on
+ * saying it was sealed. The relabelling itself is a legitimate control — run
+ * the whole aggregate with the arms swapped and the sign must flip — so it
+ * survives as a module function that is NOT exported from the package index and
+ * whose product shares the parent's seal: unsealing the swapped key marks the
+ * original unsealed, and the swapped key can never disclose.
+ */
+export function relabelArms(key: SealedTraceKey, swap: (arm: ArmId) => ArmId): SealedTraceKey {
+  const state = stateOf(key);
+  return new SealedTraceKey(
+    state.entries.map((e) => ({ ...e, arm: swap(e.arm) })),
+    state.publicSeed,
+    state.secret,
+    { seal: state.seal },
+  );
 }
 
 // ─── Blinding ────────────────────────────────────────────────────────────────
@@ -410,7 +528,7 @@ export function blindTraces(raw: readonly RawBeingTrace[], world: WorldAdapter, 
       features: traceFeatures(local, world),
       moments: local.length,
     });
-    key.push({ traceId, arm: trace.arm, beingId: trace.beingId, runId: trace.runId });
+    key.push({ traceId, arm: trace.arm, seed: trace.seed ?? trace.runId, beingId: trace.beingId, runId: trace.runId });
   }
   return {
     traces,

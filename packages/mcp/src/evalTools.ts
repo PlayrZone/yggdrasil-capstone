@@ -5,6 +5,7 @@ import {
   FORAGER_PROBES,
   HARD_CALL_CEILING,
   foragerAdapter,
+  foragerWorld,
   judgeTraces,
   minimumDetectableWins,
   openLeakJudge,
@@ -13,6 +14,7 @@ import {
   runAb,
   runIgnoranceProbe,
 } from '@yggdrasil/engine';
+import type { DoorContext } from '@yggdrasil/engine';
 import type { AbResult, ArmId, ArmSpec, BackendSpec, FetchLike, PreRegisteredQuestion } from '@yggdrasil/engine';
 import { FileBudgetStore } from './budget.js';
 
@@ -178,8 +180,8 @@ export function registerEvalTools(deps: EvalToolDeps): void {
   }
 
   /** Everything the door needs, assembled in one place so no call site forgets the key. */
-  function doorContext(chosen: Chosen): { world: typeof foragerAdapter; budget?: CallBudget; apiKey?: string } {
-    return { world: foragerAdapter, ...doorExtras(chosen) };
+  function doorContext(chosen: Chosen): DoorContext {
+    return { world: foragerAdapter, edges: foragerWorld.edges, ...doorExtras(chosen) };
   }
 
   /** The same two, for `runAb`, which builds its own door context per arm. */
@@ -419,7 +421,18 @@ export function registerEvalTools(deps: EvalToolDeps): void {
     seed: z.string(),
     seeds: z.array(z.string()).min(1).max(8).optional(),
     ticks: z.number().int().positive().max(20_000).optional().describe('Ticks to run before judging. Default 600.'),
-    cohortSize: z.number().int().positive().max(32).optional().describe('Beings per arm. Default 4.'),
+    // S7: the cap and the recipe must AGREE. Round 4's pre-registered block
+    // needed 64 beings per arm and this schema stopped at 32, so the block
+    // could not be run over MCP at all. 64 is the cap and 8 seeds is the
+    // maximum above, which together cover the estimation pilot's shape and the
+    // confirmatory shapes `designConfirmatory` returns.
+    cohortSize: z
+      .number()
+      .int()
+      .positive()
+      .max(64)
+      .optional()
+      .describe('Beings per arm, per seed. Default 4, maximum 64 — enough for any pre-registered block.'),
     arms: z.array(z.enum(ARM_IDS)).length(2).optional().describe('The two arms to contrast. Default A and B.'),
     ...PaidArgs,
   };
@@ -472,9 +485,13 @@ export function registerEvalTools(deps: EvalToolDeps): void {
         // `degraded` and never showed it to the judge, so a block in which an
         // arm ran mostly on the world's reflex policy would still have printed
         // `usableForVerdict: true` and read as a win for the architecture.
+        // S6: the attestation the RUN minted, bound to this run's traces, seeds
+        // and gate rule by a MAC keyed on the blinding secret. A caller-supplied
+        // `{degraded, reasons}` is a claim about some run; `judgeTraces` needs a
+        // claim about THIS one and refuses anything it cannot authenticate.
         const aggregate = await judgeTraces(pairing.pairs, result.key, judge, {
           arms,
-          integrity: { degraded: result.integrity.degraded, reasons: result.integrity.reasons },
+          integrity: result.attestation,
         });
         return { result, aggregate, pairing };
       });
@@ -509,6 +526,29 @@ export function registerEvalTools(deps: EvalToolDeps): void {
         whatThisManyPairsCouldDecide: aggregate.design,
         // Kept beside it so a reader can see the number round 2 gated on.
         ifEveryPairHadBeenDecisive: minimumDetectableWins(aggregate.pairs),
+        // S1/S2/S4/S6, on every tool result rather than only in the note: the
+        // unit of analysis, the power of the block that RAN, whether the key
+        // was still sealed when judging began, and whether the run's own
+        // integrity claim authenticates against the run.
+        theUnitOfAnalysisIsTheRun: {
+          seeds: aggregate.cluster.clusters,
+          decisiveSeeds: aggregate.cluster.decisiveClusters,
+          minimumSeeds: aggregate.cluster.minDecisiveClusters,
+          perSeedWinFractions: aggregate.cluster.perCluster,
+          signFlipPermutationOverSeeds: aggregate.cluster.permutation,
+          signTestOverSeeds: aggregate.cluster.sign,
+          bothTestsPass: aggregate.cluster.bothTestsPass,
+          betweenRunIcc: aggregate.betweenRunIcc,
+        },
+        poweredAsRun: {
+          observedTieRate: aggregate.design.observedTieRate,
+          power: aggregate.design.poweredAsRun,
+          sizedFor: aggregate.design.power,
+          role: aggregate.design.role,
+          assumptions: aggregate.design.assumptionStatus,
+        },
+        blind: { blind: aggregate.blind, unsealCountAtEntry: aggregate.unsealCountAtEntry },
+        attestation: aggregate.attestation,
       });
     },
   );

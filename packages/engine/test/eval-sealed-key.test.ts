@@ -1,6 +1,8 @@
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { blindTraces, foragerAdapter, verifyCommitment } from '../src/index.js';
+// S4: not an index export any more — see the describe block at the foot of this file.
+import { swapArmLabels } from '../src/eval/aggregate.js';
 import type { RawBeingTrace } from '../src/index.js';
 
 /**
@@ -192,13 +194,95 @@ describe('W1-E · R4 · the sealed key is sealed against every route, not just J
 
   it('carries the label swap without ever exposing what it swapped', () => {
     const key = sealedKey();
-    const swapped = key.relabelled((arm) => (arm === 'A' ? 'B' : 'A'));
+    const swapped = swapArmLabels(key);
     expect(Object.getOwnPropertyNames(swapped)).toEqual([]);
     expect(JSON.stringify(swapped)).not.toContain(SECRET);
     expect(swapped.unsealed).toBe(false);
     const before = new Map(key.unseal().map((e) => [e.traceId, e.arm]));
     for (const entry of swapped.unseal()) expect(entry.arm).not.toBe(before.get(entry.traceId));
-    // And the copy carries the same secret, so the commitment still verifies.
-    expect(swapped.disclose().secret).toBe(SECRET);
+  });
+});
+
+/**
+ * S4 — ONE PUBLIC METHOD REOPENED THE SEALED KEY, AND THE FACADE LIED AFTERWARDS.
+ *
+ * The reviewer's round-4 attacks, verbatim:
+ *
+ *   `key.relabelled(a => a).unseal()` returned **12 of 12 arms correct**,
+ *   `.disclose().secret` **equalled the run secret**, and the ORIGINAL key still
+ *   reported `unsealed === false`. `swapArmLabels(key)` did it in one import and
+ *   was **exported from the package index**. After two `unseal()`s
+ *   `JSON.stringify(key)` still printed **`"sealed":true`** with no unseal count,
+ *   and nothing marked a key as spent for judging: an unseal-then-rejudge was
+ *   indistinguishable from a blind pass.
+ *
+ * Every one of those is a test below.
+ */
+describe('W1-E · S4 · the seal is one seal, and it tells the truth', () => {
+  it('has no public route that mints a fresh seal', () => {
+    const key = sealedKey();
+    // `relabelled` is gone from the public surface entirely.
+    expect((key as unknown as Record<string, unknown>)['relabelled']).toBeUndefined();
+    const surface = new Set<string>();
+    for (let o: object | null = key; o && o !== Object.prototype; o = Object.getPrototypeOf(o) as object | null) {
+      for (const name of Object.getOwnPropertyNames(o)) surface.add(name);
+    }
+    expect([...surface]).not.toContain('relabelled');
+  });
+
+  it('opens the parent when a derived key is opened — one seal, shared', () => {
+    const key = sealedKey();
+    const derived = swapArmLabels(key);
+    expect(key.unsealed).toBe(false);
+    expect(derived.unsealed).toBe(false);
+    derived.unseal();
+    // THE ROUND-4 DEFECT: this was `false` while twelve arms were in hand.
+    expect(key.unsealed).toBe(true);
+    expect(key.unsealCount).toBe(1);
+    expect(derived.unsealCount).toBe(1);
+  });
+
+  it('refuses disclose() on a derived key, whatever it has been through', () => {
+    const key = sealedKey();
+    const derived = swapArmLabels(key);
+    derived.unseal();
+    expect(() => derived.disclose()).toThrow(/derived key never discloses/);
+    // The original still can, because the original is the auditor's handle.
+    expect(key.disclose().secret).toBe(SECRET);
+  });
+
+  it('prints an honest facade after two unseals, on every route', () => {
+    const key = sealedKey();
+    key.unseal();
+    key.unseal();
+    const printed = JSON.stringify(key);
+    expect(printed).toContain('"sealed":false');
+    expect(printed).toContain('"unsealCount":2');
+    expect(inspect(key)).toMatch(/sealed: false/);
+    expect(String(key)).toMatch(/UNSEALED ×2/);
+    expect(key.unsealLog).toHaveLength(1);
+    expect(key.unsealLog[0]).toMatch(/unsealed for the first time/);
+    // …and still no secret and no arm on any of them.
+    for (const route of [printed, inspect(key), String(key)]) {
+      expect(route).not.toContain(SECRET);
+      expect(route).not.toMatch(/"arm"/);
+    }
+  });
+
+  it('logs the unseal ONCE however many times it happens', () => {
+    const key = sealedKey();
+    for (let i = 0; i < 5; i++) key.unseal();
+    expect(key.unsealCount).toBe(5);
+    expect(key.unsealLog).toHaveLength(1);
+  });
+
+  it('says which cluster a handle came from, and never which arm', () => {
+    const key = sealedKey();
+    const rows = key.clusters();
+    expect(rows.length).toBe(key.size);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual(['seed', 'traceId']);
+      expect(JSON.stringify(row)).not.toMatch(/"arm"/);
+    }
   });
 });

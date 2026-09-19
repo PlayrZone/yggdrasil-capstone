@@ -90,6 +90,8 @@ export interface MomentOutcome {
 export interface RawBeingTrace {
   runId: string;
   arm: ArmId;
+  /** The SEED this run used — the cluster every S1 test is over. Never an arm. */
+  seed?: string;
   beingId: number;
   moments: TraceMoment[];
 }
@@ -110,6 +112,12 @@ export interface BlindTrace {
 export interface TraceKey {
   traceId: string;
   arm: ArmId;
+  /**
+   * The seed this trace's run used. It is CLUSTER membership, not an arm: both
+   * arms of a seed carry the same string, so pairing and the cluster-level test
+   * can read it without anything learning which arm a handle is.
+   */
+  seed: string;
   beingId: number;
   runId: string;
 }

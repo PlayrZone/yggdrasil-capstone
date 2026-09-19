@@ -1,8 +1,13 @@
+import { verifyAttestation } from './attest.js';
+import type { RunAttestation } from './attest.js';
+import { betweenRunIcc, clusterJudgeGate, clustersOf } from './cluster.js';
+import type { ClusterGate } from './cluster.js';
 import { TRACE_CRITERIA } from './judge.js';
 import type { ITraceJudge, Side, TraceCriterion, TraceJudgement } from './judge.js';
 import type { TracePair } from './pairing.js';
-import { JUDGE_GATE, exactBinomialTwoSided, judgeGateDesign, wilsonInterval } from './stats.js';
+import { JUDGE_GATE, exactBinomialTwoSided, formatP, hashJudgeGate, judgeGateDesign, wilsonInterval } from './stats.js';
 import type { Interval, JudgeGateDesign, JudgeGateRule } from './stats.js';
+import { relabelArms } from './trace.js';
 import type { SealedTraceKey } from './trace.js';
 import type { ArmId } from './types.js';
 
@@ -44,12 +49,16 @@ import type { ArmId } from './types.js';
 /** One pair: two showings, one outcome. */
 export interface PairOutcome {
   pairId: string;
+  /** The SEED both traces came from — the cluster this pair belongs to (S1). */
+  cluster: string;
   /** Which arm sat left and right in the forward showing. */
   forwardOrder: [ArmId, ArmId];
   forward: TraceJudgement;
   reversed: TraceJudgement;
   /** The arm BOTH orders preferred, or null when they disagreed or both tied. */
   preferred: ArmId | null;
+  /** Both orders named an arm and they named DIFFERENT ones. */
+  contradicted: boolean;
   /** Did the two orders agree about the arm (two ties count as agreement)? */
   consistent: boolean;
 }
@@ -85,21 +94,16 @@ export interface PositionCheck {
 
 /**
  * WHAT THE RUN SAID ABOUT ITSELF, and why an aggregate refuses a verdict
- * without it.
+ * without it. Defined in `attest.ts`, re-exported here because this is where a
+ * reader meets it.
  *
  * Round 3 computed `integrity.degraded` on the A/B result and then never showed
- * it to the judge: a 1,120-call block in which arm B ran 60% on the world's
- * reflex policy would have printed `usableForVerdict: true` and read as a win
- * for the architecture. Detection that changes nothing is not detection. So an
- * aggregate is told, it refuses a verdict when the run is degraded, and it
- * refuses one when it has not been told at all — silence is not an attestation.
+ * it to the judge. Round 4 showed it and could not CHECK it: `judgeTraces` took
+ * a caller-supplied `{degraded, reasons}`, so a forged, replayed or edited
+ * claim passed. It is now bound to the run by a MAC keyed on the blinding
+ * secret, and `verifyAttestation` refuses all three.
  */
-export interface RunAttestation {
-  /** True when any pre-registered integrity threshold was crossed. */
-  degraded: boolean;
-  /** Which ones, in words. Empty when it is not degraded. */
-  reasons: readonly string[];
-}
+export type { RunAttestation };
 
 export interface JudgeAggregate {
   judge: string;
@@ -118,6 +122,15 @@ export interface JudgeAggregate {
   exactP: number;
   /** Share of pairs whose two orders agreed. Round 1's was structurally 0. */
   bothOrdersConsistencyRate: number;
+  /**
+   * Among pairs where BOTH orders named an arm, the share that named the SAME
+   * arm. `bothOrdersConsistencyRate` conflates a tie with a contradiction, so
+   * it cannot answer "does this judge contradict itself"; this can. Chance is
+   * 0.50 and the declared effect implies 0.58.
+   */
+  decidedAgreementRate: number | null;
+  /** Pairs where both orders named an arm and they named DIFFERENT ones. */
+  contradictedPairs: number;
   tieRate: number;
   meanConfidence: number;
   byCriterion: Record<TraceCriterion, CriterionTally>;
@@ -128,14 +141,36 @@ export interface JudgeAggregate {
    */
   design: JudgeGateDesign;
   /**
+   * THE TEST THAT DECIDES (S1): over SEEDS, not over pairs. One seed × two arms
+   * is one cluster, and a seed contributes its decisive-pair win fraction.
+   */
+  cluster: ClusterGate;
+  /**
+   * The between-run correlation of the judge's outcomes, estimated from this
+   * run's own seeds. Null when too few seeds had two decisive pairs — which is
+   * the usual case and the reason the estimation pilot exists.
+   */
+  betweenRunIcc: { rho: number; seeds: number; interval: Interval } | null;
+  /**
    * Was this aggregate computed under the pre-registered rule, untouched? False
    * on the exploratory path, and then `usableForVerdict` is false too.
    */
   preRegistered: boolean;
   /** Why this aggregate is exploratory, when it is. Null on the verdict path. */
   exploratoryReason: string | null;
+  /**
+   * WAS THE KEY STILL SEALED WHEN THIS AGGREGATE WAS TAKEN (S4)? Read at the
+   * top of phase 1, before a single judgement. False means somebody had already
+   * opened the arms, so nothing below is a blind result — and an unseal-then-
+   * rejudge is no longer indistinguishable from a blind pass.
+   */
+  blind: boolean;
+  /** The key's unseal count at the moment judging began. 0 on a blind pass. */
+  unsealCountAtEntry: number;
   /** What the run attested about itself, or null when nothing was attested. */
   integrity: RunAttestation | null;
+  /** Whether that attestation actually belongs to this run. */
+  attestation: { ok: boolean; reason: string | null };
   /** False when the judge is position-biased, indecisive, or the design cannot decide. */
   usableForVerdict: boolean;
   /** The caveat in words, always present. */
@@ -186,9 +221,17 @@ export async function judgeTraces(
   judge: ITraceJudge,
   options: AggregateOptions = {},
 ): Promise<JudgeAggregate> {
+  // THE SEAL, READ BEFORE ANYTHING ELSE (S4). An aggregate taken over a key
+  // somebody has already opened is not a blind result, and until round 5 there
+  // was no field that said so: `unsealCount` was not published and the facade
+  // printed `"sealed": true` after two unseals.
+  const unsealCountAtEntry = key.unsealCount;
+  const blind = unsealCountAtEntry === 0;
+
   // ── PHASE 1 — every judgement, with the key untouched ──────────────────────
   interface Taken {
     pairId: string;
+    cluster: string;
     leftId: string;
     rightId: string;
     forward: TraceJudgement;
@@ -197,13 +240,24 @@ export async function judgeTraces(
   const taken: Taken[] = [];
   for (const pair of pairs) {
     const forward = await judge.compare(pair);
-    const reversed = await judge.compare({ pairId: `${pair.pairId}r`, left: pair.right, right: pair.left });
-    taken.push({ pairId: pair.pairId, leftId: pair.left.traceId, rightId: pair.right.traceId, forward, reversed });
+    const reversed = await judge.compare({
+      pairId: `${pair.pairId}r`,
+      cluster: pair.cluster,
+      left: pair.right,
+      right: pair.left,
+    });
+    taken.push({
+      pairId: pair.pairId,
+      cluster: pair.cluster,
+      leftId: pair.left.traceId,
+      rightId: pair.right.traceId,
+      forward,
+      reversed,
+    });
   }
 
   // ── PHASE 2 — now, and only now, look at which arm was which ───────────────
   const arms = options.arms ?? (['A', 'B'] as [ArmId, ArmId]);
-  const armOf = new Map(key.unseal().map((k) => [k.traceId, k.arm]));
   const z = options.z ?? 1.96;
   // THE VERDICT PATH READS THE CONSTANT. There is no parameter that moves it;
   // `exploratory` builds a different rule and forfeits the verdict for it.
@@ -211,6 +265,9 @@ export async function judgeTraces(
     ? { ...JUDGE_GATE, ...options.exploratory.gate }
     : JUDGE_GATE;
   const alpha = gate.alpha;
+  // CHECKED BEFORE THE KEY IS OPENED: verification needs a MAC, not the arms.
+  const attestationCheck = verifyAttestation(options.integrity, key, hashJudgeGate(gate));
+  const armOf = new Map(key.unseal().map((k) => [k.traceId, k.arm]));
 
   const wins = { A: 0, B: 0, ties: 0, inconsistent: 0 };
   const byCriterion = blankTallies();
@@ -258,10 +315,14 @@ export async function judgeTraces(
 
     judged.push({
       pairId: row.pairId,
+      cluster: row.cluster,
       forwardOrder: [leftArm, rightArm],
       forward: row.forward,
       reversed: row.reversed,
       preferred,
+      // Both orders named an arm and they named different ones — a genuine
+      // self-contradiction, as opposed to one order declining to choose.
+      contradicted: forwardArm !== null && reversedArm !== null && forwardArm !== reversedArm,
       consistent: agreed,
     });
   }
@@ -269,11 +330,22 @@ export async function judgeTraces(
   const counted = judged.length;
   const showings = counted * 2;
   const decisivePairs = wins.A + wins.B;
+  const contradictedPairs = judged.filter((p) => p.contradicted).length;
+  const decided = decisivePairs + contradictedPairs;
+  const decidedAgreementRate = decided > 0 ? round(decisivePairs / decided) : null;
   const decisivePositions = position.leftWins + position.rightWins;
   const leftRate = decisivePositions > 0 ? round(position.leftWins / decisivePositions) : 0;
   const positionWilson = wilsonInterval(position.leftWins, decisivePositions, z);
   const biased = decisivePositions > 0 && (positionWilson.low > 0.5 || positionWilson.high < 0.5);
-  const design = judgeGateDesign(counted, decisivePairs, gate);
+  // THE TIE RATE THE RUN HAD, per SHOWING — the unit the power model is in.
+  const observedTieRate = showings > 0 ? round(position.ties / showings) : 0;
+  const clusters = clustersOf(judged, arms[0], arms[1]);
+  const cluster = clusterJudgeGate(clusters, gate);
+  const design = judgeGateDesign(counted, decisivePairs, gate, {
+    tieRate: observedTieRate,
+    decidedAgreementRate,
+    decisiveClusters: cluster.decisiveClusters,
+  });
   const exactP = exactBinomialTwoSided(wins.A, decisivePairs);
   const consistencyRate = counted > 0 ? round(consistentPairs / counted) : 0;
 
@@ -281,6 +353,13 @@ export async function judgeTraces(
   const attestation = options.integrity ?? null;
   const reasons: string[] = [];
   if (counted === 0) reasons.push('no pairs were judged');
+  // S4: judging after an unseal is not blind judging, whatever the numbers say.
+  if (!blind) {
+    reasons.push(
+      `the key had already been unsealed ${unsealCountAtEntry} time(s) when judging began, so this is NOT a blind ` +
+        'result: an unseal-then-rejudge must never be indistinguishable from a blind pass',
+    );
+  }
   // R2: an overridden rule can never be a verdict, whatever it prints.
   if (exploratory) {
     reasons.push(
@@ -291,13 +370,10 @@ export async function judgeTraces(
         'a rule chosen after the numbers are in is not a pre-registration',
     );
   }
-  // R5: detection that changes nothing is not detection.
-  if (!attestation) {
-    reasons.push(
-      'no run integrity was attested: an aggregate that has not been told whether the arms actually ran their own ' +
-        'minds is not a verdict about the arms',
-    );
-  } else if (attestation.degraded) {
+  // R5 + S6: detection that changes nothing is not detection, and a claim that
+  // cannot be checked is not an attestation.
+  if (!attestationCheck.ok) reasons.push(attestationCheck.reason ?? 'the run attestation was refused');
+  else if (attestation?.degraded === true) {
     reasons.push(
       `the run is DEGRADED, so these traces are not the arms' own behaviour — ${attestation.reasons.join('; ')}`,
     );
@@ -311,6 +387,16 @@ export async function judgeTraces(
         'This block is EXPLORATORY: "not significant" here is an absence of measurement, not a null result',
     );
   }
+  // S2: THE POWER OF THE BLOCK THAT RAN, not the power it was sized for.
+  if (counted > 0 && design.poweredAsRun !== null && !design.adequatelyPoweredAsRun) {
+    reasons.push(
+      `UNDERPOWERED AS RUN: at the OBSERVED tie rate of ${design.observedTieRate} this block's power is ` +
+        `${design.poweredAsRun}, not the ${design.power} it was sized for at an ASSUMED tie rate of ` +
+        `${design.assumedTieRate}. "No difference" here would be an absence of measurement`,
+    );
+  }
+  // S1: the unit of analysis is the run. Every cluster-level refusal, verbatim.
+  for (const reason of cluster.reasons) reasons.push(reason);
   // The decisive fraction comes FIRST: an indecisive judge is a finding about
   // the judge, and quoting a win rate over four pairs out of thirty would be
   // reporting the tail of a distribution as its middle.
@@ -341,6 +427,8 @@ export async function judgeTraces(
     wilson: wilsonInterval(wins.A, decisivePairs, z),
     exactP,
     bothOrdersConsistencyRate: consistencyRate,
+    decidedAgreementRate,
+    contradictedPairs,
     tieRate: counted > 0 ? round(wins.ties / counted) : 0,
     meanConfidence: showings > 0 ? round(confidence / showings) : 0,
     byCriterion: finish(byCriterion),
@@ -356,16 +444,24 @@ export async function judgeTraces(
       undetermined: decisivePositions === 0,
     },
     design,
+    cluster,
+    betweenRunIcc: betweenRunIcc(clusters),
     preRegistered: exploratory === null && design.preRegistered,
     exploratoryReason: exploratory?.reason ?? null,
+    blind,
+    unsealCountAtEntry,
     integrity: attestation,
+    attestation: attestationCheck,
     usableForVerdict: reasons.length === 0,
     note:
       reasons.length === 0
-        ? `${wins.A} of ${decisivePairs} decisive pairs (${counted} judged); exact two-sided p = ${exactP}; the rule needed ` +
-          `${design.minimumWins}; orders agreed on ${consistencyRate}. Pre-registered rule ${design.ruleHash.slice(0, 12)}: ` +
-          `power ${design.power} at a per-showing win rate of ${design.declaredEffect} under an assumed tie rate of ` +
-          `${design.assumedTieRate}, and USABLE at ${design.typeIError} under a judge that cannot tell them apart.`
+        ? `${cluster.decisiveClusters} SEEDS decisive (${wins.A} of ${decisivePairs} decisive pairs over ${counted} judged); ` +
+          `sign-flip permutation over seeds p = ${formatP(cluster.permutation?.p ?? 1)}, sign test p = ` +
+          `${formatP(cluster.sign?.p ?? 1)}, pooled exact two-sided p = ${formatP(exactP)}. Orders agreed on ` +
+          `${consistencyRate} of pairs and on ${decidedAgreementRate ?? 0} of the pairs both orders decided. ` +
+          `Pre-registered rule ${design.ruleHash.slice(0, 12)} (assumptions ${design.assumptionStatus}): power ` +
+          `${design.poweredAsRun ?? design.power} AT THE OBSERVED tie rate of ${design.observedTieRate}, against a ` +
+          `target of ${design.targetPower}.`
         : `NOT USABLE FOR A VERDICT — ${reasons.join('; ')}.`,
     judged,
   };
@@ -377,9 +473,20 @@ function sideToArm(side: Side, leftArm: ArmId, rightArm: ArmId): ArmId | null {
   return null;
 }
 
-/** Swap which arm every handle belongs to — the label-swap control. */
+/**
+ * THE LABEL-SWAP CONTROL — and NOT an index export any more (S4).
+ *
+ * `swapArmLabels(key)` opened the blinding in one import: the derived key had
+ * its own fresh seal, so `.unseal()` returned all twelve arms and `.disclose()`
+ * returned the run secret while the original went on reporting
+ * `unsealed === false`. It survives because running the whole aggregate with
+ * the arms swapped and watching the sign flip is a real control — but the
+ * derived key now SHARES the parent's seal (opening it opens the parent, and
+ * `judgeTraces` then refuses on `blind: false`), it can never disclose, and
+ * nothing in `src/index.ts` hands it to a caller.
+ */
 export function swapArmLabels(key: SealedTraceKey, arms: [ArmId, ArmId] = ['A', 'B']): SealedTraceKey {
-  return key.relabelled((arm) => (arm === arms[0] ? arms[1] : arm === arms[1] ? arms[0] : arm));
+  return relabelArms(key, (arm) => (arm === arms[0] ? arms[1] : arm === arms[1] ? arms[0] : arm));
 }
 
 function blankTallies(): Record<TraceCriterion, CriterionTally> {

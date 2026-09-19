@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actionVocabulary, buildThinkPrompt, foragerAdapter, retryPrompt } from '../src/index.js';
+import { actionVocabulary, buildThinkPrompt, foragerAdapter, foragerWorld, retryPrompt } from '../src/index.js';
 import type { IMindBackend, KnowledgeRecord, MemoryRecord, ThinkInput, ThinkPrompt } from '../src/index.js';
 import {
   ArmRouterBackend,
@@ -50,7 +50,7 @@ const SACRED = { x: 9177, y: 7331 };
 const TRAGEDY = { x: 4242, y: 5353 };
 
 /** A free, scripted transport — what `arms.ts` would have opened from a mock spec. */
-const mockTransport = (): IMindBackend => new FaithfulMockBackend(foragerAdapter);
+const mockTransport = (): IMindBackend => new FaithfulMockBackend(foragerWorld.edges);
 
 const TRAITS = { curiosity: 60, aggression: 10, compassion: 50, ambition: 40, loyalty: 55, riskTolerance: 30 };
 
@@ -538,7 +538,7 @@ describe('W1-E · per-being state and arm routing', () => {
   });
 
   it('a mock mind answers a think with JSON and an interview with words', async () => {
-    const mock = new FaithfulMockBackend(foragerAdapter);
+    const mock = new FaithfulMockBackend(foragerWorld.edges);
     const input = situation();
     const think = await mock.complete(buildThinkPrompt(input, foragerAdapter), input);
     expect(() => JSON.parse(think)).not.toThrow();

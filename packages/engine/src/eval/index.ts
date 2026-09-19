@@ -86,7 +86,14 @@ export type { TracePair, PairPlacement, PairingResult, PairingManifest } from '.
 // ── Judging, and the statistics that decide what a judgement is worth ────────
 export { MockTraceJudge, LlmTraceJudge, TRACE_CRITERIA } from './judge.js';
 export type { ITraceJudge, TraceJudgement, TraceCriterion, Side, MockTraceJudgeOptions } from './judge.js';
-export { judgeTraces, swapArmLabels } from './aggregate.js';
+// `swapArmLabels` is NOT exported (S4). It maps handles to arms in one import,
+// and the reviewer opened the whole blinding with it: `swapArmLabels(key)`
+// returned a key with its own fresh seal, so `.unseal()` gave up all twelve
+// arms and `.disclose()` gave up the run secret while the original went on
+// reporting `unsealed === false`. It lives on in `aggregate.ts` as the
+// label-swap control, over a DERIVED key that shares the parent's seal and can
+// never disclose, and the tests that need it import it from there.
+export { judgeTraces } from './aggregate.js';
 export type {
   JudgeAggregate,
   PairOutcome,
@@ -94,15 +101,39 @@ export type {
   PositionCheck,
   AggregateOptions,
   ExploratoryGate,
-  RunAttestation,
 } from './aggregate.js';
+
+// ── The run's own attestation, bound to the run ──────────────────────────────
+export { ATTESTATION_THRESHOLDS, attestRun, verifyAttestation, thinkOutcomeBreaches, watchThinkOutcomes, reportOf } from './attest.js';
+export type { RunAttestation, AttestationBinding, AttestationCheck, AttestationClaim, ThinkOutcomeReport } from './attest.js';
+
+// ── The unit of analysis: the run, not the pair ──────────────────────────────
+export { CLUSTER_RHO_GRID, betweenRunIcc, clusterJudgeGate, clustersOf, sweepP } from './cluster.js';
+export type { ClusterGate, SeedCluster } from './cluster.js';
+
+// ── The pilot: estimation, never confirmation ────────────────────────────────
+export { PILOT_RECIPE, allowanceFor, designConfirmatory, dryRunPilot, estimatePilot, runPilotEstimation } from './pilot.js';
+export type {
+  ConfirmatoryDesign,
+  ConfirmatoryTargets,
+  Estimate,
+  PilotArtefact,
+  PilotCallBlock,
+  PilotCallTable,
+  PilotEstimates,
+  PilotRecipe,
+} from './pilot.js';
+
 export {
   wilsonInterval,
   exactBinomialTwoSided,
+  formatP,
   pairedBootstrap,
   signFlipPermutation,
+  signTest,
   minimumPairedSeeds,
   MIN_PAIRED_SEEDS,
+  DECLARED_CONTRAST_FAMILY,
   minimumDetectableEffect,
   minimumDetectableWins,
   pairsForSweep,
@@ -123,11 +154,13 @@ export type {
   PairedSample,
   PairedResult,
   PermutationTest,
+  SignTest,
   BootstrapOptions,
   DesignPower,
   JudgeDesignPower,
   JudgeGateRule,
   JudgeGateConditions,
+  JudgeGateObserved,
   JudgeGatePower,
   JudgeGateDesign,
   MultipleComparisonNote,

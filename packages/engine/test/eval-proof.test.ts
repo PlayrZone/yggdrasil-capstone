@@ -3,14 +3,19 @@ import {
   FORAGER_PROBES,
   MockTraceJudge,
   foragerAdapter,
+  foragerWorld,
   judgeTraces,
   pairTraces,
   runAb,
   runIgnoranceProbe,
   splitProbes,
-  swapArmLabels,
 } from '../src/index.js';
 import type { AbVerdict, JudgeAggregate } from '../src/index.js';
+// S4: swapArmLabels is no longer exported from the package index — it maps
+// handles to arms, and the reviewer opened the whole blinding with one import.
+// The label-swap CONTROL still exists, one module deep, over a derived key that
+// shares the parent's seal and can never disclose.
+import { swapArmLabels } from '../src/eval/aggregate.js';
 
 /**
  * PROVING THE INSTRUMENT ON MOCKS.

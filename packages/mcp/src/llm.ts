@@ -1,4 +1,4 @@
-import { FireworksMindBackend, MockMindBackend, foragerAdapter } from '@yggdrasil/engine';
+import { FireworksMindBackend, MockMindBackend, encodeOutput, foragerAdapter, foragerWorld } from '@yggdrasil/engine';
 import type { IMindBackend } from '@yggdrasil/engine';
 
 /**
@@ -47,7 +47,18 @@ export function evalBackend(calls: number, allowPaid: boolean | undefined): Eval
   const paid = makeLlmBackend();
   // The mock answers with a reflex policy, and W1-B2 makes it say whose: this
   // lab runs the forager continent.
-  if (!paid) return { backend: new MockMindBackend({ world: foragerAdapter }), paid: false };
+  // W1-B4 r4: a mock plays the model, so it writes the model's WIRE format, and
+  // only the codec the world handed its edges can cross between an opaque place
+  // and the fields a model sends. It is handed in; nothing looks one up.
+  if (!paid) {
+    return {
+      backend: new MockMindBackend({
+        world: foragerAdapter,
+        writeReply: (output) => JSON.stringify(encodeOutput(foragerWorld.edges.codec, output)),
+      }),
+      paid: false,
+    };
+  }
   if (!allowPaid) {
     return {
       backend: null,

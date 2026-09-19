@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { lcg, pairLevelVerdict, simulate, stochasticJudge } from './eval-simulation.js';
+import type { Simulation } from './eval-simulation.js';
 import {
   JUDGE_GATE,
   JUDGE_GATE_HASH,
@@ -51,85 +53,18 @@ import type {
  * reproductions are below, and both must now end refused.
  */
 
-const CLEAN: RunAttestation = { degraded: false, reasons: [] };
-
-/** Deterministic, seeded, and NOT the engine's own PRNG — this is an independent check. */
-function lcg(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return state / 4294967296;
-  };
-}
-
-function simulationPairs(count: number): {
-  pairs: TracePair[];
-  key: ReturnType<typeof blindTraces>['key'];
-  armOf: Map<string, ArmId>;
-} {
-  const moment = {
-    t: 0,
-    day: 1,
-    night: false,
-    season: 'spring',
-    felt: [{ drive: 'hunger', pressure: 40 }],
-    perceived: [{ kind: 'berryBush', count: 1 }],
-    others: 0,
-    carried: [{ kind: 'berry', count: 1 }],
-    thought: 'the same words in every trace',
-    did: ['Wait()'],
-    said: [],
-    happened: null,
-  };
-  const lives: RawBeingTrace[] = [];
-  for (const arm of ['A', 'B'] as const) {
-    for (let i = 0; i < count; i++) lives.push({ runId: `sim-${arm}`, arm, beingId: i + 1, moments: [{ ...moment }] });
-  }
-  const blinded = blindTraces(lives, foragerAdapter, { seed: 'gate-sim', secret: 'gate-sim-secret', minMoments: 1 });
-  const armOf = new Map(blinded.key.unseal().map((k) => [k.traceId, k.arm]));
-  const byArm = (arm: ArmId): BlindTrace[] => blinded.traces.filter((t) => armOf.get(t.traceId) === arm);
-  const a = byArm('A');
-  const b = byArm('B');
-  const pairs = a.map((left, at) => ({ pairId: `sim-${at}`, left, right: b[at]! }));
-  return { pairs, key: blinded.key, armOf };
-}
-
 /**
- * A judge with exactly the model `judgeGatePower` enumerates: it ties on a
- * share `q` of showings, answers by POSITION on a share `beta = 2|p − ½|` of
- * the rest, and otherwise prefers arm A with probability `w`.
+ * THE HARNESS MOVED (S1/S4). Two things the local one could not do any more:
+ * it laid every pair out in ONE undeclared run, and it called
+ * `blinded.key.unseal()` to learn the arms before judging — which, under the
+ * round-5 rule, makes every simulated run a non-blind one. `eval-simulation.ts`
+ * builds the key from entries it already knows, in declared CLUSTERS, and mints
+ * a fresh key per replication.
  */
-function stochasticJudge(
-  w: number,
-  q: number,
-  p: number,
-  armOf: Map<string, ArmId>,
-  rng: () => number,
-): { id: string; compare: (pair: TracePair) => Promise<TraceJudgement> } {
-  const beta = Math.min(1, 2 * Math.abs(p - 0.5));
-  const favouredSide: Side = p >= 0.5 ? 'left' : 'right';
-  const judgement = (preference: Side): TraceJudgement => ({
-    preference,
-    confidence: preference === 'tie' ? 0 : 1,
-    reasons: ['simulated'],
-    byCriterion: {
-      pursues: preference,
-      consistent: preference,
-      reactive: preference,
-      social: preference,
-      ignorance: preference,
-    },
-  });
-  return {
-    id: `stochastic-w${w}-q${q}-p${p}`,
-    compare: (pair: TracePair): Promise<TraceJudgement> => {
-      if (rng() < q) return Promise.resolve(judgement('tie'));
-      if (rng() < beta) return Promise.resolve(judgement(favouredSide));
-      const leftIsA = armOf.get(pair.left.traceId) === 'A';
-      const picksA = rng() < w;
-      return Promise.resolve(judgement(picksA === leftIsA ? 'left' : 'right'));
-    },
-  };
+function simulationPairs(count: number): Simulation {
+  // One seed, as round 4 bought it — these tests are about the PAIR-LEVEL rule,
+  // which is what `judgeGatePower` enumerates. The cluster rule has its own file.
+  return simulate(1, count, JUDGE_GATE, `gate-${count}`);
 }
 
 async function measureGate(
@@ -140,16 +75,22 @@ async function measureGate(
   runs: number,
   seed: number,
 ): Promise<{ usable: number; forA: number }> {
-  const { pairs, key, armOf } = simulationPairs(pairCount);
+  const sim = simulationPairs(pairCount);
   const rng = lcg(seed);
   let usable = 0;
   let forA = 0;
   for (let run = 0; run < runs; run++) {
-    const aggregate = await judgeTraces(pairs, key, stochasticJudge(w, q, p, armOf, rng), {
+    // A FRESH key per replication: `judgeTraces` unseals, and a re-judged key
+    // is stamped `blind: false` and refused (S4).
+    const replication = sim.fresh();
+    const aggregate = await judgeTraces(sim.pairs, replication.key, stochasticJudge(w, q, p, sim.armOf, rng), {
       arms: ['A', 'B'],
-      integrity: CLEAN,
+      integrity: replication.attestation,
     });
-    if (aggregate.usableForVerdict) {
+    // THE PAIR-LEVEL RULE, which is what `judgeGatePower` enumerates — the real
+    // gate additionally applies the CLUSTER rule, and pinning the model against
+    // `usableForVerdict` would be pinning it against a different rule.
+    if (pairLevelVerdict(aggregate)) {
       usable++;
       if (aggregate.design.minimumWins !== null && aggregate.wins.A >= aggregate.design.minimumWins) forA++;
     }
@@ -214,25 +155,28 @@ describe('W1-E · R1 · the gate and its power model are one thing', () => {
     expect(judgeGatePower(needed!, JUDGE_GATE).power).toBeGreaterThanOrEqual(0.8);
     expect(judgeGatePower(needed! - 1, JUDGE_GATE).power).toBeLessThan(0.8);
 
-    // The pilot arithmetic, computed rather than quoted: two arms only, because
-    // three do not fit. 8 thinks per being per arm, two orders per pair, the
-    // 230-call calibration block, and 10% retry head-room.
+    /**
+     * ROUND 4's ARITHMETIC, KEPT AS THE THING IT GOT WRONG (S7).
+     *
+     * This block used to assert that the recipe fits, from `pairs × 8 × 2`. The
+     * reviewer counted **918** calls through `runAb` where it said 1,024,
+     * because thinks per being are a function of TICKS and the trait cadence
+     * and nothing here had measured them. The real table is produced by
+     * `dryRunPilot()` and pinned against the README in `eval-pilot.test.ts`;
+     * what survives here is the demonstration that the assumed number was never
+     * the measured one.
+     */
     const pairs = needed!;
-    const traces = pairs * 8 * 2;
-    const judging = pairs * 2;
-    const calibration = 184 + 46;
-    const subtotal = traces + judging + calibration;
-    const retries = Math.ceil(subtotal * 0.1);
-    const total = subtotal + retries;
+    const assumed = pairs * 8 * 2;
     // eslint-disable-next-line no-console
     console.log(
-      `\npilot: ${pairs} pairs → traces ${traces} + judging ${judging} + calibration ${calibration} = ${subtotal}, ` +
-        `retry head-room ${retries}, TOTAL ${total}, reserve ${2000 - total}`,
+      `\nS7 · round 4 ASSUMED ${assumed} calls for block (b) from ${pairs} pairs × 8 thinks × 2 arms; the reviewer ` +
+        'COUNTED 918 through runAb. The measured table now lives in dryRunPilot() and eval-pilot.test.ts.',
     );
-    expect(total).toBeLessThanOrEqual(2000);
-    expect(2000 - total).toBeGreaterThanOrEqual(300);
-    // THREE arms does not fit, which is why the recipe drops A− rather than power.
-    expect(Math.ceil((pairs * 8 * 3 + pairs * 4 + calibration) * 1.1)).toBeGreaterThan(2000);
+    expect(assumed).toBe(1024);
+    // …and a pair-level block of 64 is no longer what the pilot buys at all:
+    // the unit of analysis is the run, so the budget goes on SEEDS.
+    expect(assumed).not.toBe(918);
   });
 
   it('matches a 2,000-run simulation through the REAL gate at every tie rate and both position rates', async () => {
@@ -298,7 +242,9 @@ describe('W1-E · R1 · the gate and its power model are one thing', () => {
     // 40 pairs is round 3's block. Even with a judge that prefers arm A on
     // every single showing, it cannot print a verdict, because 40 pairs does
     // not reach 0.80 power under the pre-registration.
-    const { pairs, key, armOf } = simulationPairs(40);
+    const sim = simulationPairs(40);
+    const { pairs, armOf } = sim;
+    const { key, attestation: CLEAN } = sim.fresh();
     const decisive = stochasticJudge(1, 0, 0.5, armOf, lcg(1));
     const aggregate = await judgeTraces(pairs, key, decisive, { arms: ['A', 'B'], integrity: CLEAN });
     expect(aggregate.wins.A).toBe(40);
@@ -310,15 +256,29 @@ describe('W1-E · R1 · the gate and its power model are one thing', () => {
     expect(aggregate.note).toMatch(/absence of measurement/);
   }, 120_000);
 
-  it('does print a verdict at the size the design asks for', async () => {
-    const { pairs, key, armOf } = simulationPairs(64);
+  it('satisfies the PAIR-level rule at 64 — and still refuses, because 64 pairs is one run (S1)', async () => {
+    /**
+     * Round 4's version of this test asserted `usableForVerdict: true` here,
+     * and that assertion is the whole of S1: these 64 pairs come from ONE
+     * seed, both arms of which share a world, so they are one observation
+     * about that run rather than 64 about the arms. The PAIR-level rule — the
+     * one `judgeGatePower` enumerates — is satisfied, and it is not enough.
+     * The positive case lives in `eval-cluster.test.ts`, over eight seeds.
+     */
+    const sim = simulationPairs(64);
+    const { pairs, armOf } = sim;
+    const { key, attestation: CLEAN } = sim.fresh();
     const decisive = stochasticJudge(1, 0, 0.5, armOf, lcg(2));
     const aggregate = await judgeTraces(pairs, key, decisive, { arms: ['A', 'B'], integrity: CLEAN });
     expect(aggregate.design.adequatelyPowered).toBe(true);
-    expect(aggregate.design.role).toBe('confirmatory');
+    expect(aggregate.design.adequatelyPoweredAsRun).toBe(true);
+    expect(pairLevelVerdict(aggregate)).toBe(true);
     expect(aggregate.preRegistered).toBe(true);
-    expect(aggregate.usableForVerdict).toBe(true);
-    expect(aggregate.note).toMatch(/Pre-registered rule/);
+    // …and the run-level rule refuses it.
+    expect(aggregate.cluster.decisiveClusters).toBe(1);
+    expect(aggregate.design.role).toBe('underpowered-as-run');
+    expect(aggregate.usableForVerdict).toBe(false);
+    expect(aggregate.note).toMatch(/One seed is n = 1/);
   }, 120_000);
 });
 
@@ -378,7 +338,9 @@ describe('W1-E · R2 · the pre-registration is a control, not a naming conventi
   });
 
   it("refuses the reviewer's 21-of-40 repro on the verdict path", async () => {
-    const { pairs, key, armOf } = simulationPairs(40);
+    const sim = simulationPairs(40);
+    const { pairs, armOf } = sim;
+    const { key, attestation: CLEAN } = sim.fresh();
     const aggregate = await judgeTraces(pairs, key, riggedJudge(armOf, 21), { arms: ['A', 'B'], integrity: CLEAN });
     expect(aggregate.decisivePairs).toBe(40);
     expect(aggregate.wins.A).toBe(21);
@@ -389,7 +351,9 @@ describe('W1-E · R2 · the pre-registration is a control, not a naming conventi
   }, 120_000);
 
   it('ignores a gate smuggled in beside the pre-registered one', async () => {
-    const { pairs, key, armOf } = simulationPairs(40);
+    const sim = simulationPairs(40);
+    const { pairs, armOf } = sim;
+    const { key, attestation: CLEAN } = sim.fresh();
     // The round-3 call, verbatim. `AggregateOptions` no longer has a `gate`
     // field at all, so this is what an old caller (or an agent copying an old
     // example) would send; it must change nothing.
@@ -408,7 +372,9 @@ describe('W1-E · R2 · the pre-registration is a control, not a naming conventi
   }, 120_000);
 
   it('lets an explicit exploratory path move a value, and stamps every one of them', async () => {
-    const { pairs, key, armOf } = simulationPairs(40);
+    const sim = simulationPairs(40);
+    const { pairs, armOf } = sim;
+    const { key, attestation: CLEAN } = sim.fresh();
     const aggregate = await judgeTraces(pairs, key, riggedJudge(armOf, 21), {
       arms: ['A', 'B'],
       integrity: CLEAN,

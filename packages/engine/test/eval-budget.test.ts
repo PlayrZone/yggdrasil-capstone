@@ -9,6 +9,7 @@ import {
   PaidCallRefused,
   RunHalt,
   foragerAdapter,
+  foragerWorld,
   openBackend,
   openLeakJudge,
   openTraceJudge,
@@ -154,7 +155,7 @@ describe('W1-E · the cap belongs to the STORE, not to an object in this process
     const budget = CallBudget.open(store, spec('b', 2));
     const exploding = (): Promise<Response> => Promise.reject(new Error('transport died'));
     const halt = new RunHalt();
-    const guarded = openBackend(paidSpec(exploding as unknown as typeof fetch), { world, budget, halt });
+    const guarded = openBackend(paidSpec(exploding as unknown as typeof fetch), { world, edges: foragerWorld.edges, budget, halt });
     await expect(guarded.complete(EMPTY_PROMPT, EMPTY_INPUT)).rejects.toThrow('transport died');
     expect(budget.spent).toBe(1);
     expect(store.read('b')?.spent).toBe(1);
@@ -189,18 +190,18 @@ describe('W1-E · the cap belongs to the STORE, not to an object in this process
 describe('W1-E · a paid client cannot exist at the API boundary', () => {
   it('refuses every paid spec that brought no budget', () => {
     const { fetch: impl } = fakeFireworks();
-    expect(() => openBackend({ kind: 'fireworks' }, { world })).toThrow(PaidCallRefused);
-    expect(() => openBackend(paidSpec(impl), { world })).toThrow(PaidCallRefused);
+    expect(() => openBackend({ kind: 'fireworks' }, { world, edges: foragerWorld.edges })).toThrow(PaidCallRefused);
+    expect(() => openBackend(paidSpec(impl), { world, edges: foragerWorld.edges })).toThrow(PaidCallRefused);
     // …and a fireworks spec WITH a budget still needs a key, which the engine
     // never reads for itself.
     const budget = CallBudget.open(new MemoryBudgetStore(), spec('k', 5));
-    expect(() => openBackend({ kind: 'fireworks' }, { world, budget })).toThrow(/no key/);
+    expect(() => openBackend({ kind: 'fireworks' }, { world, edges: foragerWorld.edges, budget })).toThrow(/no key/);
   });
 
   it('lets the free scripted minds through and never charges them', async () => {
     const store = new MemoryBudgetStore();
     const budget = CallBudget.open(store, spec('free', 5));
-    const mock = openBackend({ kind: 'mock', mind: 'faithful' }, { world, budget });
+    const mock = openBackend({ kind: 'mock', mind: 'faithful' }, { world, edges: foragerWorld.edges, budget });
     await mock.complete(EMPTY_PROMPT, EMPTY_INPUT);
     expect(budget.spent).toBe(0);
   });
@@ -209,7 +210,7 @@ describe('W1-E · a paid client cannot exist at the API boundary', () => {
     const store = new MemoryBudgetStore();
     const budget = CallBudget.open(store, spec('judge', 4));
     const { fetch: impl, calls } = fakeFireworks('{"verdict":"clean"}');
-    const judge = openLeakJudge({ kind: 'llm', backend: paidSpec(impl) }, { world, budget });
+    const judge = openLeakJudge({ kind: 'llm', backend: paidSpec(impl) }, { world, edges: foragerWorld.edges, budget });
     await judge.judge({
       domain: 'fire',
       temptation: 't',
@@ -225,8 +226,8 @@ describe('W1-E · a paid client cannot exist at the API boundary', () => {
 
   it('refuses a trace judge and an interviewee that brought no budget', () => {
     const { fetch: impl } = fakeFireworks();
-    expect(() => openTraceJudge({ kind: 'llm', backend: paidSpec(impl) }, { world })).toThrow(PaidCallRefused);
-    expect(() => yggdrasilInterviewee(openBackend(paidSpec(impl), { world }), world)).toThrow(PaidCallRefused);
+    expect(() => openTraceJudge({ kind: 'llm', backend: paidSpec(impl) }, { world, edges: foragerWorld.edges })).toThrow(PaidCallRefused);
+    expect(() => yggdrasilInterviewee(openBackend(paidSpec(impl), { world, edges: foragerWorld.edges }), world)).toThrow(PaidCallRefused);
   });
 
   it('refuses through the A/B entry point, not only at construction', async () => {
@@ -332,7 +333,7 @@ describe('W1-E · a run that runs out of money produces no verdict', () => {
     const store = new MemoryBudgetStore();
     const budget = CallBudget.open(store, spec('probe-tiny', 2));
     const { fetch: impl, calls } = fakeFireworks('I do not know.');
-    const interviewee = yggdrasilInterviewee(openBackend(paidSpec(impl), { world, budget }), world);
+    const interviewee = yggdrasilInterviewee(openBackend(paidSpec(impl), { world, edges: foragerWorld.edges, budget }), world);
     const input = await someThinkInput();
     await expect(runIgnoranceProbe([{ beingId: 1, input, interviewee }], { world, limit: 4 })).rejects.toThrow(
       BudgetExhaustedError,

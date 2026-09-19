@@ -7,7 +7,10 @@ import {
   blindTraces,
   buildTraces,
   computeArmMetrics,
+  JUDGE_GATE_HASH,
+  attestRun,
   foragerAdapter,
+  foragerWorld,
   integrityBreaches,
   judgeTraces,
   pairTraces,
@@ -97,7 +100,7 @@ describe('W1-E · R3(a) · everything standing in for a model writes the WIRE fo
   it('round-trips a place through the codec the way the parser reads it', () => {
     // The exact shape from the reviewer's measurement, both ways round.
     const mind = { goals: [], plan: [{ kind: 'MoveTo', place: foragerAdapter.space.unplaced }], utterances: [] };
-    const wire = encodeOutput(foragerAdapter, mind);
+    const wire = encodeOutput(foragerWorld.edges.codec, mind);
     const step = wire.plan[0] as Record<string, unknown>;
     expect('place' in step).toBe(false);
     for (const field of PLACE_FIELDS) expect(field in step).toBe(true);
@@ -141,8 +144,8 @@ describe('W1-E · R3(b) · the arms do something, and a meaningful share of it l
   }, 180_000);
 
   it('stays world-agnostic: the mocks name no world noun and read the adapter instead', () => {
-    const faithful = new FaithfulMockBackend(foragerAdapter);
-    const omniscient = new OmniscientMockBackend(foragerAdapter);
+    const faithful = new FaithfulMockBackend(foragerWorld.edges);
+    const omniscient = new OmniscientMockBackend(foragerWorld.edges);
     expect(faithful.modelId).toBe('mock/faithful');
     expect(omniscient.modelId).toBe('mock/omniscient');
     // `eval/mocks.ts` reaches the world only through core verbs and affordance
@@ -225,10 +228,16 @@ describe('W1-E · R5 · a degraded run can never be a verdict', () => {
   it('refuses a degraded run by name, including the silent reflex-fallback case', async () => {
     const result = await proofRun();
     const pairs = pairTraces(result.traces, result.key, 'r5').pairs;
-    const fellBack: RunAttestation = {
+    // S6: an attestation must be BOUND to the run it is about — a bare
+    // {degraded, reasons} is a claim about some run, and judgeTraces refuses
+    // it before it ever reaches the degraded branch.
+    const fellBack: RunAttestation = attestRun(result.key, {
       degraded: true,
       reasons: ["arm B fell back to the world's reflex policy on 60 of 100 thinks (0.6 > 0.05)"],
-    };
+      thinkOutcomes: {},
+      seeds: result.seeds,
+      ruleHash: JUDGE_GATE_HASH,
+    });
     const aggregate = await judgeTraces(pairs, result.key, new MockTraceJudge(), { integrity: fellBack });
     expect(aggregate.usableForVerdict).toBe(false);
     expect(aggregate.note).toMatch(/DEGRADED/);
@@ -244,7 +253,7 @@ class StringifyingMockBackend implements IMindBackend {
   private readonly inner: FaithfulMockBackend;
 
   constructor() {
-    this.inner = new FaithfulMockBackend(foragerAdapter);
+    this.inner = new FaithfulMockBackend(foragerWorld.edges);
   }
 
   async complete(prompt: ThinkPrompt, input: ThinkInput): Promise<string> {
@@ -312,7 +321,15 @@ describe('W1-E · R3 · the planted bug — the test that would have caught roun
       pairTraces(result.traces, result.key, 'planted').pairs,
       result.key,
       new MockTraceJudge(),
-      { integrity: { degraded: true, reasons: breaches } },
+      {
+        integrity: attestRun(result.key, {
+          degraded: true,
+          reasons: breaches,
+          thinkOutcomes: {},
+          seeds: result.seeds,
+          ruleHash: JUDGE_GATE_HASH,
+        }),
+      },
     );
     expect(aggregate.usableForVerdict).toBe(false);
     expect(aggregate.note).toMatch(/LOST ARGUMENTS/);

@@ -57,7 +57,19 @@ export function exactBinomialTwoSided(successes: number, n: number): number {
   const k = Math.min(successes, n - successes);
   let tail = 0;
   for (let i = 0; i <= k; i++) tail += binomialPmfHalf(i, n);
-  return Math.min(1, round(2 * tail, 1e6));
+  const p = Math.min(1, 2 * tail);
+  // A PUBLISHED p OF ZERO IS WRONG (S8). `round(…, 1e6)` turned 60 of 64 — a
+  // real p of about 1.2e-13 — into exactly 0, and the gate's own `note` printed
+  // "exact two-sided p = 0". Values the sixth decimal can carry are still
+  // rounded there, so every pinned number in the item is unchanged; anything
+  // smaller keeps its magnitude and is RENDERED by `formatP` as "< 1e-6".
+  return p >= 1e-6 ? round(p, 1e6) : p;
+}
+
+/** How a p-value is printed. Never "0": a two-sided exact p is never zero. */
+export function formatP(p: number): string {
+  if (p >= 1e-6) return String(round(p, 1e6));
+  return p > 0 ? '< 1e-6' : '< 1e-12';
 }
 
 function binomialPmfHalf(k: number, n: number): number {
@@ -135,8 +147,23 @@ export interface PairedResult {
    */
   permutation: PermutationTest | null;
   /**
-   * False when this many seeds could not clear alpha however extreme the data.
-   * At n = 5 the smallest attainable two-sided p is 2/2^5 = 0.0625.
+   * THE ASSUMPTION-LIGHT CHECK, beside it. The permutation test assumes sign
+   * symmetry and loses its level on right-skewed differences (0.112 at n = 6);
+   * the sign test assumes only that a difference is as likely to be positive as
+   * negative. A VERDICT NEEDS BOTH — `bothTestsPass`.
+   */
+  sign: SignTest | null;
+  /** Both the permutation test and the sign test cleared alpha, uncorrected. */
+  bothTestsPass: boolean;
+  /**
+   * The larger of the two p-values, Holm-corrected across the declared contrast
+   * family by `holmAcrossContrasts`. Null until that correction has been
+   * applied — a row that has not been corrected must not read as if it had.
+   */
+  familyAdjustedP: number | null;
+  /**
+   * False when this many seeds could not clear alpha however extreme the data,
+   * CORRECTED ACROSS THE DECLARED FAMILY: `MIN_PAIRED_SEEDS` = 8, not 6.
    */
   verdictEligible: boolean;
   /** How this row may be read. Exactly one metric per question is primary. */
@@ -173,17 +200,79 @@ export interface PermutationTest {
 }
 
 /**
- * The fewest paired SEEDS at which any verdict may be printed: the smallest n
- * whose floor p (2/2^n) clears alpha. Six at α = 0.05 — five seeds cannot
- * produce a significant result however clean the sweep, which is the same fact
- * `pairsForSweep` states for the judge.
+ * THE DECLARED CONTRAST FAMILY. Four pre-registered questions ship in
+ * `mcp/evalTools.ts#PRE_REGISTERED`, each with its own primary metric, and
+ * round 4 corrected NONE of them: `holmAdjusted` existed and `contrastsOf`
+ * never called it, while `multipleComparisonNote` counted only one contrast's
+ * exploratory rows. Four primary tests at α = 0.05 is a family, and the family
+ * size is what `MIN_PAIRED_SEEDS` has to be derived from.
  */
-export function minimumPairedSeeds(alpha = 0.05): number {
-  for (let n = 1; n <= 64; n++) if (2 / Math.pow(2, n) <= alpha) return n;
+export const DECLARED_CONTRAST_FAMILY = 4;
+
+/**
+ * The fewest paired SEEDS at which any verdict may be printed — HOLM-CORRECTED
+ * ACROSS THE DECLARED FAMILY (S8).
+ *
+ * The smallest attainable two-sided p at n seeds is 2/2ⁿ, for the sign-flip
+ * permutation test and for the sign test alike. Holm multiplies the smallest
+ * p in a family of `family` by `family`, so the question is the smallest n with
+ * `family · 2/2ⁿ ≤ alpha`: **6** for a family of one, and **8** for the four
+ * contrasts actually declared (4·2/2⁸ = 0.03125 ≤ 0.05, while 4·2/2⁷ = 0.0625
+ * is not). Round 4 shipped 6, which is right only for a family of one.
+ */
+export function minimumPairedSeeds(alpha = 0.05, family = 1): number {
+  for (let n = 1; n <= 64; n++) if ((family * 2) / Math.pow(2, n) <= alpha) return n;
   return 64;
 }
 
-export const MIN_PAIRED_SEEDS: number = minimumPairedSeeds(0.05);
+export const MIN_PAIRED_SEEDS: number = minimumPairedSeeds(0.05, DECLARED_CONTRAST_FAMILY);
+
+/**
+ * THE SIGN TEST, the assumption-light check that travels beside the permutation
+ * test (S3/S5).
+ *
+ * The sign-flip permutation test is exact under SIGN SYMMETRY, not under
+ * exchangeability of arms in general, and the reviewer measured its level on
+ * genuinely right-skewed differences — the shape `dietBreadth`, `deaths:*` and
+ * `distinctPlanShapes` take — at **0.112 at n = 6, 2.2× α**. Round 4's
+ * "holds its level on skewed differences" test symmetrised by construction
+ * (`rng() < 0.5 ? draw() : -draw()`), on which the test is exact tautologically.
+ *
+ * The sign test assumes only that each difference is equally likely to be
+ * positive or negative under the null, which survives any amount of skew. It is
+ * less powerful, and it is reported beside the permutation test rather than
+ * instead of it: a VERDICT needs BOTH.
+ */
+export interface SignTest {
+  n: number;
+  positives: number;
+  negatives: number;
+  /** Zeroes are dropped, as the sign test requires, and reported. */
+  ties: number;
+  p: number;
+  floorP: number;
+  couldReachAlpha: boolean;
+  alpha: number;
+}
+
+export function signTest(values: readonly number[], alpha = 0.05): SignTest | null {
+  if (values.length < 1) return null;
+  const positives = values.filter((v) => v > 0).length;
+  const negatives = values.filter((v) => v < 0).length;
+  const ties = values.length - positives - negatives;
+  const n = positives + negatives;
+  const floorP = n > 0 ? Math.min(1, 2 / Math.pow(2, n)) : 1;
+  return {
+    n,
+    positives,
+    negatives,
+    ties,
+    p: n > 0 ? exactBinomialTwoSided(positives, n) : 1,
+    floorP: round(floorP, 1e6),
+    couldReachAlpha: n > 0 && floorP <= alpha,
+    alpha,
+  };
+}
 
 export function signFlipPermutation(
   values: readonly number[],
@@ -247,6 +336,8 @@ export interface BootstrapOptions {
   level?: number;
   /** The permutation test's threshold, and the one `verdictEligible` is read at. Default 0.05. */
   alpha?: number;
+  /** How many primary tests this row belongs to. Default `DECLARED_CONTRAST_FAMILY`. */
+  family?: number;
 }
 
 /**
@@ -280,6 +371,9 @@ export function pairedBootstrap(
   const meanDelta = n > 0 ? round(mean(values)) : 0;
   const sd = n > 1 ? round(standardDeviation(values)) : 0;
   const alpha = options.alpha ?? 0.05;
+  const permutation = signFlipPermutation(values, { alpha, seed: options.seed ?? metric });
+  const sign = signTest(values, alpha);
+  const family = options.family ?? DECLARED_CONTRAST_FAMILY;
   const base: PairedResult = {
     metric,
     n,
@@ -290,8 +384,11 @@ export function pairedBootstrap(
     bootstrapCi: null,
     deltas,
     effectSize: n > 1 && sd > 0 ? round(meanDelta / sd) : null,
-    permutation: signFlipPermutation(values, { alpha, seed: options.seed ?? metric }),
-    verdictEligible: n >= minimumPairedSeeds(alpha),
+    permutation,
+    sign,
+    bothTestsPass: permutation !== null && sign !== null && permutation.p <= alpha && sign.p <= alpha,
+    familyAdjustedP: null,
+    verdictEligible: n >= minimumPairedSeeds(alpha, family),
     role: 'exploratory',
   };
   if (n < 2) return base;
@@ -504,6 +601,31 @@ export interface JudgeGateRule {
   assumedPositionLeftRate: number;
   /** The power the design must reach under those assumptions before a verdict is allowed. */
   targetPower: number;
+  /**
+   * PRE-REGISTERED (S2): among pairs where BOTH orders named an arm, the share
+   * that named the SAME arm must EXCEED this. 0.50 is a coin: a judge that
+   * contradicts itself on the same two traces at least as often as it agrees
+   * has measured nothing, whatever its win rate says. The declared effect
+   * implies w² + (1−w)² = **0.58**; a judge that cannot tell the arms apart
+   * implies exactly 0.50, and the reviewer's `usable=true` run sat below it.
+   */
+  minDecidedAgreementRate: number;
+  /**
+   * PRE-REGISTERED (S1): the fewest independent SEEDS that must contribute at
+   * least one decisive pair before any verdict. The pair is not the unit of
+   * analysis; the run is. `MIN_PAIRED_SEEDS` = 8, Holm-corrected across the
+   * four declared contrasts.
+   */
+  minDecisiveClusters: number;
+  /**
+   * FALSE UNTIL A PILOT MEASURES THEM (S2). `assumedTieRate` and
+   * `minDecisiveRate` are ASSUMPTIONS — the justification calls 0.30
+   * "deliberately pessimistic" and 0.15 is half of the decisive rate it
+   * implies, so the floor is derived from a number nothing has measured. Every
+   * design stamps `assumptionStatus` from this flag, and the estimation pilot
+   * exists to replace it.
+   */
+  assumptionsMeasured: boolean;
   /** Why those numbers, in words, so a reader is not left to guess. */
   justification: string;
 }
@@ -525,7 +647,19 @@ export const JUDGE_GATE: JudgeGateRule = deepFreeze({
   assumedTieRate: 0.3,
   assumedPositionLeftRate: 0.5,
   targetPower: 0.8,
+  minDecidedAgreementRate: 0.5,
+  minDecisiveClusters: MIN_PAIRED_SEEDS,
+  assumptionsMeasured: false,
   justification:
+    'THE UNIT IS THE RUN, NOT THE PAIR. 64 pairs bought from ONE seed are one cluster: in population mode each arm ' +
+    'is its own Experiment, so every pair of a seed carries that seed\'s run-level difference and the pairs are not ' +
+    'independent Bernoulli draws. Driven through the real gate under a run-exchangeable null, a per-run judge shift ' +
+    'of only 0.05 put type I at 1.4x alpha and a shift of 0.5 returned a VERDICT 93% of the time. So a seed ' +
+    'contributes its decisive-pair win fraction, the test is over SEEDS, and at least ' + String(MIN_PAIRED_SEEDS) +
+    ' seeds must be decisive. ' +
+    'DECIDED-AGREEMENT 0.50: among pairs where both orders committed to an arm, the declared effect implies they ' +
+    'agree 0.58 of the time and a judge that cannot tell them apart implies 0.50. Requiring MORE agreement than ' +
+    'contradiction costs some power, which is measured and printed rather than assumed away. ' +
     'TIE RATE 0.30 per showing: the traces are 8 moments of a being a third of a sim day old, the judge is asked ' +
     'which of two such records reads as more ALIVE, and "neither, really" is the honest answer to a large share of ' +
     'them. The reviewer measured break-even for the old 0.5 decisive floor at q = 0.072 and observed that an LLM ' +
@@ -540,11 +674,21 @@ export const JUDGE_GATE: JudgeGateRule = deepFreeze({
     'power at w = 0.70, and type I stays at or below alpha at every tie rate and every position rate.',
 });
 
-/** A stable digest of the rule, so an artefact can be bound to the text of it. */
+/**
+ * A stable digest of the rule, so an artefact can be bound to the text of it.
+ *
+ * VERSION 2: the cluster floor, the decided-agreement floor and the
+ * "have the assumptions been measured" flag are part of the rule, so they are
+ * part of its identity. A v1 hash on a v2 artefact is a mismatch, which is the
+ * point — round 4's `ruleHash` bound the RULE and nothing else, and an artefact
+ * post-processed to `usableForVerdict: true` still carried a valid one (S8).
+ * `judgeTraces` now binds the NUMBERS too, through the run attestation.
+ */
 export function hashJudgeGate(rule: JudgeGateRule): string {
   return sha256Hex(
-    `yggdrasil/judge-gate/v1:${rule.alpha}|${rule.minDecisiveRate}|${rule.declaredEffect}|` +
-      `${rule.assumedTieRate}|${rule.assumedPositionLeftRate}|${rule.targetPower}`,
+    `yggdrasil/judge-gate/v2:${rule.alpha}|${rule.minDecisiveRate}|${rule.declaredEffect}|` +
+      `${rule.assumedTieRate}|${rule.assumedPositionLeftRate}|${rule.targetPower}|` +
+      `${rule.minDecidedAgreementRate}|${rule.minDecisiveClusters}|${rule.assumptionsMeasured}`,
   );
 }
 
@@ -559,6 +703,8 @@ export function judgeGateOverrides(rule: JudgeGateRule): { field: string; preReg
     'assumedTieRate',
     'assumedPositionLeftRate',
     'targetPower',
+    'minDecidedAgreementRate',
+    'minDecisiveClusters',
   ];
   const out: { field: string; preRegistered: number; used: number }[] = [];
   for (const field of fields) {
@@ -871,8 +1017,32 @@ export interface JudgeGateDesign {
   pairsForTargetPower: number | null;
   /** False when fewer pairs were judged than that. An exploratory block. */
   adequatelyPowered: boolean;
+  /**
+   * THE POWER OF THE BLOCK THAT ACTUALLY RAN (S2), recomputed at the OBSERVED
+   * tie rate rather than at the pre-registered one. Round 4 printed
+   * `power: 0.802408` — a number false of the block in front of it — beside a
+   * verdict drawn from 13 decisive pairs at a realised tie rate of 0.5, whose
+   * true power was 0.2618. Null only when nothing was observed.
+   */
+  poweredAsRun: number | null;
+  /** `poweredAsRun >= targetPower`. The condition a CONFIRMATORY block must meet. */
+  adequatelyPoweredAsRun: boolean;
+  /** The tie rate the run had, as opposed to the one it was sized under. */
+  observedTieRate: number | null;
+  /** Among pairs where both orders named an arm, the share that named the same one. */
+  observedDecidedAgreementRate: number | null;
+  minDecidedAgreementRate: number;
+  /** Seeds contributing at least one decisive pair — the real n (S1). */
+  decisiveClusters: number | null;
+  minDecisiveClusters: number;
+  /**
+   * Whether the numbers this design was sized under have ever been measured.
+   * `ASSUMED` until an estimation pilot replaces them; `judgeGateDesign` copies
+   * it onto every artefact so a reader is never left to infer it.
+   */
+  assumptionStatus: 'ASSUMED' | 'MEASURED';
   /** What a block of this size may be called. A verdict needs `confirmatory`. */
-  role: 'confirmatory' | 'exploratory';
+  role: 'confirmatory' | 'exploratory' | 'underpowered-as-run';
   expectedDecisiveRate: number;
   typeIError: number;
   positionVoidRate: number;
@@ -885,13 +1055,50 @@ export interface JudgeGateDesign {
   justification: string;
 }
 
-export function judgeGateDesign(pairs: number, decisivePairs: number, rule: JudgeGateRule = JUDGE_GATE): JudgeGateDesign {
+/**
+ * WHAT THE RUN ACTUALLY DID — handed to `judgeGateDesign` so the printed power
+ * is the power of the block in front of the reader (S2).
+ */
+export interface JudgeGateObserved {
+  /** Share of SHOWINGS the judge called a tie. Not the share of pairs. */
+  tieRate: number;
+  /** Decisive pairs / (decisive + contradicted) pairs. Null when nothing was decided. */
+  decidedAgreementRate: number | null;
+  /** Seeds that contributed at least one decisive pair. */
+  decisiveClusters: number;
+}
+
+export function judgeGateDesign(
+  pairs: number,
+  decisivePairs: number,
+  rule: JudgeGateRule = JUDGE_GATE,
+  observed?: JudgeGateObserved,
+): JudgeGateDesign {
   const wins = minimumDetectableWins(decisivePairs, rule.alpha);
   const power = judgeGatePower(pairs, rule);
   const decisiveRate = pairs > 0 ? round(decisivePairs / pairs) : 0;
   const overrides = judgeGateOverrides(rule);
   const needed = pairsForJudgePower(rule.targetPower, rule);
   const adequatelyPowered = needed !== null && pairs >= needed;
+  // THE POWER OF THIS BLOCK, at the tie rate this block had.
+  const asRun =
+    observed && pairs > 0 ? judgeGatePower(pairs, rule, { tieRate: observed.tieRate }).power : null;
+  const adequatelyPoweredAsRun = asRun !== null && asRun >= rule.targetPower;
+  const enoughClusters = observed !== undefined && observed.decisiveClusters >= rule.minDecisiveClusters;
+  const agrees =
+    observed !== undefined &&
+    observed.decidedAgreementRate !== null &&
+    observed.decidedAgreementRate > rule.minDecidedAgreementRate;
+  const confirmatory =
+    adequatelyPowered && overrides.length === 0 && observed !== undefined && adequatelyPoweredAsRun && enoughClusters && agrees;
+  const role: JudgeGateDesign['role'] = confirmatory
+    ? 'confirmatory'
+    : observed !== undefined && adequatelyPowered && overrides.length === 0
+      ? // IT RAN, IT WAS SIZED RIGHT, AND IT STILL CANNOT DECIDE. This is not
+        // "no difference" and it is not ordinary exploration: it is a block
+        // whose realised conditions took its power away, and it says so.
+        'underpowered-as-run'
+      : 'exploratory';
   return {
     pairs,
     decisivePairs,
@@ -909,7 +1116,15 @@ export function judgeGateDesign(pairs: number, decisivePairs: number, rule: Judg
     targetPower: rule.targetPower,
     pairsForTargetPower: needed,
     adequatelyPowered,
-    role: adequatelyPowered && overrides.length === 0 ? 'confirmatory' : 'exploratory',
+    poweredAsRun: asRun,
+    adequatelyPoweredAsRun,
+    observedTieRate: observed?.tieRate ?? null,
+    observedDecidedAgreementRate: observed?.decidedAgreementRate ?? null,
+    minDecidedAgreementRate: rule.minDecidedAgreementRate,
+    decisiveClusters: observed?.decisiveClusters ?? null,
+    minDecisiveClusters: rule.minDecisiveClusters,
+    assumptionStatus: rule.assumptionsMeasured ? 'MEASURED' : 'ASSUMED',
+    role,
     expectedDecisiveRate: power.expectedDecisiveRate,
     typeIError: power.typeIError,
     positionVoidRate: power.positionVoidRate,

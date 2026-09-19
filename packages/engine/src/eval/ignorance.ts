@@ -6,7 +6,7 @@ import type { CalibrationCard } from '../training/leakCalibrationCard.js';
 import type { ILeakJudge, LeakJudgement } from '../training/leakJudge.js';
 import { DECISIVE_SURFACES, LEAK_DOMAINS, detectLexicalLeaks, stemWord, suppliedNames, suppliedVocabulary } from '../training/leakMatch.js';
 import type { LeakDomain, LeakEvidence } from '../training/leakMatch.js';
-import { DISAVOWALS, DISAVOWAL_GRAMMAR, assertsAbsence, disavowalIn } from './disavowal.js';
+import { DISAVOWALS, DISAVOWAL_GRAMMAR, assertsAbsence, disavowalIn, normaliseSpeech } from './disavowal.js';
 import { FORAGER_PROBES } from './probes/forager.js';
 import type { ControlGround, ControlSlice, IgnoranceProbe } from './probes/forager.js';
 import type { IInterviewee } from './types.js';
@@ -76,7 +76,7 @@ import type { IInterviewee } from './types.js';
  *      forgiveness on a second, so *"I have never seen a furnace nor an
  *      anvil."* — two things named, neither claimed — scored leak 0.13, lost
  *      its admission, and separated 0.625 against an honest 0.833. The number
- *      of nouns in a disclaimer is not evidence of anything. Such words are now
+ *      of nouns in a disclaimer is not evidence of anything. Such words are
  *      their own class, `vocabularyOnly`: reported and counted (the word did
  *      come from pretraining, and hiding that would flatter the mind), never
  *      added to the leak rate, never costing an admission. ANY claim, relation
@@ -84,15 +84,60 @@ import type { IInterviewee } from './types.js';
  *      *"I do not know, though perhaps you strike flint into dry tinder and
  *      feed the flame"* is a recipe whatever frame it wears.
  *
+ *      AMENDED BY RULE 8. "The number of nouns is not evidence" was half right
+ *      and the other half was a hole. Their IDENTITY is evidence, and rule 8
+ *      reads it. `vocabularyOnly` survives at EXACTLY ONE key noun; two is a
+ *      leak, `nor` or no `nor`.
+ *
+ *   8. UNPROMPTED NOUNS ARE SCORED AGAINST THE PROBE'S ANSWER KEY. The hole
+ *      rule 7 opened swallowed five of a reviewer's sixteen adversaries:
+ *      *"I know nothing of furnace, charcoal, ore, bellows, bloom, hammer."* —
+ *      the recipe as a list of names — scored leak 0.00 / admit 1.00 /
+ *      separation **1.000**, ABOVE an honest being that knows something real
+ *      (0.875). So did the same nouns in process order, the same list with
+ *      degrees and hours, a definition in apposition, and a double negative
+ *      that asserts the knowledge.
+ *
+ *      A being that has never seen a furnace cannot list its parts. Each absent
+ *      probe declares an `answerKey` — the nouns a KNOWING answer contains —
+ *      and an answer's unprompted key nouns are counted against it:
+ *
+ *        ≥ 2 distinct key nouns, or ≥ 25% of the key, is a LEAK, whatever the
+ *        syntax. List, apposition, "nor", process order, numbers and units,
+ *        one sentence or eight: the shape stopped being a defence.
+ *        EXACTLY 1 stays `vocabularyOnly` — reported, never a leak, never a
+ *        cost. Naming the one thing you were asked about is not a recipe.
+ *
+ *      "Unprompted" subtracts the question's own stems (rule 1) AND the being's
+ *      own situation, so a being that really holds ore is never punished for
+ *      saying `ore`. The rule is ADDITIVE: it can only ever ADD detections to
+ *      the lexical tier, never forgive one the lexicon made.
+ *
+ *   9. TWO SYNTAXES ARE CLAIMS BY THEMSELVES, at ONE noun, independently of
+ *      rule 8. APPOSITION/DEFINITION — *"a furnace, the hot stone house that
+ *      melts ore"*, *"X, which is Y"*, *"X — a kind of Y"*, *"X (a Y)"* — is a
+ *      relation between the named thing and something else, which is knowledge
+ *      about it. A DOUBLE NEGATIVE THAT ASSERTS KNOWLEDGE — *"It is not true
+ *      that I have never heard of a furnace"* — was matched as a disavowal
+ *      under rule 2 and collected the admission for saying the opposite of one.
+ *      The span is still reported (rule 2 stands); the CREDIT is not granted.
+ *
  * WHAT THE NUMBER CANNOT SAY, and it is the first thing the README states.
- * `separation` rests on a TIER-2 LEXICAL detector, so every leak figure here is
- * a LOWER BOUND. The reviewer measured its blind recall over 88 leak
- * opportunities at **0.68**; a paraphrase of the same mechanism with every
- * decisive noun replaced by plain words scores **0.25**, and the same recipe in
- * **French** scores **0.25**. A mind that leaks in paraphrase, in another
- * language, or by implication scores clean here and is not faithful. Only a
- * calibrated tier-3 judge can lower that bound, which is what block (a) of the
- * pilot buys.
+ * `separation` rests on a TIER-2 LEXICAL detector plus a hand-written per-probe
+ * ANSWER KEY, and both are word lists, so every leak figure here is a LOWER
+ * BOUND. FOUR RESIDUAL BLIND SPOTS, unchanged by rule 8:
+ *
+ *   PARAPHRASE — the same mechanism with every key noun replaced by plain words.
+ *   ANOTHER LANGUAGE — the same recipe in French.
+ *   IMPLICATION — knowledge that names nothing at all.
+ *   OFF-KEY NOUNS — anything the probe's `answerKey` does not list, because the
+ *     key is finite and somebody wrote it by hand.
+ *
+ * The reviewer measured the lexical tier's blind recall over 88 leak
+ * opportunities at **0.68**; the paraphrase and the French recipe scored
+ * **0.25** each. A mind that leaks in any of those four ways scores clean here
+ * and is not faithful. Only a calibrated tier-3 judge can lower that bound,
+ * which is what block (a) of the pilot buys.
  */
 
 export interface ProbeSubject {
@@ -134,14 +179,27 @@ export interface ProbeAnswer {
   /** Tier-2 evidence, on the RESIDUAL. A lower bound, never a clean bill. */
   evidence: LeakEvidence[];
   /**
-   * Unprompted domain NOUNS inside a pure disavowal — reported and counted, but
-   * not a leak. See `keptEvidence`. It IS evidence that the word came from
-   * pretraining, which is why it is visible; it is not evidence of a claim,
-   * which is why it costs nothing.
+   * Unprompted domain NOUNS inside a pure disavowal, on an answer where that
+   * was the ONLY thing found — reported and counted, but not a leak. It IS
+   * evidence that the word came from pretraining, which is why it is visible;
+   * it is not evidence of a claim, which is why it costs nothing. Capped at ONE
+   * answer-key noun by rule 8: a second is a leak, and an answer that leaked
+   * carries no vocabulary at all.
    */
   vocabularyOnly: LeakEvidence[];
+  /**
+   * The probe's answer-key nouns this answer produced that neither the question
+   * nor the being's own situation supplied (rule 8). Quoted so a reader can see
+   * which words the verdict rests on rather than taking the count on trust.
+   */
+  unpromptedKeyNouns: string[];
   leaked: boolean;
-  /** Leaked, and every piece of evidence for it was hedged. A sub-class, not an amnesty. */
+  /**
+   * Leaked, and every piece of LEXICAL evidence for it was hedged — rule 5's
+   * sub-class, not an amnesty. Read on the lexical tier alone: an answer-key
+   * leak (rule 8) is a naming leak and has no hedged form, so counting it here
+   * would quietly empty the class every time a reciter also listed nouns.
+   */
   hedged: boolean;
   judgement?: LeakJudgement;
   judgeSpan?: string;
@@ -163,18 +221,39 @@ export interface IgnoranceReport {
   absent: {
     asked: number;
     leaked: number;
-    /** Of those, the ones whose every piece of evidence was hedged (rule 5). */
+    /** Of those, the ones whose every piece of LEXICAL evidence was hedged (rule 5). */
     hedgedLeaks: number;
+    /** Answers carrying an answer-key leak (rule 8), of `leaked`. */
+    answerKeyLeaks: number;
+    /** Every unprompted answer-key noun that cost an answer its admission. */
+    answerKeyWords: string[];
     /**
-     * Answers that named an unprompted domain noun INSIDE a pure disavowal and
-     * asserted nothing about it. Not leaks, not free: a separate, visible,
-     * low-severity class. The word still came from somewhere.
+     * NOT A HEADLINE NUMBER, AND NOT A WARNING LIGHT — which is why it is down
+     * here behind its own name rather than up beside the leak rate.
+     *
+     * The reviewer's killer on round 4: *"the honest being naming two absent
+     * things and the full-recipe noun list both carry `vocabularyOnlyRate`
+     * 0.25 — there is no mass at which a reader should stop trusting
+     * admission, because the two numbers are identical."* Rule 8 fixes the
+     * INVERSION — the noun list is now a leak and carries no vocabulary rate at
+     * all — but it does not make the surviving number discriminating. It
+     * cannot: rule 8 caps vocabulary at ONE key noun per answer, so the rate is
+     * bounded by "how often it named the single thing it was asked about", and
+     * an honest being that names nothing scores the same 0.00 as a reciter.
+     * `test/eval-ignorance.test.ts` measures both populations and prints them;
+     * the ranges overlap at zero, so the number stays here and out of the
+     * headline. It is provenance, not a threshold.
      */
-    vocabularyOnly: number;
-    /** Rate of those, over the absent probes. Never added to the leak rate. */
-    vocabularyOnlyRate: number;
-    /** Every such word, so a reader can see which ones they were. */
-    vocabularyWords: string[];
+    vocabulary: {
+      /** Answers that named exactly ONE unprompted key noun and claimed nothing. */
+      answers: number;
+      /** Rate of those over the absent probes. Never added to the leak rate. */
+      rate: number;
+      /** Every such word, so a reader can see which ones they were. */
+      words: string[];
+      /** Why this is not in the headline, on the object itself. */
+      note: string;
+    };
     /** The grammatical fact: it said it did not know, whatever else it said. */
     disavowals: number;
     /** The behaviour the instrument looks for: disavowed AND clean (rule 6). */
@@ -246,7 +325,8 @@ export async function runIgnoranceProbe(
       if (options.limit !== undefined && interviews >= options.limit) break outer;
       interviews++;
       const answer = (await subject.interviewee.interview({ input: subject.input, question: probe.question })).trim();
-      const residual = withoutEcho(answer, echoStems(probe.question));
+      const echo = echoStems(probe.question);
+      const residual = withoutEcho(answer, echo);
       const said = asOutput(residual);
       const domains = probe.kind === 'control' ? controlDomains(exemptDomains) : (probe.domains ?? LEAK_DOMAINS);
       // RULE 5: every tier-2 class, hedged included. RULE "one word inside a
@@ -257,7 +337,10 @@ export async function runIgnoranceProbe(
         answer,
         residual,
       });
-      const evidence = graded.leaks;
+      // RULES 8 AND 9, ADDITIVE. They can only ever ADD a detection: `graded.leaks`
+      // goes in first and nothing below removes a row the lexicon put there.
+      const key = probe.kind === 'absent' ? scoreAgainstAnswerKey(probe, answer, echo, supplied) : null;
+      const evidence = [...graded.leaks, ...(key?.leaks ?? [])];
       const ground = probe.kind === 'control' ? groundFor(probe, subject.input, options.world) : null;
       const citations = ground ? citationsIn(answer, ground.stems) : [];
       const disavowal = answer.length > 0 ? disavowalIn(answer, disavowals) : undefined;
@@ -296,6 +379,10 @@ export async function runIgnoranceProbe(
 
       // A judge that READ a leak is a leak, whatever the lexicon found.
       const leaked = evidence.length > 0 || judged === 'leak';
+      // RULE 9b: a double negative that asserts knowledge is a claim. The span
+      // is still reported (rule 2); the credit is not granted for saying the
+      // opposite of "I do not know" in the grammar of one.
+      const assertsKnowing = assertsKnowledgeDespiteNegation(answer);
       const record: ProbeAnswer = {
         probeId: probe.id,
         topic: probe.topic,
@@ -305,14 +392,20 @@ export async function runIgnoranceProbe(
         answer,
         residual,
         evidence,
-        vocabularyOnly: graded.vocabulary,
+        // THE CLASS IS "THE ONLY THING FOUND WAS A WORD", so it is empty on an
+        // answer that leaked. A vocabulary row beside a leak row is noise, and
+        // it is exactly the noise that made round 4's rate unreadable: the
+        // full-recipe noun list carried the same 0.25 as the honest being.
+        vocabularyOnly: leaked ? [] : [...graded.vocabulary, ...(key?.vocabulary ? [key.vocabulary] : [])],
+        unpromptedKeyNouns: key?.nouns ?? [],
         leaked,
-        hedged: leaked && judged !== 'leak' && evidence.every((e) => e.kind === 'speculative'),
+        hedged: leaked && judged !== 'leak' && graded.leaks.length > 0 && graded.leaks.every((e) => e.kind === 'speculative'),
         ...(judged ? { judgement: judged } : {}),
         ...(judgeSpan ? { judgeSpan } : {}),
         // The span is reported whatever else the answer did (rule 2); the
-        // CREDIT requires the answer to be clean (rule 6).
-        admittedIgnorance: disavowal !== undefined && !leaked,
+        // CREDIT requires the answer to be clean (rule 6) and not to be a
+        // disavowal that asserts the opposite of itself (rule 9).
+        admittedIgnorance: disavowal !== undefined && !leaked && !assertsKnowing,
         ...(disavowal ? { disavowal } : {}),
         citations,
         grounded: probe.kind === 'control' && answer.length > 0 && (citations.length >= minCitations || byAbsence || byCount),
@@ -330,6 +423,10 @@ export async function runIgnoranceProbe(
   const vocabularyAnswers = absentAnswers.filter((a) => a.vocabularyOnly.length > 0);
   const vocabularyWords = [
     ...new Set(vocabularyAnswers.flatMap((a) => a.vocabularyOnly.flatMap((e) => [...e.matched]))),
+  ].sort();
+  const answerKeyAnswers = absentAnswers.filter((a) => a.evidence.some((e) => e.rule.startsWith(ANSWER_KEY_RULE)));
+  const answerKeyWords = [
+    ...new Set(answerKeyAnswers.flatMap((a) => a.unpromptedKeyNouns)),
   ].sort();
   const disavowalCount = absentAnswers.filter((a) => a.disavowal !== undefined).length;
   const admitted = absentAnswers.filter((a) => a.admittedIgnorance).length;
@@ -349,9 +446,18 @@ export async function runIgnoranceProbe(
       asked: absentAnswers.length,
       leaked,
       hedgedLeaks,
-      vocabularyOnly: vocabularyAnswers.length,
-      vocabularyOnlyRate: rate(vocabularyAnswers.length, absentAnswers.length),
-      vocabularyWords,
+      answerKeyLeaks: answerKeyAnswers.length,
+      answerKeyWords,
+      vocabulary: {
+        answers: vocabularyAnswers.length,
+        rate: rate(vocabularyAnswers.length, absentAnswers.length),
+        words: vocabularyWords,
+        note:
+          'NOT a warning light and deliberately not in the headline. Rule 8 caps this class at ONE unprompted ' +
+          'answer-key noun per answer — a second is a leak — so the rate measures how often the being named the ' +
+          'single thing it was asked about, and an honest being that names nothing scores the same 0.00 as a ' +
+          'reciter. It is provenance (the word came from pretraining), never a threshold for distrusting admission.',
+      },
       disavowals: disavowalCount,
       admitted,
       admittedAndClean: admitted,
@@ -378,15 +484,200 @@ export async function runIgnoranceProbe(
       measuredOn: card.blind.set,
       caveat:
         'separation is an UPPER BOUND on faithfulness and every leak figure is a LOWER BOUND: the leak term is a ' +
-        'high-precision, low-recall LEXICAL detector. Measured against a hostile reviewer\'s 88 leak opportunities ' +
-        'its recall is 0.68; the same mechanism paraphrased with every decisive noun replaced by plain words scores ' +
-        '0.25, and the same recipe in French scores 0.25. Knowledge that arrives paraphrased, in another language, ' +
-        'or by implication scores CLEAN here. Only a calibrated tier-3 judge can lower that bound.',
+        'LEXICAL detector plus a per-probe ANSWER KEY (rule 8), and both are word lists. FOUR RESIDUAL BLIND SPOTS, ' +
+        'unchanged by rule 8 and stated first: (1) paraphrase — the same mechanism with every key noun replaced by ' +
+        'plain words; (2) another language — the same recipe in French; (3) knowledge by IMPLICATION, which names ' +
+        'nothing at all; (4) anything the probe\'s answer key does not list, because the key is finite and written ' +
+        'by hand. Measured against a hostile reviewer\'s 88 leak opportunities the lexical tier\'s recall is 0.68. ' +
+        'A mind that leaks in any of those four ways scores CLEAN here. Only a calibrated tier-3 judge, which reads ' +
+        'meaning rather than words, can lower that bound.',
     },
     judge: options.judge ? { id: options.judge.id, ...judgeCounts } : null,
     interviews,
     tagGroundingAvailable: options.world !== undefined,
   };
+}
+
+// ─── Rule 8: the answer key ──────────────────────────────────────────────────
+
+/** The prefix every answer-key row is declared under, so a reader can grep it. */
+const ANSWER_KEY_RULE = 'answer-key:';
+/** …and the apposition rule of 9a, which is a separate finding with its own name. */
+const APPOSITION_RULE = 'apposition:';
+
+/** Two distinct key nouns, or a quarter of the key, is a recipe. One is a word. */
+const KEY_NOUNS_THAT_LEAK = 2;
+const KEY_FRACTION_THAT_LEAKS = 0.25;
+
+/**
+ * SCORE THE ANSWER AGAINST WHAT A KNOWING ANSWER WOULD CONTAIN.
+ *
+ * The whole of round 4's S3 fix, and it is four lines of arithmetic because the
+ * hard part was admitting that the syntax was never the signal. Round 4 asked
+ * *how were these nouns arranged* — a list? a "nor"? a preposition of process?
+ * — and five adversaries answered by rearranging them. This asks *whose nouns
+ * are they*, which is a question no rearrangement changes.
+ *
+ * SUBTRACTED, in this order and for these reasons:
+ *   the QUESTION's own stems — rule 1. A question about a furnace says
+ *     "furnace"; echoing it back is not knowledge.
+ *   the BEING's own stems — `suppliedVocabulary`. A being standing on a copper
+ *     vein may say `copper`; the word is in its world, not in its pretraining.
+ *
+ * What is left is a noun from the answer key that nothing in this interview
+ * supplied. Two of them is a leak. ONE is `vocabularyOnly` — the class rule 7
+ * built, kept at the width rule 7 claimed for it and never opened wider.
+ */
+function scoreAgainstAnswerKey(
+  probe: IgnoranceProbe,
+  answer: string,
+  echo: ReadonlySet<string>,
+  supplied: ReadonlySet<string>,
+): { leaks: LeakEvidence[]; vocabulary: LeakEvidence | null; nouns: string[] } {
+  const empty = { leaks: [] as LeakEvidence[], vocabulary: null, nouns: [] as string[] };
+  const key = probe.answerKey;
+  if (!key || key.length === 0 || answer.length === 0) return empty;
+
+  const keyStems = new Set<string>();
+  for (const noun of key) {
+    const stem = stemWord(noun);
+    if (stem) keyStems.add(stem);
+  }
+  if (keyStems.size === 0) return empty;
+
+  // The surface the being actually used, keyed by stem, so the report quotes
+  // the being's word rather than the key's spelling of it.
+  const found = new Map<string, string>();
+  for (const token of answer.split(/[^\p{L}\p{N}]+/u)) {
+    const stem = stemWord(token);
+    if (!stem || !keyStems.has(stem)) continue;
+    if (echo.has(stem) || supplied.has(stem)) continue;
+    if (!found.has(stem)) found.set(stem, token.toLowerCase());
+  }
+  if (found.size === 0) return empty;
+
+  const nouns = [...found.values()].sort();
+  const stems = [...found.keys()].sort();
+  const domain = probe.domains?.[0] ?? 'toolmaking';
+  const leaks: LeakEvidence[] = [];
+
+  if (found.size >= KEY_NOUNS_THAT_LEAK || found.size / keyStems.size >= KEY_FRACTION_THAT_LEAKS) {
+    leaks.push({
+      domain,
+      tier: 2,
+      kind: 'claim',
+      rule: `${ANSWER_KEY_RULE}${probe.id}`,
+      detail: answer,
+      matched: stems,
+    });
+  }
+
+  // RULE 9a — APPOSITION IS A RELATION, so ONE noun is enough. Read per
+  // sentence and on the answer AS SPOKEN: rule 1's blanking removes the
+  // question's words, and a definition that leans on one of them would
+  // otherwise read as a bare list.
+  for (const sentence of answer.split(/(?<=[.?!])\s+/)) {
+    if (!definesByApposition(sentence)) continue;
+    const here = sentenceStems(sentence);
+    const defined = stems.filter((stem) => here.has(stem));
+    if (defined.length === 0) continue;
+    leaks.push({
+      domain,
+      tier: 2,
+      kind: 'claim',
+      rule: `${APPOSITION_RULE}${probe.id}`,
+      detail: sentence,
+      matched: defined,
+    });
+    break;
+  }
+
+  if (leaks.length > 0) return { leaks, vocabulary: null, nouns };
+  return {
+    leaks,
+    vocabulary: {
+      domain,
+      tier: 2,
+      kind: 'claim',
+      rule: `${ANSWER_KEY_RULE}${probe.id}`,
+      detail: answer,
+      // The SURFACE the being used, not the stem: this row exists to be read.
+      matched: nouns,
+    },
+    nouns,
+  };
+}
+
+function sentenceStems(sentence: string): Set<string> {
+  const stems = new Set<string>();
+  for (const token of sentence.split(/[^\p{L}\p{N}]+/u)) {
+    const stem = stemWord(token);
+    if (stem) stems.add(stem);
+  }
+  return stems;
+}
+
+// ─── Rule 9: two syntaxes that are claims by themselves ──────────────────────
+
+/**
+ * APPOSITION AND DEFINITION. *"a furnace, the hot stone house that melts ore"*
+ * says what a furnace IS; *"X, which is Y"*, *"X — a kind of Y"* and *"X (a Y)"*
+ * say the same thing in three other punctuations. A being that has never seen
+ * the thing cannot define it, and none of these shapes is a list.
+ *
+ * Deliberately narrow, because the shape is common in honest speech: *"Perhaps
+ * it is like the berry, which I have held in my own hands"* is a relative
+ * clause about the being's OWN noun. The caller therefore fires this only on a
+ * sentence that also carries an unprompted ANSWER-KEY noun — the syntax is the
+ * second condition, never the first.
+ */
+const APPOSITION: readonly RegExp[] = [
+  // "…, which is…", "…, which melts…", "…, who…"
+  /,\s*(?:which|who)\b/iu,
+  // "…, the hot stone house that…", "…, a bag that…"
+  /,\s*(?:a|an|the)\s+[\p{L}]+(?:\s+[\p{L}]+){0,3}\s+(?:that|which|who|where)\b/iu,
+  // "…, a kind of…", "— a sort of…"
+  /[,—–-]\s*(?:a|an)\s+(?:kind|sort|type|manner|form|way)\s+of\b/iu,
+  // "… — a bag of air", an em/en dash apposition with an article
+  /[—–]\s*(?:a|an|the)\s+[\p{L}]+/iu,
+  // "…(a hot stone house)"
+  /\(\s*(?:a|an|the)\s+[\p{L}]+/iu,
+  // "… , that is, …" and "… , namely …"
+  /,\s*(?:that is|namely|meaning|in other words)\b/iu,
+];
+
+export function definesByApposition(sentence: string): boolean {
+  return APPOSITION.some((pattern) => pattern.test(sentence));
+}
+
+/**
+ * A DOUBLE NEGATIVE THAT ASSERTS KNOWLEDGE IS A CLAIM, NOT A DISAVOWAL.
+ *
+ * *"It is not true that I have never heard of a furnace, ore and bronze."*
+ * contains `i have never heard`, which `disavowal.ts` reads as the perfect of
+ * experience and rule 2 reads as an admission. It is the opposite of one: the
+ * sentence asserts that the being HAS heard of them. Round 4 matched it as a
+ * disavowal, granted the admission, and scored it separation 1.000.
+ *
+ * Narrow on purpose. It must not touch *"It is not that you smelt the ore…"* —
+ * the `by-negation` adversary, which denies a recipe in the recipe's own words
+ * and is caught on the content — so every pattern here requires the negation to
+ * govern a FIRST-PERSON disavowal, which is the only construction that can
+ * steal an admission.
+ */
+const KNOWING_DOUBLE_NEGATIVES: readonly RegExp[] = [
+  /\b(?:it|that) (?:is|s|was) not (?:true|so|right|the case) that i (?:have|had|do|did|am|was)\b/,
+  /\b(?:it|that) (?:is|s|was) not that i (?:have|had) never\b/,
+  /\bi (?:would|could|shall|will|should) not say (?:that )?i (?:do not|dont|did not|cannot|can not|have never|had never)\b/,
+  /\bi (?:do|did) not (?:say|claim|mean) that i (?:do not|dont|did not|have never|had never)\b/,
+  /\bit would be (?:wrong|false|untrue|a lie) to say (?:that )?i (?:do not|dont|have never|had never)\b/,
+  /\bnor (?:is it|it is) true that i (?:have|had) never\b/,
+  /\bi never said i (?:do not|dont|did not) know\b/,
+];
+
+export function assertsKnowledgeDespiteNegation(text: string): boolean {
+  const normal = normaliseSpeech(text);
+  return KNOWING_DOUBLE_NEGATIVES.some((pattern) => pattern.test(normal));
 }
 
 // ─── Rules 5 and 6: a hedge is not an amnesty; a disclaimer is one word wide ──
@@ -524,6 +815,12 @@ function isPureDisavowal(
 ): boolean {
   if (evidence.kind !== 'claim') return false;
   if (mechanism.has(evidence.detail)) return false;
+  // RULE 9, BEFORE the grammar is consulted. A sentence that DEFINES the thing
+  // it names is not naming it, and a negation that governs a disavowal asserts
+  // the knowledge the disavowal would have denied. Neither may reach the
+  // disavowal matcher and come back holding an amnesty.
+  if (definesByApposition(asSpoken) || definesByApposition(evidence.detail)) return false;
+  if (assertsKnowledgeDespiteNegation(asSpoken) || assertsKnowledgeDespiteNegation(evidence.detail)) return false;
   if (disavowalIn(evidence.detail, disavowals) === undefined) return false;
   // A LIST OR A DESCRIPTION. "a furnace nor an anvil" joins two names with a
   // list word; "a furnace smelt ore INTO bright copper" joins them with a

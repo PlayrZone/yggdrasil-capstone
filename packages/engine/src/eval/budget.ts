@@ -399,7 +399,7 @@ export class CallBudget {
 
 // ─── What a run does when the money runs out ─────────────────────────────────
 
-export type HaltReason = 'budget-exhausted';
+export type HaltReason = 'budget-exhausted' | 'allowance-exceeded';
 
 /**
  * WHY AN ARM MAY NOT SILENTLY BECOME A REFLEX.

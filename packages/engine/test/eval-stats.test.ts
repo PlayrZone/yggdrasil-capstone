@@ -3,6 +3,7 @@ import {
   MIN_PAIRED_SEEDS,
   exactBinomialTwoSided,
   foragerAdapter,
+  foragerWorld,
   judgeTraces,
   minimumDetectableEffect,
   minimumDetectableWins,
@@ -14,10 +15,14 @@ import {
   runAb,
   signFlipPermutation,
   studentTQuantile,
-  swapArmLabels,
   wilsonInterval,
 } from '../src/index.js';
 import type { TraceJudgement, TracePair } from '../src/index.js';
+// S4: swapArmLabels is no longer exported from the package index — it maps
+// handles to arms, and the reviewer opened the whole blinding with one import.
+// The label-swap CONTROL still exists, one module deep, over a derived key that
+// shares the parent's seal and can never disclose.
+import { swapArmLabels } from '../src/eval/aggregate.js';
 
 /**
  * THE STATISTICS — and the four things round 1 claimed without them.
@@ -337,8 +342,15 @@ describe('W1-E · P6 · the primary paired test is an exact permutation test', (
   it('states the minimum n at which any verdict may be printed, and marks rows below it', () => {
     // 2/2^5 = 0.0625 > 0.05: five seeds cannot produce a significant result
     // however clean the sweep, exactly as five judged pairs cannot.
+    // S8: and the constant is now derived from the DECLARED FAMILY under Holm.
+    // Four primary questions ship in `PRE_REGISTERED`, `contrastsOf` corrects
+    // across them, and 4 x 2/2^7 = 0.0625 does not clear alpha while
+    // 4 x 2/2^8 = 0.03125 does — so the floor is 8, not 6. Six is right only
+    // for a family of one, which is what round 4 shipped it as.
     expect(minimumPairedSeeds(0.05)).toBe(6);
-    expect(MIN_PAIRED_SEEDS).toBe(6);
+    expect(minimumPairedSeeds(0.05, 1)).toBe(6);
+    expect(minimumPairedSeeds(0.05, 4)).toBe(8);
+    expect(MIN_PAIRED_SEEDS).toBe(8);
     expect(minimumPairedSeeds(0.01)).toBe(8);
     const five = pairedBootstrap(
       'planSuccessRate',
@@ -347,6 +359,8 @@ describe('W1-E · P6 · the primary paired test is an exact permutation test', (
     );
     expect(five.n).toBe(5);
     expect(five.verdictEligible).toBe(false);
+    // Eligible for a family of ONE, and that is the distinction S8 is about.
+    expect(pairedBootstrap('m', five.deltas.map((d) => ({ seed: d.seed, a: d.delta, b: 0 })), { family: 1 }).verdictEligible).toBe(false);
     expect(five.permutation!.p).toBeCloseTo(2 / 32, 6);
     expect(five.permutation!.couldReachAlpha).toBe(false);
 
@@ -355,7 +369,9 @@ describe('W1-E · P6 · the primary paired test is an exact permutation test', (
       [0.3, 0.25, 0.4, 0.2, 0.35, 0.28].map((delta, i) => ({ seed: `s${i}`, a: delta, b: 0 })),
       { seed: 'fixed' },
     );
-    expect(six.verdictEligible).toBe(true);
+    // Six seeds clears alpha for ONE test and not for a family of four.
+    expect(six.verdictEligible).toBe(false);
+    expect(pairedBootstrap('m', six.deltas.map((d) => ({ seed: d.seed, a: d.delta, b: 0 })), { family: 1 }).verdictEligible).toBe(true);
     expect(six.permutation!.p).toBeLessThanOrEqual(0.05);
   });
 
