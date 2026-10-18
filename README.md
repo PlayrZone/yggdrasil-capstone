@@ -1,5 +1,16 @@
 # Yggdrasil Lab
 
+## COS650 Capstone — Milestone 1
+
+**Student:** Hakim Corner · **Area:** Artificial Intelligence · **Project:** Yggdrasil — a world-grounded mind for NPCs (artificial-life engine + Electron lab).
+
+- **Build under evaluation:** Yggdrasil Lab **v0.3.6**, tag [`milestone-1`](https://github.com/PlayrZone/yggdrasil-capstone/releases/tag/milestone-1) — the last fully verified commit (engine 927 / lab 499 / MCP 37 tests, all type-checks clean).
+- **Installer (Windows):** [YggdrasilLab-Setup-0.3.6.exe](https://github.com/PlayrZone/yggdrasil-capstone/releases/download/milestone-1/YggdrasilLab-Setup-0.3.6.exe) — unsigned; Windows SmartScreen will ask to confirm.
+- **Project write-up:** [docs/capstone/Yggdrasil-capstone-breakdown.pdf](docs/capstone/Yggdrasil-capstone-breakdown.pdf) (research question, doctrine, architecture, methodology, results, evaluation design, roadmap).
+- **Live engineering log:** [docs/rework/CAMPAIGN.md](docs/rework/CAMPAIGN.md) — every item, decision and review verdict; hostile-review reports under [docs/rework/reviews](docs/rework/reviews).
+- **Run from source:** `pnpm install` → `pnpm --filter @yggdrasil/lab dev` (Electron lab) · tests: `pnpm -r test`.
+- Commits after `milestone-1` on `main` are work in progress and may not pass tests; the tag is the evaluated state.
+
 **Artificial-life & emergent-civilization research engine and desktop lab.**
 
 A standalone scientific platform for studying whether autonomous synthetic
