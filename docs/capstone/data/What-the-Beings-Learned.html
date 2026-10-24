@@ -1,0 +1,288 @@
+<title>What the Beings Learned</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a scroll story — header, four stat tiles, then one section per question, each a card on the page plane. */
+:root{
+  --bg:#f9f9f7; --surface:#fcfcfb; --fg:#0b0b0b; --fg2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --seq:#2a78d6; --seqlite:#9ec5f4;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0d0d0d; --surface:#1a1a19; --fg:#f0efec; --fg2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --seq:#3987e5; --seqlite:#1c5cab; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d0d0d; --surface:#1a1a19; --fg:#f0efec; --fg2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --seq:#3987e5; --seqlite:#1c5cab; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.5;
+  padding-block:32px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1040px;margin:0 auto;display:grid;gap:28px}
+h1,h2,h3{text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(28px,4.2vw,40px);font-weight:600;letter-spacing:-.01em}
+h2{font-size:21px;font-weight:600}
+h3{font-size:15px;font-weight:600;color:var(--fg2)}
+p{margin:0;max-width:68ch}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+.lede{font-size:17px;color:var(--fg2);max-width:70ch}
+header{display:grid;gap:10px}
+.src{font-size:13px;color:var(--muted)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;display:grid;gap:2px}
+.tile .v{font-size:30px;font-weight:600;line-height:1.1}
+.tile .l{font-size:13px;color:var(--fg2)}
+.tile .s{font-size:12px;color:var(--muted)}
+section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:22px 22px 20px;display:grid;gap:14px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px}
+.two>*{min-width:0}
+figure{margin:0;display:grid;gap:8px;min-width:0}
+figcaption{font-size:13px;color:var(--fg2)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--fg2)}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--sw)}
+svg{width:100%;height:auto;display:block;overflow:visible}
+.axis text,.tick{font:12px var(--sans);fill:var(--muted);font-variant-numeric:tabular-nums}
+.hbars{display:grid;gap:6px}
+.hb{display:grid;grid-template-columns:minmax(140px,2fr) minmax(0,5fr) 70px;gap:10px;align-items:center;font-size:13px}
+.hb .lab{color:var(--fg);min-width:0;overflow-wrap:anywhere}
+.hb .key{display:block;font:11px var(--mono);color:var(--muted)}
+.hb .bar{height:14px;background:var(--seq);border-radius:0 4px 4px 0;position:relative;transition:opacity .15s}
+.hb:hover .bar{opacity:.8}
+.hb .val{text-align:right;font-variant-numeric:tabular-nums;color:var(--fg2)}
+.hb .val small{color:var(--muted)}
+.stack{display:flex;gap:2px;height:28px;border-radius:4px;overflow:hidden}
+.stack div{height:100%;min-width:2px}
+.stacklbl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 16px;font-size:13px}
+.stacklbl .n{font-weight:600;font-size:18px;font-variant-numeric:tabular-nums}
+.stacklbl .t{color:var(--fg2)}
+.stacklbl span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--sw)}
+table{border-collapse:collapse;font-size:13px;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--grid)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500}
+.tablewrap{overflow-x:auto}
+.prompt{font:13px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin:0;color:var(--fg)}
+.prompt b{color:var(--s1);font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:2px 10px;color:var(--fg2)}
+.chip b{color:var(--fg);font-weight:600}
+.needs{display:grid;gap:6px;max-width:420px}
+.need{display:grid;grid-template-columns:110px 1fr 40px;gap:10px;align-items:center;font-size:13px}
+.need .trk{height:10px;background:var(--grid);border-radius:4px;overflow:hidden}
+.need .fil{height:100%;background:var(--seq);border-radius:0 4px 4px 0}
+.need .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--fg2)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:grid;gap:8px;font-size:14px;min-width:0}
+.card .who{font-size:12px;color:var(--muted)}
+.card .say{color:var(--fg2);font-style:italic}
+.card .plan{font:12px var(--mono);color:var(--muted)}
+.tip{position:fixed;pointer-events:none;background:var(--fg);color:var(--bg);font-size:12px;line-height:1.4;padding:6px 9px;border-radius:6px;z-index:5;max-width:260px;font-variant-numeric:tabular-nums}
+.tip[hidden]{display:none!important}
+footer{font-size:13px;color:var(--muted);display:grid;gap:4px}
+code{font:12px var(--mono)}
+a{color:var(--s1)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Yggdrasil Lab · research data</div>
+  <h1>What the Beings Learned</h1>
+  <p class="lede">Two runs of 100 simulated beings over 20 days (48,000 ticks), with an LLM slow mind (gpt-oss-120b) and deterministic learning. Nobody wrote the rules below — the beings mined them from what happened to them.</p>
+  <div class="src">Sources: <code>research.db</code> (events, knowledge_snapshots, metrics), <code>corpus/civilization.jsonl</code>, one recorded cognition row (<code>thinkInputRows.c727af7.json</code>), report <code>phase3-exp1-apprenticeship.md</code>.</div>
+</header>
+
+<div class="tiles" id="tiles"></div>
+
+<section>
+  <h2>Knowledge grows from nothing</h2>
+  <p>Every being starts knowing nothing. Rules appear as experience accumulates and spread by sharing. The two runs use the same seed; the only difference is whether watching a craft can teach it.</p>
+  <div class="two">
+    <figure>
+      <h3>Rules known by the population, per day</h3>
+      <div class="legend"><span style="--sw:var(--s1)">Observation learning on (run 1)</span><span style="--sw:var(--s2)">Observation learning off (run 2)</span></div>
+      <div id="knowChart"></div>
+      <figcaption>Day 21: 10,997 rules vs 7,218. Source: <code>metrics.total_knowledge</code>.</figcaption>
+    </figure>
+    <figure>
+      <h3>Beings alive, per day</h3>
+      <div class="legend"><span style="--sw:var(--s1)">Observation learning on (run 1)</span><span style="--sw:var(--s2)">Observation learning off (run 2)</span></div>
+      <div id="aliveChart"></div>
+      <figcaption>Births outpace deaths once skills spread: 233 alive vs 123. Source: <code>metrics.alive</code>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <h2>Beliefs form, get tested, and die</h2>
+  <p>A belief enters as a hypothesis, becomes held when the world keeps confirming it, is contested when evidence conflicts, and is abandoned when it stops holding up. Run 2, day 20 — 10,113 belief records across 123 beings.</p>
+  <div id="beliefStack"></div>
+  <div class="stacklbl" id="beliefLbl"></div>
+  <p class="src">Source: <code>knowledge_snapshots.status</code>. False beliefs are allowed by design; they are measured, not prevented.</p>
+</section>
+
+<section>
+  <h2>The rules nobody wrote</h2>
+  <p>The fourteen rules held by the most beings at day 20 (run 2), with the share of the population holding each and the average confidence. Each was mined from the being's own events by a deterministic learner.</p>
+  <div class="hbars" id="rules"></div>
+  <p class="src">Rule keys: <code>out:</code> an action's effect on a need · <code>ctx:</code> the context an event happens in · <code>seq:</code> a learned action sequence. Source: <code>knowledge_snapshots</code>, status = held, tick 48,000.</p>
+</section>
+
+<section>
+  <h2>Apprenticeship: one maker becomes 168</h2>
+  <p>One founder was seeded with the spear recipe; everyone else began ignorant. With observation learning on, children near a maker watch, learn and are watched in turn. With it off, the recipe dies with the founder.</p>
+  <div class="two">
+    <figure>
+      <h3>Distinct makers per generation</h3>
+      <div class="legend"><span style="--sw:var(--s1)">Observation on</span><span style="--sw:var(--s2)">Observation off</span></div>
+      <div id="genChart"></div>
+      <figcaption>Totals: 168 makers and 3,547 crafts vs 1 maker and 268 crafts. Source: <code>phase3-exp1-apprenticeship.md</code>.</figcaption>
+    </figure>
+    <figure>
+      <h3>How it unfolded (observation on)</h3>
+      <div class="tablewrap"><table id="unfold"></table></div>
+      <figcaption>Recipe-holders are beings who know the recipe; makers have completed at least one craft.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <h2>What a being sees when it thinks</h2>
+  <p>This is a real recorded prompt: being 1829 at tick 184, early in its life. Everything the model receives is built from the being's own state. There is no description of the world it could cheat from, and it may answer with goals, plans and speech — never facts.</p>
+  <div class="chips" id="traits"></div>
+  <div class="needs" id="needs"></div>
+  <div class="two">
+    <figure><h3>System prompt (excerpt)</h3><pre class="prompt" id="sysPrompt"></pre></figure>
+    <figure><h3>User prompt (what the being holds)</h3><pre class="prompt" id="userPrompt"></pre></figure>
+  </div>
+</section>
+
+<section>
+  <h2>What came out: the thought corpus</h2>
+  <p>2,119 recorded thoughts from the June experiments — each with the being's reasoning, what it said, and the plan it chose. This is the data the first fine-tune was trained on.</p>
+  <div class="two">
+    <figure>
+      <h3>Rows by experiment</h3>
+      <div class="hbars" id="kinds"></div>
+    </figure>
+    <figure>
+      <h3>Four rows, verbatim</h3>
+      <div class="cards" id="samples"></div>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <h2>A world in events</h2>
+  <p>The twelve most frequent event types in run 2. Speech dominates; the second line is the world refusing an intent — a being asking for something its world does not allow, which it then remembers.</p>
+  <div class="hbars" id="events"></div>
+  <p class="src">Source: <code>events.type</code>, run 2, 146,950 events over both runs.</p>
+</section>
+
+<footer>
+  <div>Reproduce: <code>~/.yggdrasil-lab/research.db</code> (SQLite) · <code>~/.yggdrasil-lab/corpus/civilization.jsonl</code> · <code>packages/engine/test/fixtures/thinkInputRows.c727af7.json</code> · reports under <code>~/.yggdrasil-lab/reports/</code>.</div>
+  <div>Yggdrasil — COS650 capstone, Hakim Corner. Numbers are read directly from the files above; nothing is estimated.</div>
+</footer>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const D={"metrics":{"1":[[1,100,0],[2,101,289],[3,117,1082],[4,115,1742],[5,111,2288],[6,107,2800],[7,120,3607],[8,126,4330],[9,122,4786],[10,116,5035],[11,119,5242],[12,134,5717],[13,142,6151],[14,146,6537],[15,149,6965],[16,166,7677],[17,169,8063],[18,178,8857],[19,186,9355],[20,217,9955],[21,233,10997]],
+"2":[[1,100,0],[2,101,289],[3,117,1082],[4,115,1738],[5,111,2189],[6,105,2557],[7,112,2951],[8,115,3359],[9,108,3687],[10,101,3926],[11,109,4154],[12,116,4450],[13,118,4926],[14,115,5227],[15,117,5443],[16,115,5856],[17,109,6141],[18,105,6410],[19,109,6689],[20,117,6957],[21,123,7218]]},
+"topRules":[["ctx:SufferedExposure:*:night:positive",116,0.97],["out:SufferedExposure:night:safety:worsens",113,0.96],["out:SufferedExposure:*:safety:worsens",113,0.96],["out:AteFood:*:hunger:relieves",106,0.97],["out:SleptSafely:*:rest:relieves",105,0.96],["seq:GatherSucceeded:berry>AteFood:berry",100,0.94],["seq:GatherSucceeded:tuber>AteFood:tuber",99,0.94],["out:SleptSafely:inShelter:rest:relieves",97,0.96],["out:AteFood:inShelter:hunger:relieves",89,0.95],["ctx:SufferedExposure:*:inShelter:negative",89,0.77],["out:SleptSafely:night:rest:relieves",80,0.92],["out:AteFood:night:hunger:relieves",76,0.92],["out:SufferedExposure:inShelter:safety:worsens",71,0.92],["seq:GatherSucceeded:nightshade>AteFood:nightshade",63,0.87]],
+"alive2":123,
+"events":[["UtteranceSpoken",24037],["IntentRejected",21384],["SufferedExposure",5220],["GatherSucceeded",3807],["AteFood",2896],["AttackedByPredator",2888],["SleptSafely",2328],["SleptExposed",483],["BecameSick",384],["RecoveredFromSickness",311],["Crafted",268],["ChildBorn",171]],
+"beliefs":[["held",3641],["hypothesis",2896],["contested",677],["abandoned",2899]],
+"kinds":[["civilization-contact",422],["interpretation",294],["competing-cultures",216],["great-person",175],["innovation",168],["cultural-seeding",168],["curiosity",144],["institution",112],["mentorship",78],["human-arrival",72]],
+"samples":[{"kind":"cognition","name":"Gahallian #2081","thought":"I feel my stomach rumble and remember that tubers are safe to eat, so I will gather a tuber and eat it to ease my hunger.","utterance":"Tubers are good food, I'll gather one.","plan":[]},
+{"kind":"innovation","name":"Gahallian #2320","thought":"I’m thinking about gathering berries to ease my low hunger while I ask my close friend Gahallian #1876 about the mysterious place from our stories that pulls at me, because my curiosity is high and I want to stay near kin.","utterance":"Can you tell me about the place from our stories that lies about a step toward 403,516?","plan":["Gather","Speak"]},
+{"kind":"civilization-contact","name":"Gahallian #2272","thought":"I’m eager to explore the mysterious northeast spot and craft another spear for safety, while I should chat with my friends to satisfy my social curiosity.","utterance":"Do you know anything about the place to the northeast?","plan":["Speak","MoveTo","Craft"]},
+{"kind":"great-person","name":"Gahallian #2233","thought":"I feel drawn to the place from the tale of Gahallian #1889, so I will head there while asking someone I trust for more details.","utterance":"Do you know where the place from the story of Gahallian #1889 is?","plan":["MoveTo"]}],
+"record":{"being":1829,"tick":184,"needs":{"hunger":24.3,"rest":25.6,"safety":5.9,"social":23.7},"traits":{"curiosity":57,"aggression":49,"compassion":39,"ambition":92,"loyalty":90,"riskTolerance":73},
+"system":"You are a young being who has no name yet. You live in a simple world, among others who were here before you.\nYou were born into a people who already have kin, companions, and stories they tell. You did\nnot make this world or these stories; you are finding your place in them.\nYou do not control movement step by step — you decide goals, plans, and what to say.\nYou reason ONLY from what you perceive and what you KNOW — your memories, the STORIES you carry,\nand the people you know, all given below. You have no knowledge of the world beyond this.\nDo not invent facts. The meaning you find in a story or a person is YOURS to decide — no one\nassigns roles here; if a being matters to you, that is something you choose.\n\nYour personality (0-100): curiosity 57, aggression 49,\ncompassion 39, ambition 92, loyalty 90, risk 73.\n\nYou have no name. Choose one for YOURSELF that fits who you are …",
+"user":"Why you are thinking now: periodic.\n\nNEEDS (0 satisfied, 100 desperate — 60+ pressing, 85+ critical):\n  hunger 24, rest 26, safety 6, social 24\nHEALTH 100. It is spring, day.\nINVENTORY: empty\n\nWHAT YOU KNOW:\n  (you have learned nothing yet)\n\nYOUR FAMILY:\n  (you know of no family)\n\nTHOSE YOU KNOW (how you feel about them):\n  (you know no one well yet)\n\nTHE TALE YOUR PEOPLE TELL MOST (you have heard it many times): \"The first makers raised a home by the great river\"\n  What this tale MEANS to you is yours alone to decide.\nSTORIES YOU CARRY (the tales your people tell — some you saw, some you were told):\n  - (ref uo4t8k) \"The first makers raised a home by the great river\" (you were told this)\n\nA place from the stories you carry pulls at you — it lies northeast, about 530 away (toward 900,120). Whether you go, and what it means to you, is yours to decide.\n\nWHAT YOU SEE (within range):\n  resources: 2 river, 10 berryBush, 4 tuberPlant, 2 clayDeposit, 2 fiberPlant, 13 tree, 1 nightshadePlant, 1 mushroomPatch\n\nRECENT MEMORIES:\n  (nothing notable)\n\nCURRENT GOALS: return to the place of the story\n\nSome of what you carry you were TOLD but never saw, and some things you cannot explain.\nIf no need presses you, you are free to pursue what you wish to UNDERSTAND — ask someone who\nmight know, seek out an elder, go and find out for yourself, or try making something from the materials you carry to discover what can be made. Or simply live. The choice is yours.\n\nDecide what to do. Respond with JSON only."},
+"gen":{"on":[44,43,38,32,9,2],"off":[1,0,0,0,0,0]},
+"unfold":[[4,111,32,10,8],[8,122,67,69,67],[12,142,107,90,82],[16,169,152,99,92],[20,233,223,174,168]]};
+
+const $=s=>document.querySelector(s), fmt=n=>n.toLocaleString('en-US');
+const tip=$('#tip');
+function showTip(html,x,y){tip.innerHTML=html;tip.hidden=false;const w=tip.offsetWidth,h=tip.offsetHeight;tip.style.left=Math.min(x+14,innerWidth-w-8)+'px';tip.style.top=Math.max(8,y-h-12)+'px'}
+function hideTip(){tip.hidden=true}
+
+/* tiles */
+$('#tiles').innerHTML=[['146,950','events recorded','both runs, 48,000 ticks each'],['42,088','belief snapshots','held · hypothesis · contested · abandoned'],['3,641','rules held at day 20','run 2, 123 beings'],['2,119','thoughts in the corpus','June experiments, 10 kinds']]
+ .map(([v,l,s])=>`<div class="tile"><div class="v">${v}</div><div class="l">${l}</div><div class="s">${s}</div></div>`).join('');
+
+/* line chart */
+function lineChart(el,series,{yKey,yLabel}){
+  const W=640,H=250,m={l:52,r:16,t:12,b:30},iw=W-m.l-m.r,ih=H-m.t-m.b;
+  const xs=series[0].pts.map(p=>p[0]);
+  const ymax=Math.max(...series.flatMap(s=>s.pts.map(p=>p[yKey])));
+  const step=ymax>5000?2000:ymax>1000?500:50, top=Math.ceil(ymax/step)*step;
+  const x=d=>m.l+(d-1)/(xs.length-1)*iw, y=v=>m.t+ih-(v/top)*ih;
+  let g='';
+  for(let v=0;v<=top;v+=step){g+=`<line x1="${m.l}" x2="${m.l+iw}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text class="tick" x="${m.l-8}" y="${y(v)+4}" text-anchor="end">${fmt(v)}</text>`}
+  g+=`<line x1="${m.l}" x2="${m.l+iw}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>`;
+  for(const d of [1,5,10,15,21]) g+=`<text class="tick" x="${x(d)}" y="${H-8}" text-anchor="middle">day ${d}</text>`;
+  const paths=series.map(s=>{const pts=s.pts.map(p=>`${x(p[0])},${y(p[yKey])}`).join(' ');const last=s.pts[s.pts.length-1];
+    return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round"/>
+      <circle cx="${x(last[0])}" cy="${y(last[yKey])}" r="4" fill="${s.color}" stroke="var(--surface)" stroke-width="2"/>
+      <text class="tick" x="${x(last[0])-6}" y="${y(last[yKey])-9}" text-anchor="end" style="fill:var(--fg2)">${fmt(last[yKey])}</text>`}).join('');
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${yLabel} per day">${g}${paths}<line id="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t+ih}" stroke="var(--axis)" stroke-dasharray="3 3" visibility="hidden"/><rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg>`;
+  const svg=el.firstElementChild, xh=svg.querySelector('#xh');
+  svg.addEventListener('mousemove',e=>{const r=svg.getBoundingClientRect();const px=(e.clientX-r.left)/r.width*W;const d=Math.max(1,Math.min(xs.length,Math.round((px-m.l)/iw*(xs.length-1))+1));
+    xh.setAttribute('x1',x(d));xh.setAttribute('x2',x(d));xh.setAttribute('visibility','visible');
+    showTip(`<b>Day ${d}</b><br>`+series.map(s=>`${s.name}: ${fmt(s.pts[d-1][yKey])}`).join('<br>'),e.clientX,e.clientY)});
+  svg.addEventListener('mouseleave',()=>{xh.setAttribute('visibility','hidden');hideTip()});
+}
+const S=[{name:'Observation on',color:'var(--s1)',pts:D.metrics[1]},{name:'Observation off',color:'var(--s2)',pts:D.metrics[2]}];
+lineChart($('#knowChart'),S,{yKey:2,yLabel:'Rules known'});
+lineChart($('#aliveChart'),S,{yKey:1,yLabel:'Beings alive'});
+
+/* belief stack */
+const btot=D.beliefs.reduce((a,b)=>a+b[1],0), bcol=['var(--s1)','var(--s2)','var(--s3)','var(--s4)'];
+$('#beliefStack').innerHTML=D.beliefs.map((b,i)=>`<div style="flex:${b[1]};background:${bcol[i]}" title="${b[0]}: ${fmt(b[1])}"></div>`).join('');
+$('#beliefLbl').innerHTML=D.beliefs.map((b,i)=>`<div><span style="--sw:${bcol[i]}"></span><span class="n">${fmt(b[1])}</span> <span class="t">${b[0]} · ${(b[1]/btot*100).toFixed(0)}%</span></div>`).join('');
+
+/* rules */
+const EV={SufferedExposure:'being exposed',AteFood:'eating',SleptSafely:'sleeping safely',GatherSucceeded:'gathering',UtteranceSpoken:'speaking'};
+const CTX={night:'at night',inShelter:'in shelter','*':''};
+const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
+function ruleText(k){const p=k.split(':');
+  if(p[0]==='out'){const[,e,c,need,dir]=p;return `${cap(EV[e]||e)} ${CTX[c]??c} ${dir} ${need}`.replace(/\s+/g,' ')}
+  if(p[0]==='ctx'){const[,e,,c,sign]=p;return `${cap(EV[e]||e)} ${sign==='positive'?'happens':'does not happen'} ${CTX[c]??c}`}
+  if(p[0]==='seq'){const[a,b]=k.slice(4).split('>');const[ae,ai]=a.split(':'),[be,bi]=b.split(':');return `${cap(EV[ae]||ae)} ${ai}, then ${EV[be]||be} ${bi}`}
+  return k}
+function hbars(el,items,{max,label,value,sub}){el.innerHTML=items.map(it=>`<div class="hb"><div class="lab">${label(it)}</div><div><div class="bar" style="width:${value(it)/max*100}%"></div></div><div class="val">${fmt(value(it))}${sub?` <small>${sub(it)}</small>`:''}</div></div>`).join('')}
+hbars($('#rules'),D.topRules,{max:D.alive2,label:r=>`${ruleText(r[0])}<span class="key">${r[0]}</span>`,value:r=>r[1],sub:r=>`of ${D.alive2} · ${r[2].toFixed(2)}`});
+
+/* generations */
+(function(){const W=640,H=250,m={l:44,r:12,t:12,b:30},iw=W-m.l-m.r,ih=H-m.t-m.b,n=6,top=50;
+  const y=v=>m.t+ih-(v/top)*ih, gw=iw/n, bw=(gw-16)/2;let g='';
+  for(let v=0;v<=top;v+=10)g+=`<line x1="${m.l}" x2="${m.l+iw}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text class="tick" x="${m.l-8}" y="${y(v)+4}" text-anchor="end">${v}</text>`;
+  g+=`<line x1="${m.l}" x2="${m.l+iw}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>`;
+  for(let i=0;i<n;i++){const x0=m.l+i*gw+8;const on=D.gen.on[i],off=D.gen.off[i];
+    g+=`<rect x="${x0}" y="${y(on)}" width="${bw-1}" height="${y(0)-y(on)}" fill="var(--s1)" rx="2"><title>Generation ${i+1}, observation on: ${on} makers</title></rect>`;
+    g+=`<rect x="${x0+bw+1}" y="${y(off)}" width="${bw-1}" height="${Math.max(0,y(0)-y(off))}" fill="var(--s2)" rx="2"><title>Generation ${i+1}, observation off: ${off} makers</title></rect>`;
+    g+=`<text class="tick" x="${x0+bw/2}" y="${y(on)-5}" text-anchor="middle" style="fill:var(--fg2)">${on}</text><text class="tick" x="${x0+bw*1.5+1}" y="${y(off)-5}" text-anchor="middle" style="fill:var(--fg2)">${off}</text>`;
+    g+=`<text class="tick" x="${x0+bw}" y="${H-8}" text-anchor="middle">gen ${i+1}</text>`}
+  $('#genChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Distinct makers per generation">${g}</svg>`})();
+$('#unfold').innerHTML='<tr><th>day</th><th>population</th><th>births</th><th>recipe-holders</th><th>makers</th></tr>'+D.unfold.map(r=>`<tr>${r.map(v=>`<td>${fmt(v)}</td>`).join('')}</tr>`).join('');
+
+/* record */
+$('#traits').innerHTML=`<span class="chip">being <b>${D.record.being}</b></span><span class="chip">tick <b>${D.record.tick}</b></span>`+Object.entries(D.record.traits).map(([k,v])=>`<span class="chip">${k} <b>${v}</b></span>`).join('');
+$('#needs').innerHTML=Object.entries(D.record.needs).map(([k,v])=>`<div class="need"><span>${k}</span><div class="trk"><div class="fil" style="width:${v}%"></div></div><span class="v">${v.toFixed(0)}</span></div>`).join('');
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+$('#sysPrompt').innerHTML=esc(D.record.system).replace(/(You reason ONLY[^\n]*\n[^\n]*\n[^\n]*\nDo not invent facts\.)/,'<b>$1</b>');
+$('#userPrompt').innerHTML=esc(D.record.user).replace(/^([A-Z][A-Z ()]+):/gm,'<b>$1:</b>').replace(/\(you have learned nothing yet\)/,'<b>(you have learned nothing yet)</b>');
+
+/* corpus */
+hbars($('#kinds'),D.kinds,{max:D.kinds[0][1],label:k=>k[0],value:k=>k[1]});
+$('#samples').innerHTML=D.samples.map(s=>`<div class="card"><div class="who">${s.name} · ${s.kind}</div><div>${s.thought}</div><div class="say">“${s.utterance}”</div><div class="plan">plan: ${s.plan.length?s.plan.join(' → '):'—'}</div></div>`).join('');
+
+/* events */
+hbars($('#events'),D.events,{max:D.events[0][1],label:e=>e[0].replace(/([a-z])([A-Z])/g,'$1 $2'),value:e=>e[1]});
+</script>

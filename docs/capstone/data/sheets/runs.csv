@@ -1,0 +1,3 @@
+id,seed,agent_count,backend,status,started_at,finished_at,ticks
+1,phase3-exp1,100,accounts/fireworks/models/gpt-oss-120b,finished,0,48000,48000
+2,phase3-exp1,100,accounts/fireworks/models/gpt-oss-120b,finished,0,48000,48000

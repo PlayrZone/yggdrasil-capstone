@@ -1,5 +1,12 @@
 # Yggdrasil Lab
 
+## COS650 Capstone — Milestone 2
+
+- **Build under evaluation:** Yggdrasil Lab **v0.3.7**, tag [`milestone-2`](https://github.com/PlayrZone/yggdrasil-capstone/releases/tag/milestone-2) — branch tip, engine 931 / lab 511 / MCP 37 tests, all type-checks clean. Installer: [YggdrasilLab-Setup-0.3.7.exe](https://github.com/PlayrZone/yggdrasil-capstone/releases/download/milestone-2/YggdrasilLab-Setup-0.3.7.exe).
+- **New since Milestone 1 (code):** the lab's automated acceptance harness (`pnpm --filter @yggdrasil/lab accept`) that drives the built Electron app with real input and checks it against ground truth — currently **10 of 12 checks pass** ([report](docs/capstone/accept-report-m2.json); `offers` and `perf` still failing); a renderer health probe (shader / console / window errors); occupied shelters drawn solid with a roof chip as the reading; first pass of the place-handle performance fix.
+- **New since Milestone 1 (data analysis):** [What the Beings Learned](docs/capstone/data/What-the-Beings-Learned.html) — a data page built from the research database and corpus (knowledge growth, belief life-cycle, the mined rules, the apprenticeship A/B, a real recorded prompt, the thought corpus); the underlying [data sheets](docs/capstone/data/sheets/) exported from `research.db` (metrics per day, rules held at day 20, belief status, events by type, 2,119 corpus thoughts).
+- **Project management:** [GitHub milestones and issues](https://github.com/PlayrZone/yggdrasil-capstone/milestones).
+
 ## COS650 Capstone — Milestone 1
 
 **Student:** Hakim Corner · **Area:** Artificial Intelligence · **Project:** Yggdrasil — a world-grounded mind for NPCs (artificial-life engine + Electron lab).

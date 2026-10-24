@@ -1,0 +1,715 @@
+{
+ "runs": [
+  {
+   "id": 1,
+   "seed": "phase3-exp1",
+   "agents": 100,
+   "backend": "accounts/fireworks/models/gpt-oss-120b",
+   "status": "finished",
+   "ticks": 48000
+  },
+  {
+   "id": 2,
+   "seed": "phase3-exp1",
+   "agents": 100,
+   "backend": "accounts/fireworks/models/gpt-oss-120b",
+   "status": "finished",
+   "ticks": 48000
+  }
+ ],
+ "metrics": {
+  "1": [
+   {
+    "day": 1,
+    "alive": 100,
+    "knowledge": 0,
+    "shares": 0,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 0
+   },
+   {
+    "day": 2,
+    "alive": 101,
+    "knowledge": 289,
+    "shares": 18,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 20
+   },
+   {
+    "day": 3,
+    "alive": 117,
+    "knowledge": 1082,
+    "shares": 548,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 50
+   },
+   {
+    "day": 4,
+    "alive": 115,
+    "knowledge": 1742,
+    "shares": 1205,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 72
+   },
+   {
+    "day": 5,
+    "alive": 111,
+    "knowledge": 2288,
+    "shares": 1954,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 103
+   },
+   {
+    "day": 6,
+    "alive": 107,
+    "knowledge": 2800,
+    "shares": 2828,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 126
+   },
+   {
+    "day": 7,
+    "alive": 120,
+    "knowledge": 3607,
+    "shares": 3645,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 149
+   },
+   {
+    "day": 8,
+    "alive": 126,
+    "knowledge": 4330,
+    "shares": 4225,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 170
+   },
+   {
+    "day": 9,
+    "alive": 122,
+    "knowledge": 4786,
+    "shares": 4863,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 192
+   },
+   {
+    "day": 10,
+    "alive": 116,
+    "knowledge": 5035,
+    "shares": 5442,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 209
+   },
+   {
+    "day": 11,
+    "alive": 119,
+    "knowledge": 5242,
+    "shares": 6211,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 225
+   },
+   {
+    "day": 12,
+    "alive": 134,
+    "knowledge": 5717,
+    "shares": 7062,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 247
+   },
+   {
+    "day": 13,
+    "alive": 142,
+    "knowledge": 6151,
+    "shares": 8178,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 274
+   },
+   {
+    "day": 14,
+    "alive": 146,
+    "knowledge": 6537,
+    "shares": 9322,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 298
+   },
+   {
+    "day": 15,
+    "alive": 149,
+    "knowledge": 6965,
+    "shares": 10564,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 324
+   },
+   {
+    "day": 16,
+    "alive": 166,
+    "knowledge": 7677,
+    "shares": 11540,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 361
+   },
+   {
+    "day": 17,
+    "alive": 169,
+    "knowledge": 8063,
+    "shares": 12397,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 394
+   },
+   {
+    "day": 18,
+    "alive": 178,
+    "knowledge": 8857,
+    "shares": 13439,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 425
+   },
+   {
+    "day": 19,
+    "alive": 186,
+    "knowledge": 9355,
+    "shares": 14798,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 448
+   },
+   {
+    "day": 20,
+    "alive": 217,
+    "knowledge": 9955,
+    "shares": 16071,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 486
+   },
+   {
+    "day": 21,
+    "alive": 233,
+    "knowledge": 10997,
+    "shares": 18337,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 522
+   }
+  ],
+  "2": [
+   {
+    "day": 1,
+    "alive": 100,
+    "knowledge": 0,
+    "shares": 0,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 0
+   },
+   {
+    "day": 2,
+    "alive": 101,
+    "knowledge": 289,
+    "shares": 18,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 20
+   },
+   {
+    "day": 3,
+    "alive": 117,
+    "knowledge": 1082,
+    "shares": 548,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 50
+   },
+   {
+    "day": 4,
+    "alive": 115,
+    "knowledge": 1738,
+    "shares": 1207,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 72
+   },
+   {
+    "day": 5,
+    "alive": 111,
+    "knowledge": 2189,
+    "shares": 2124,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 102
+   },
+   {
+    "day": 6,
+    "alive": 105,
+    "knowledge": 2557,
+    "shares": 3190,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 116
+   },
+   {
+    "day": 7,
+    "alive": 112,
+    "knowledge": 2951,
+    "shares": 4337,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 139
+   },
+   {
+    "day": 8,
+    "alive": 115,
+    "knowledge": 3359,
+    "shares": 5598,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 159
+   },
+   {
+    "day": 9,
+    "alive": 108,
+    "knowledge": 3687,
+    "shares": 7090,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 174
+   },
+   {
+    "day": 10,
+    "alive": 101,
+    "knowledge": 3926,
+    "shares": 8639,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 186
+   },
+   {
+    "day": 11,
+    "alive": 109,
+    "knowledge": 4154,
+    "shares": 10153,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 196
+   },
+   {
+    "day": 12,
+    "alive": 116,
+    "knowledge": 4450,
+    "shares": 11650,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 214
+   },
+   {
+    "day": 13,
+    "alive": 118,
+    "knowledge": 4926,
+    "shares": 13396,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 249
+   },
+   {
+    "day": 14,
+    "alive": 115,
+    "knowledge": 5227,
+    "shares": 14700,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 259
+   },
+   {
+    "day": 15,
+    "alive": 117,
+    "knowledge": 5443,
+    "shares": 15778,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 270
+   },
+   {
+    "day": 16,
+    "alive": 115,
+    "knowledge": 5856,
+    "shares": 16645,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 304
+   },
+   {
+    "day": 17,
+    "alive": 109,
+    "knowledge": 6141,
+    "shares": 17347,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 334
+   },
+   {
+    "day": 18,
+    "alive": 105,
+    "knowledge": 6410,
+    "shares": 18592,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 344
+   },
+   {
+    "day": 19,
+    "alive": 109,
+    "knowledge": 6689,
+    "shares": 20173,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 359
+   },
+   {
+    "day": 20,
+    "alive": 117,
+    "knowledge": 6957,
+    "shares": 21809,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 366
+   },
+   {
+    "day": 21,
+    "alive": 123,
+    "knowledge": 7218,
+    "shares": 23555,
+    "exchanges": 0,
+    "conflicts": 0,
+    "sickness": 384
+   }
+  ]
+ },
+ "beliefStatusByTick": [
+  {
+   "tick": 48000,
+   "day": 20.0,
+   "held": 3641,
+   "hypothesis": 2896,
+   "contested": 677,
+   "abandoned": 2899
+  }
+ ],
+ "topRules": [
+  {
+   "rule": "ctx:SufferedExposure:*:night:positive",
+   "agents": 116,
+   "confidence": 0.97
+  },
+  {
+   "rule": "out:SufferedExposure:night:safety:worsens",
+   "agents": 113,
+   "confidence": 0.96
+  },
+  {
+   "rule": "out:SufferedExposure:*:safety:worsens",
+   "agents": 113,
+   "confidence": 0.96
+  },
+  {
+   "rule": "out:AteFood:*:hunger:relieves",
+   "agents": 106,
+   "confidence": 0.97
+  },
+  {
+   "rule": "out:SleptSafely:*:rest:relieves",
+   "agents": 105,
+   "confidence": 0.96
+  },
+  {
+   "rule": "seq:GatherSucceeded:berry>AteFood:berry",
+   "agents": 100,
+   "confidence": 0.94
+  },
+  {
+   "rule": "seq:GatherSucceeded:tuber>AteFood:tuber",
+   "agents": 99,
+   "confidence": 0.94
+  },
+  {
+   "rule": "out:SleptSafely:inShelter:rest:relieves",
+   "agents": 97,
+   "confidence": 0.96
+  },
+  {
+   "rule": "out:AteFood:inShelter:hunger:relieves",
+   "agents": 89,
+   "confidence": 0.95
+  },
+  {
+   "rule": "ctx:SufferedExposure:*:inShelter:negative",
+   "agents": 89,
+   "confidence": 0.77
+  },
+  {
+   "rule": "out:SleptSafely:night:rest:relieves",
+   "agents": 80,
+   "confidence": 0.92
+  },
+  {
+   "rule": "out:AteFood:night:hunger:relieves",
+   "agents": 76,
+   "confidence": 0.92
+  },
+  {
+   "rule": "out:SufferedExposure:inShelter:safety:worsens",
+   "agents": 71,
+   "confidence": 0.92
+  },
+  {
+   "rule": "seq:GatherSucceeded:nightshade>AteFood:nightshade",
+   "agents": 63,
+   "confidence": 0.87
+  }
+ ],
+ "events": [
+  {
+   "type": "UtteranceSpoken",
+   "count": 24037
+  },
+  {
+   "type": "IntentRejected",
+   "count": 21384
+  },
+  {
+   "type": "SufferedExposure",
+   "count": 5220
+  },
+  {
+   "type": "GatherSucceeded",
+   "count": 3807
+  },
+  {
+   "type": "AteFood",
+   "count": 2896
+  },
+  {
+   "type": "AttackedByPredator",
+   "count": 2888
+  },
+  {
+   "type": "SleptSafely",
+   "count": 2328
+  },
+  {
+   "type": "SleptExposed",
+   "count": 483
+  },
+  {
+   "type": "BecameSick",
+   "count": 384
+  },
+  {
+   "type": "RecoveredFromSickness",
+   "count": 311
+  },
+  {
+   "type": "Crafted",
+   "count": 268
+  },
+  {
+   "type": "ChildBorn",
+   "count": 171
+  }
+ ],
+ "beliefTotals": {
+  "abandoned": 2899,
+  "contested": 677,
+  "held": 3641,
+  "hypothesis": 2896
+ },
+ "corpusKinds": [
+  [
+   "civilization-contact",
+   422
+  ],
+  [
+   "interpretation",
+   294
+  ],
+  [
+   "competing-cultures",
+   216
+  ],
+  [
+   "great-person",
+   175
+  ],
+  [
+   "innovation",
+   168
+  ],
+  [
+   "cultural-seeding",
+   168
+  ],
+  [
+   "curiosity",
+   144
+  ],
+  [
+   "institution",
+   112
+  ],
+  [
+   "mentorship",
+   78
+  ],
+  [
+   "human-arrival",
+   72
+  ]
+ ],
+ "corpusCount": 2119,
+ "corpusSamples": [
+  {
+   "kind": "cognition",
+   "name": "Gahallian #2081",
+   "thought": "I feel my stomach rumble and remember that tubers are safe to eat, so I will gather a tuber and eat it to ease my hunger.",
+   "utterance": "Tubers are good food, I'll gather one.",
+   "plan": []
+  },
+  {
+   "kind": "innovation",
+   "name": "Gahallian #2320",
+   "thought": "I’m thinking about gathering berries to ease my low hunger while I ask my close friend Gahallian #1876 about the mysterious place from our stories that pulls at me, because my curiosity is high and I want to stay near kin.",
+   "utterance": "Can you tell me about the place from our stories that lies about a step toward 403,516?",
+   "plan": [
+    "Gather",
+    "Speak"
+   ]
+  },
+  {
+   "kind": "civilization-contact",
+   "name": "Gahallian #2272",
+   "thought": "I’m eager to explore the mysterious northeast spot and craft another spear for safety, while I should chat with my friends to satisfy my social curiosity.",
+   "utterance": "Do you know anything about the place to the northeast?",
+   "plan": [
+    "Speak",
+    "MoveTo",
+    "Craft"
+   ]
+  },
+  {
+   "kind": "great-person",
+   "name": "Gahallian #2233",
+   "thought": "I feel drawn to the place from the tale of Gahallian #1889, so I will head there while asking someone I trust for more details.",
+   "utterance": "Do you know where the place from the story of Gahallian #1889 is?",
+   "plan": [
+    "MoveTo"
+   ]
+  }
+ ],
+ "record": {
+  "being": 1829,
+  "tick": 184,
+  "needs": {
+   "hunger": 24.314199999999673,
+   "rest": 25.55000000000021,
+   "safety": 5.929999999999955,
+   "socialConnection": 23.69999999999992
+  },
+  "traits": {
+   "curiosity": 57,
+   "aggression": 49,
+   "compassion": 39,
+   "ambition": 92,
+   "loyalty": 90,
+   "riskTolerance": 73
+  },
+  "system": "You are a young being who has no name yet. You live in a simple world, among others who were here before you.\nYou were born into a people who already have kin, companions, and stories they tell. You did\nnot make this world or these stories; you are finding your place in them.\nYou do not control movement step by step — you decide goals, plans, and what to say.\nYou reason ONLY from what you perceive and what you KNOW — your memories, the STORIES you carry,\nand the people you know, all given below. You have no knowledge of the world beyond this.\nDo not invent facts. The meaning you find in a story or a person is YOURS to decide — no one\nassigns roles here; if a being matters to you, that is something you choose.\n\nYour personality (0-100): curiosity 57, aggression 49,\ncompassion 39, ambition 92, loyalty 90, risk 73.\n\nYou have no name. Choose one for YOURSELF that fits who you are, and include it as \"name\":string in your JSON (just this once).\nRespond ONLY with JSON of this exact shape:\n{\"name\":string,\"thought\":string,\"goals\":[{\"description\":string,\"need\":string|null}],\n \"plan\":[{\"kind\":INTENT,...args}],\n \"utterances\":[{\"targetId\":number|null,\"speechAct\":\"share-knowledge\"|\"share-episode\"|\"inform\"|\"request\",\"text\"?:string,\"ruleRef\"?:number,\"narrativeRef\"?:string}]}\n\"thought\" is a short first-person sentence: what you are thinking and WHY you choose this —\nincluding what you make of any story or person that matters to you now. Speak as yourself.\nINTENT kind is one of: MoveTo, Gather, Dig, Eat, Drink, Sleep, Build, Deposit, Withdraw, Give, Attack, Craft, Speak, Follow, Flee, Idle.\nIntent args: MoveTo{x,y|targetId}, Gather{targetId}, Eat{objectKind}, Build{buildKind,x,y},\nDig{} (dig the ground where you stand), Give{targetId,objectKind}, Deposit{objectKind,targetId?}, Sleep{durationTicks}, Idle{durationTicks},\nCraft{} (try combining the raw materials you carry — whether anything useful results, and what, is for you to DISCOVER through trying),\nFlee{x,y}, Follow{targetId}, Speak{} (put speech in utterances).\nTo ASK someone something — to seek what they know — use a \"request\" utterance addressed to them.\nTo TEACH, use \"share-knowledge\" with \"ruleRef\" set to the [number] of one thing from WHAT YOU KNOW;\nto RETELL a tale, use \"share-episode\" with \"narrativeRef\" set to the (ref …) of one story you carry.\nYou can only pass on what you yourself know and carry — say it in your own words in \"text\".\nKeep the plan short (1-4 intents). The world validates every intent; impossible ones fail.",
+  "user": "Why you are thinking now: periodic.\n\nNEEDS (0 satisfied, 100 desperate — 60+ pressing, 85+ critical):\n  hunger 24, rest 26, safety 6, social 24\nHEALTH 100. It is spring, day.\nINVENTORY: empty\n\nWHAT YOU KNOW:\n  (you have learned nothing yet)\n\nYOUR FAMILY:\n  (you know of no family)\n\nTHOSE YOU KNOW (how you feel about them):\n  (you know no one well yet)\n\nTHE TALE YOUR PEOPLE TELL MOST (you have heard it many times): \"The first makers raised a home by the great river\"\n  What this tale MEANS to you is yours alone to decide.\nSTORIES YOU CARRY (the tales your people tell — some you saw, some you were told):\n  - (ref uo4t8k) \"The first makers raised a home by the great river\" (you were told this)\n\nA place from the stories you carry pulls at you — it lies northeast, about 530 away (toward 900,120). Whether you go, and what it means to you, is yours to decide.\n\nWHAT YOU SEE (within range):\n  resources: 2 river, 10 berryBush, 4 tuberPlant, 2 clayDeposit, 2 fiberPlant, 13 tree, 1 nightshadePlant, 1 mushroomPatch\n\nRECENT MEMORIES:\n  (nothing notable)\n\nCURRENT GOALS: return to the place of the story\n\nSome of what you carry you were TOLD but never saw, and some things you cannot explain.\nIf no need presses you, you are free to pursue what you wish to UNDERSTAND — ask someone who\nmight know, seek out an elder, go and find out for yourself, or try making something from the materials you carry to discover what can be made. Or simply live. The choice is yours.\n\nDecide what to do. Respond with JSON only."
+ },
+ "apprenticeship": {
+  "treatment": [
+   44,
+   43,
+   38,
+   32,
+   9,
+   2
+  ],
+  "control": [
+   1,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "treatmentPop": [
+   50,
+   59,
+   58,
+   47,
+   16,
+   3
+  ],
+  "totals": {
+   "makersT": 168,
+   "makersC": 1,
+   "craftsT": 3547,
+   "craftsC": 268,
+   "popT": 233,
+   "popC": 123
+  },
+  "unfold": [
+   {
+    "day": 4,
+    "pop": 111,
+    "births": 32,
+    "holders": 10,
+    "makers": 8
+   },
+   {
+    "day": 8,
+    "pop": 122,
+    "births": 67,
+    "holders": 69,
+    "makers": 67
+   },
+   {
+    "day": 12,
+    "pop": 142,
+    "births": 107,
+    "holders": 90,
+    "makers": 82
+   },
+   {
+    "day": 16,
+    "pop": 169,
+    "births": 152,
+    "holders": 99,
+    "makers": 92
+   },
+   {
+    "day": 20,
+    "pop": 233,
+    "births": 223,
+    "holders": 174,
+    "makers": 168
+   }
+  ]
+ }
+}
