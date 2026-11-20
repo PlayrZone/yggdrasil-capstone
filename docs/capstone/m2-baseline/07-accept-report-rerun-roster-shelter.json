@@ -1,0 +1,206 @@
+{
+  "item": "L3a/L4 — the world view",
+  "round": 7,
+  "started": "2026-11-20T14:44:27.066Z",
+  "finished": "2026-11-20T14:45:24.588Z",
+  "lab": "C:\\dev\\yggdrasil-capstone\\packages\\lab",
+  "bars": {
+    "pointPx": 0.5,
+    "pointsMin": 40,
+    "offersMin": 300,
+    "camerasMin": 30,
+    "rosterClicks": 30,
+    "rosterStillMs": 12000,
+    "scalePx": 0.05,
+    "namingFrames": 5,
+    "perfSeconds": 30,
+    "perfFps": 59.5,
+    "perfLongTasks": 0,
+    "perfBeings": 250,
+    "smallW": 900,
+    "smallH": 620,
+    "pennantOfFigure": 0.6,
+    "pennantFloorPx": 13
+  },
+  "pids": [
+    201768
+  ],
+  "shutdown": {
+    "killed": [
+      201768
+    ],
+    "alive": []
+  },
+  "pageErrors": [],
+  "bootHealth": {
+    "shaderErrors": 0,
+    "consoleErrors": 0,
+    "webglContextLost": 0,
+    "windowErrors": 0,
+    "cullRisks": 0,
+    "notes": []
+  },
+  "closeHealth": {
+    "shaderErrors": 0,
+    "consoleErrors": 0,
+    "webglContextLost": 0,
+    "windowErrors": 0,
+    "cullRisks": 0,
+    "notes": []
+  },
+  "checks": [
+    {
+      "check": "roster",
+      "pass": true,
+      "advisory": false,
+      "seconds": 49.3,
+      "numbers": {
+        "clicks": 36,
+        "right": 36,
+        "wrong": [],
+        "stillMs": 12000,
+        "orderHeld": true
+      }
+    },
+    {
+      "check": "shelter",
+      "pass": true,
+      "advisory": false,
+      "seconds": 5,
+      "numbers": {
+        "chips": [
+          {
+            "cluster": 0,
+            "count": 14,
+            "truth": 14,
+            "inside": true,
+            "mixW": 30,
+            "mixH": 4,
+            "illShown": "",
+            "unwellTruth": 0,
+            "numDrawn": "14",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          },
+          {
+            "cluster": 1,
+            "count": 3,
+            "truth": 3,
+            "inside": true,
+            "mixW": 0,
+            "mixH": 0,
+            "illShown": null,
+            "unwellTruth": 0,
+            "numDrawn": null,
+            "countRight": true,
+            "domIsThisChip": false,
+            "mixDrawn": false,
+            "illRight": null
+          },
+          {
+            "cluster": 0,
+            "count": 9,
+            "truth": 9,
+            "inside": true,
+            "mixW": 30,
+            "mixH": 4,
+            "illShown": "",
+            "unwellTruth": 0,
+            "numDrawn": "9",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          },
+          {
+            "cluster": 1,
+            "count": 3,
+            "truth": 3,
+            "inside": true,
+            "mixW": 0,
+            "mixH": 0,
+            "illShown": null,
+            "unwellTruth": 2,
+            "numDrawn": null,
+            "countRight": true,
+            "domIsThisChip": false,
+            "mixDrawn": false,
+            "illRight": null
+          },
+          {
+            "cluster": 0,
+            "count": 7,
+            "truth": 7,
+            "inside": true,
+            "mixW": 30,
+            "mixH": 4,
+            "illShown": "",
+            "unwellTruth": 0,
+            "numDrawn": "7",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          },
+          {
+            "cluster": 0,
+            "count": 6,
+            "truth": 6,
+            "inside": true,
+            "mixW": 0,
+            "mixH": 0,
+            "illShown": null,
+            "unwellTruth": 0,
+            "numDrawn": null,
+            "countRight": true,
+            "domIsThisChip": false,
+            "mixDrawn": false,
+            "illRight": null
+          },
+          {
+            "cluster": 1,
+            "count": 6,
+            "truth": 6,
+            "inside": true,
+            "mixW": 32.333335876464844,
+            "mixH": 4,
+            "illShown": "1",
+            "unwellTruth": 1,
+            "numDrawn": "6",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          }
+        ],
+        "stripCarriedClause": true,
+        "carried": 5,
+        "nameButtons": 4,
+        "nameRight": 4,
+        "chipsFoundOnTheirOwnPoint": "4/7"
+      }
+    }
+  ],
+  "passed": 2,
+  "failed": [],
+  "verdict": "PASS",
+  "log": [
+    "accept: roster, shelter",
+    "  lab C:\\dev\\yggdrasil-capstone\\packages\\lab",
+    "  home <local path>",
+    "  shots <local path>",
+    "electron pid 201768 port 9422",
+    "[main] ",
+    "[main!] \r\nDevTools listening on ws://127.0.0.1:9422/devtools/browser/69643096-ff99-4342-80f2-5d47dff13c14",
+    "[main] Skip checkForUpdates because application is not packed and dev update config is not forced",
+    "  boot health {\"shaderErrors\":0,\"consoleErrors\":0,\"webglContextLost\":0,\"windowErrors\":0,\"cullRisks\":0,\"notes\":[]}",
+    "  drawing: 13 frames",
+    "▸ roster",
+    "  world \"genesis-01\": Run | New world | SEED",
+    "  PASS roster (49.3 s)",
+    "▸ shelter",
+    "  PASS shelter (5.0 s)"
+  ]
+}

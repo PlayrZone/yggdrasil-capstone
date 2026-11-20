@@ -1,0 +1,5 @@
+name,scenario,seed,beings,ticks,simDays,aliveAtEnd,births,deathsTotal,deathsByCause,events,utterances,utt_inform,utt_request,utt_share-episode,utt_share-knowledge,shareKnowledgeFraction,shares,builds,exchanges,conflicts,totalKnowledge,backendLabel,geographyId,fingerprint,repeatTicks,repeat,advanceMs,stepsPerSecond
+classic-100,forager-classic,cos650-m2-classic,100,4800,2,121,24,3,starvation:2;violence:1,7664,761,200,0,0,561,0.7372,561,39,0,0,1123,reflex,forager-classic,922a417770768a31:1954073,4800,PASS,1135.1,4228.87
+continent-60,forager-continent,cos650-m2-continent,60,4800,2,60,15,15,violence:15,2120,501,21,0,0,480,0.9581,480,60,0,0,514,reflex,forager-continent,156665ab88e25915:2820819,4800,PASS,1450.8,3308.54
+classic-300,forager-classic,cos650-m2-classic-300,300,2400,1,319,23,4,violence:4,12343,332,6,0,0,326,0.9819,326,48,0,0,1871,reflex,forager-classic,f4d7e97a06b6bae2:3357792,2400,PASS,2860.2,839.1
+classic-1000,forager-classic,cos650-m2-scale,1000,600,0.25,1000,0,0,,416,8,0,0,0,8,1,8,17,0,0,57,reflex,forager-classic,8b8c3a71d8ead821:1980353,600,PASS,4890.3,122.69

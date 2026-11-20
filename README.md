@@ -1,6 +1,17 @@
 # Yggdrasil Lab
 
-## COS650 Capstone — Milestone 2
+## COS650 Capstone — Milestone 2 (November 2026): verified research baseline
+
+**Student:** Hakim Corner · **Project:** Yggdrasil — artificial-civilization research; the first question is whether one being can learn an unfamiliar world.
+
+- **Build under evaluation:** Yggdrasil Lab **v0.3.8**, tag [`milestone-2-baseline`](https://github.com/PlayrZone/yggdrasil-capstone/releases/tag/milestone-2-baseline). Installer: [YggdrasilLab-Setup-0.3.8.exe](https://github.com/PlayrZone/yggdrasil-capstone/releases/download/milestone-2-baseline/YggdrasilLab-Setup-0.3.8.exe) (unsigned; Windows SmartScreen asks to confirm).
+- **Evidence page:** [docs/capstone/m2-baseline](docs/capstone/m2-baseline/README.md) — test suites, three seeded scenarios, same-seed repeat checks, the mind/world boundary tests, what "communication" is today, and one earlier figure that did not reproduce.
+- **New code:** the research-baseline runner, [`packages/engine/baseline`](packages/engine/baseline/) — `pnpm --filter @yggdrasil/engine baseline`. No language model is called.
+- **Scope change, documented:** the project moved from "a mind for NPCs" to research on one developing mind first; see the note at the top of [docs/rework/CAMPAIGN.md](docs/rework/CAMPAIGN.md). The sections below are the earlier October milestones, kept as history.
+- **Project management:** [Trello board](https://trello.com/b/JwO9UkwO/yggdrasil-cos650-capstone-week-2-nov-2026).
+- **Not claimed:** discovery of unfamiliar materials (M02), practiced skills (M03), understanding another being (S01) and teaching (C01) are not built yet.
+
+## COS650 Capstone — Milestone 2 (October build, superseded)
 
 - **Build under evaluation:** Yggdrasil Lab **v0.3.7**, tag [`milestone-2`](https://github.com/PlayrZone/yggdrasil-capstone/releases/tag/milestone-2) — branch tip, engine 931 / lab 511 / MCP 37 tests, all type-checks clean. Installer: [YggdrasilLab-Setup-0.3.7.exe](https://github.com/PlayrZone/yggdrasil-capstone/releases/download/milestone-2/YggdrasilLab-Setup-0.3.7.exe).
 - **New since Milestone 1 (code):** the lab's automated acceptance harness (`pnpm --filter @yggdrasil/lab accept`) that drives the built Electron app with real input and checks it against ground truth — currently **10 of 12 checks pass** ([report](docs/capstone/accept-report-m2.json); `offers` and `perf` still failing); a renderer health probe (shader / console / window errors); occupied shelters drawn solid with a roof chip as the reading; first pass of the place-handle performance fix.

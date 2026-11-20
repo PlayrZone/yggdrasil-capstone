@@ -1,0 +1,39 @@
+commit:   072885f0bb2aeb4788350cb81cdd437bf2491528
+dirty:    no
+started:  2026-11-20T14:29:35Z
+node:     v24.13.1   pnpm: 10.33.2
+command:  pnpm --filter @yggdrasil/engine baseline
+----------------------------------------------------------------
+
+> @yggdrasil/engine@0.1.0 baseline C:\dev\yggdrasil-capstone\packages\engine
+> vitest run --config baseline/vitest.config.ts
+
+
+ RUN  v2.1.9 C:/dev/yggdrasil-capstone/packages/engine
+
+stdout | baseline/research-baseline.baseline.ts > research baseline > runs every seeded configuration, proves repeatability, and writes the evidence
+
+Yggdrasil research baseline — engine 0.1.0, 072885f0bb2a, 2026-11-20T14:30:01.777Z
+AMD Ryzen 9 9950X3D 16-Core Processor x32, node v24.13.1, backend reflex (no model called)
+
+run           beings  ticks  alive  events  steps/s  fingerprint               repeat
+------------  ------  -----  -----  ------  -------  ------------------------  ------
+classic-100   100     4800   121    7664    4228.87  922a417770768a31:1954073  PASS
+continent-60  60      4800   60     2120    3308.54  156665ab88e25915:2820819  PASS
+classic-300   300     2400   319    12343   839.10   f4d7e97a06b6bae2:3357792  PASS
+classic-1000  1000    600    1000   416     122.69   8b8c3a71d8ead821:1980353  PASS
+
+checks: 20/20 pass
+total wall time: 24.3 s
+written to <output directory>
+
+ ✓ baseline/research-baseline.baseline.ts (1 test) 24341ms
+   ✓ research baseline > runs every seeded configuration, proves repeatability, and writes the evidence 24341ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  08:29:36
+   Duration  25.38s (transform 461ms, setup 0ms, collect 735ms, tests 24.34s, environment 0ms, prepare 107ms)
+
+----------------------------------------------------------------
+exit code: 0   finished: 2026-11-20T14:30:01Z

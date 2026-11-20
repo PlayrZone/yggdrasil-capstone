@@ -1,0 +1,46 @@
+commit: 072885f0bb2aeb4788350cb81cdd437bf2491528 started: 2026-11-20T14:36:20Z
+accept: health, far, points, offers, roster, quadrants, scale, naming, perf, small, shelter, shots
+  lab C:\dev\yggdrasil-capstone\packages\lab
+  home <local path>
+  shots <local path>
+electron pid 205244 port 9422
+  boot health {"shaderErrors":0,"consoleErrors":0,"webglContextLost":0,"windowErrors":0,"cullRisks":0,"notes":[]}
+  drawing: 12 frames
+▸ health
+  world "genesis-01": Run | New world | SEED
+  PASS health (13.3 s)
+▸ far
+  far/default-window: 25 notches → far, figurePx 0.365 vs enter 0.577, atStop false, farReachable true
+  far/short-window: 25 notches → far, figurePx 0.365 vs enter 0.577, atStop false, farReachable true
+  far/after-live-resize: 25 notches → far, figurePx 0.339 vs enter 0.577, atStop false, farReachable true
+  PASS far (8.4 s)
+▸ points
+  PASS points (9.2 s)
+▸ offers
+  world "genesis-02": Run | New world | SEED
+  FAIL offers (156.8 s)
+▸ roster
+  FAIL roster (22.2 s)
+▸ quadrants
+  PASS quadrants (1.4 s)
+▸ scale
+  PASS scale (1.1 s)
+▸ naming
+  PASS naming (1.4 s)
+▸ perf
+  world "genesis-01": Run | New world | SEED
+  perf roster=true: 55.31 fps, 34 long tasks (max 105 ms), 214 in frustum
+  perf roster=false: 57.89 fps, 6 long tasks (max 64 ms), 273 in frustum
+  FAIL perf (114.8 s)
+▸ small
+  PASS small (2.9 s)
+▸ shelter
+  FAIL shelter (5.9 s)
+▸ shots
+  PASS shots (12.3 s)
+
+FAIL: 8/12 checks
+  failed: offers, roster, perf, shelter
+  report <local path>
+  pids 205244 — alive after close: none
+exit=1 finished: 2026-11-20T14:44:15Z

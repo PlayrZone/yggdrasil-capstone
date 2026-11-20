@@ -1,0 +1,242 @@
+commit:   072885f0bb2aeb4788350cb81cdd437bf2491528
+dirty:    no
+started:  2026-11-20T14:30:08Z
+node:     v24.13.1   pnpm: 10.33.2
+command:  vitest run (adapter boundary tests) --reporter=verbose
+----------------------------------------------------------------
+
+ RUN  v2.1.9 C:/dev/yggdrasil-capstone/packages/engine
+
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > has a vocabulary to police, taken from the world itself
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > memory/importance.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > memory/memoryFromEvent.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > relationships/RelationshipStore.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > learning/ContextMiner.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > learning/OutcomeMiner.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > learning/SuccessionMiner.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > runner/EventPipeline.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > learning/SocialMiner.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > learning/CraftObservationMiner.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > agent/AgentMind.ts names no part of the forager world
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > no OTHER mind file has started naming it either
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > every file still leaking names the step that takes it away
+ ✓ test/world-tables-out.test.ts > the world tables left the mind (W1-B) > the pinned non-mind leaks are still exactly what they say
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a string literal
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a double-quoted literal
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches an object-literal key
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a quoted object key
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a computed member access
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a dotted member access
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a string literal type
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a template literal
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a Set of them
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a concatenation
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a three-part concatenation
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a parenthesised concatenation
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a template with a hole in it
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a concatenation used as a key
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a name spelled in char codes
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches an array joined into a name
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a joined name used as a key
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a regular expression’s own text
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches a bare regular expression
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > catches char codes nested in a concatenation
+ ✓ test/world-tables-out.test.ts > the scan sees every way of naming a world > lets a comment through — an explanation may name its own example
+ ✓ test/world-tables-out.test.ts > the scan follows what a mind file imports > catches a table re-exported from a non-mind module
+ ✓ test/world-tables-out.test.ts > the scan follows what a mind file imports > catches an import of the world itself, without reading it
+ ✓ test/world-tables-out.test.ts > the scan follows what a mind file imports > catches a table TWO modules away, and does not loop on a cycle
+ ✓ test/world-tables-out.test.ts > the scan follows what a mind file imports > catches the package barrel, which re-exports the world
+ ✓ test/world-tables-out.test.ts > the scan follows what a mind file imports > catches a dynamic import of the world, and an import-type of it
+ ✓ test/world-tables-out.test.ts > the scan follows what a mind file imports > does not follow into another MIND file — each is pinned in its own right
+ ✓ test/world-tables-out.test.ts > the scan follows what a mind file imports > does not follow a package import
+ ✓ test/world-space.test.ts > the forager plane answers exactly as the mind used to > measures the same distance, bit for bit
+ ✓ test/world-space.test.ts > the forager plane answers exactly as the mind used to > names the same direction, including the four-unit dead zone
+ ✓ test/world-space.test.ts > the forager plane answers exactly as the mind used to > gives the same boolean at the succession radius, squares and all
+ ✓ test/world-space.test.ts > the forager plane answers exactly as the mind used to > reads the miner’s window and radius off the world, and they are the old numbers
+ ✓ test/world-space.test.ts > the forager plane answers exactly as the mind used to > writes a place down the way the prompt has always written one
+ ✓ test/world-space.test.ts > the forager plane answers exactly as the mind used to > round-trips a place through its wire fields exactly
+ ✓ test/world-space.test.ts > the forager plane answers exactly as the mind used to > compares places by value, because two of the same place are two objects
+ ✓ test/world-space.test.ts > the same mind lives in a world with no coordinates in it > measures in hops and points at the next spot along the way
+ ✓ test/world-space.test.ts > the same mind lives in a world with no coordinates in it > remembers WHERE something happened, and can be asked how far away that is
+ ✓ test/world-space.test.ts > the same mind lives in a world with no coordinates in it > is TOLD of a place it has never been, and asks which way it lies
+ ✓ test/world-space.test.ts > the same mind lives in a world with no coordinates in it > reaches nothing of the forager continent while doing it
+ ✓ test/world-space.test.ts > a world refuses a place another world minted > used to say two different places were the same place, and now says whose they are
+ ✓ test/world-space.test.ts > a world refuses a place another world minted > refuses at every entry point that takes one, naming the op and the argument
+ ✓ test/world-space.test.ts > a world refuses a place another world minted > refuses a second PLANAR world’s places, which is the case the gate exists for
+ ✓ test/world-space.test.ts > a world refuses a place another world minted > refuses every hand-built thing that used to pass for a place
+ ✓ test/world-space.test.ts > a world refuses a place another world minted > answers a trapping value with a ForeignPlaceError, never with its own exception
+ ✓ test/world-space.test.ts > a world refuses a place another world minted > is symmetric — the toy world refuses the continent’s places too
+ ✓ test/world-space.test.ts > a world refuses a place another world minted > mints its own `unplaced`, so a siteless tale can still be asked about
+ ✓ test/world-space.test.ts > a world refuses a place another world minted > lets through the unusable places this world really does mint
+ ✓ test/world-space.test.ts > a world refuses a place another world minted > still answers the edge’s questions about a stranger instead of throwing
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 1 — Object.values through an `object` parameter — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 2 — a generic helper that widens to object — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 3 — a parameter typed unknown — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 4 — an intermediate `const o: object = p`, then Object.entries — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 5 — …then Array.from — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 6 — …then new Map(Object.entries(o)) — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 7 — …then spread — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 8 — …then for…in — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 9 — …then Object.assign — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 10 — …then structuredClone — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 11 — …then Object.getOwnPropertyNames — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 12 — …then Reflect.ownKeys — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 13 — an any alias read by const key — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 14 — JSON round trip of a RECORD that carries one — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 15 — `satisfies object`, then opened — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 16 — a type predicate that calls it array-like — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 17 — new Function / eval — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 20 — the codec’s own door, off the object a mind holds — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 21 — minting one from numbers a mind chose — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 22 — triangulating against places a mind minted for itself — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 23 — Object.keys — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 24 — Object.getOwnPropertySymbols — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 25 — Object.getOwnPropertyDescriptors — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 26 — the prototype chain, and the constructor on it — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 27 — JSON.stringify of the handle itself — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 28 — String() and a template — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 29 — Object.fromEntries of its entries — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 30 — writing to it, then reading back — yields no coordinate
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > is not vacuous: the world itself can still read the place
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 19 — `label` is still parseable text — RESIDUAL, owner B5 (lexicon)
+ ✓ test/world-space.test.ts > the 22 routes out of a place, run against a real one > route 18 — a SimEvent still carries this world’s x and y — RESIDUAL, owner B6
+ ✓ test/world-space.test.ts > a codec refuses another world’s place, by name (W1-B4 round 4) > refuses a second plane’s place at `encode`, both ways round
+ ✓ test/world-space.test.ts > a codec refuses another world’s place, by name (W1-B4 round 4) > refuses a world with no plane in it at all, both ways round
+ ✓ test/world-space.test.ts > a codec refuses another world’s place, by name (W1-B4 round 4) > refuses one at `pointOf` — the world’s own reader, which an instrument holds
+ ✓ test/world-space.test.ts > a codec refuses another world’s place, by name (W1-B4 round 4) > does NOT refuse the questions about untrusted data — they answer no instead
+ ✓ test/world-space.test.ts > a codec refuses another world’s place, by name (W1-B4 round 4) > still lets a world encode its OWN places, or the gate is vacuous
+ ✓ test/world-space.test.ts > a world publishes its own functions, and must have written the refusal into them > hands back exactly what it was given — no wrapper object, no forwarding closure
+ ✓ test/world-space.test.ts > a world publishes its own functions, and must have written the refusal into them > refuses to publish a space that answers for a place it did not mint
+ ✓ test/world-space.test.ts > a world publishes its own functions, and must have written the refusal into them > refuses one that throws the wrong thing, or refuses the wrong argument
+ ✓ test/world-space.test.ts > a world publishes its own functions, and must have written the refusal into them > is not vacuous — both of this repo’s worlds are built through it
+ ✓ test/world-space.test.ts > a memory carries where it happened, exactly as `c727af7` did > a carrier with NEITHER field is nowhere — the one deliberate divergence, named in the fixture
+ ✓ test/world-space.test.ts > a memory carries where it happened, exactly as `c727af7` did > stores x-only the way base did
+ ✓ test/world-space.test.ts > a memory carries where it happened, exactly as `c727af7` did > stores y-only the way base did
+ ✓ test/world-space.test.ts > a memory carries where it happened, exactly as `c727af7` did > stores x-string the way base did
+ ✓ test/world-space.test.ts > a memory carries where it happened, exactly as `c727af7` did > stores y-null the way base did
+ ✓ test/world-space.test.ts > a memory carries where it happened, exactly as `c727af7` did > stores x-nan the way base did
+ ✓ test/world-space.test.ts > a memory carries where it happened, exactly as `c727af7` did > stores both the way base did
+ ✓ test/world-space.test.ts > a memory carries where it happened, exactly as `c727af7` did > stores minus-zero the way base did
+ ✓ test/world-space.test.ts > a memory carries where it happened, exactly as `c727af7` did > and the memory a witness forms really does carry it
+ ✓ test/world-vocabulary.test.ts > the same decisions, from the world’s tables > refuses the same values with the same reason and the same words
+ ✓ test/world-vocabulary.test.ts > the same decisions, from the world’s tables > reports the same one of two illegal arguments
+ ✓ test/world-vocabulary.test.ts > the same decisions, from the world’s tables > writes an intent’s fields in the order the wire has always had them
+ ✓ test/world-vocabulary.test.ts > the same decisions, from the world’s tables > still accepts every verb this world has, and no other
+ ✓ test/world-vocabulary.test.ts > the prompt offers the world’s verbs > renders the forager vocabulary line byte for byte
+ ✓ test/world-vocabulary.test.ts > the prompt offers the world’s verbs > renders the argument paragraph, in place, byte for byte
+ ✓ test/world-vocabulary.test.ts > the prompt offers the world’s verbs > offers a different world its own verbs, and none of this one’s
+ ✓ test/world-vocabulary.test.ts > a world with no instinct of its own > waits, by the act its own world binds to Wait
+ ✓ test/world-vocabulary.test.ts > a world with no instinct of its own > is what an AgentMind in that world thinks with, and the forager’s is not
+ ✓ test/world-vocabulary.test.ts > a world with no instinct of its own > parses and refuses by the toy world’s own vocabulary
+ ✓ test/world-vocabulary.test.ts > the mind→body edge over a real run > hands the body a step the world does not declare, and counts the tolerance
+ ✓ test/world-vocabulary.test.ts > the mind→body edge over a real run > never sees an undeclared act at all — the parser has it first
+ ✓ test/world-vocabulary.test.ts > the mind→body edge over a real run > refuses nothing in a world whose policy and parser speak its own tables
+ ✓ test/world-vocabulary.test.ts > importance is a number, whatever it is handed > is finite for every shape a delta slot can be in
+ ✓ test/world-vocabulary.test.ts > importance is a number, whatever it is handed > is unchanged for every delta the engine actually writes
+ ✓ test/world-vocabulary.test.ts > importance is a number, whatever it is handed > is clamped at the intervention edge too, so the ledger says what happened
+ ✓ test/world-vocabulary.test.ts > importance is a number, whatever it is handed > counts every unusable slot it rewrites, on the run’s own gate
+ ✓ test/world-vocabulary.test.ts > importance is a number, whatever it is handed > counts nothing when a driver writes what the engine writes
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > has a vocabulary to police, taken from the world itself
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > agent/AgentMind.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > consciousness/FireworksMindBackend.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > consciousness/IMind.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > consciousness/IMindBackend.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > consciousness/LlmMind.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > consciousness/MockMindBackend.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > consciousness/policy.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > consciousness/prompt.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > consciousness/schema.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > knowledge/KnowledgeStore.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > learning/ContextMiner.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > learning/CraftObservationMiner.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > learning/ILearner.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > learning/OutcomeMiner.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > learning/SocialMiner.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > learning/SuccessionMiner.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > learning/ruleKey.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > learning/templates.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > memory/IEmbedder.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > memory/MemoryStream.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > memory/importance.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > memory/memoryFromEvent.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > narrative/NarrativeStore.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > relationships/RelationshipStore.ts holds no coordinate, no distance and no compass
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > the serializer names no field — it asks the world which ones there are
+ ✓ test/mind-no-geometry.test.ts > no part of the mind does geometry (W1-B4) > the contract names a plane in exactly one place, and says which step takes it
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a member access
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a computed access
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a place literal
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a shorthand place literal
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a place in a type
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a destructured pair
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a renamed destructure
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a distance
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a bearing
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a compass word
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > catches a compass table
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > lets a comment about what used to be here through
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > lets arithmetic that is not geometry through
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > lets asking the world instead through
+ ✓ test/mind-no-geometry.test.ts > the scan sees every way of reaching for a coordinate > lets a single-letter parameter that is not a coordinate through
+ ✓ test/mind-no-geometry.test.ts > nothing in the mind opens a place (W1-B4 verifier, the second fail) > finds nothing at all in the seven directories that are the mind 363ms
+ ✓ test/mind-no-geometry.test.ts > nothing in the mind opens a place (W1-B4 verifier, the second fail) > every excused function name occurs exactly once in its file
+ ✓ test/mind-no-geometry.test.ts > nothing in the mind opens a place (W1-B4 verifier, the second fail) > finds only the reviewed serialisation seam, by name, in the files that write a place down
+ ✓ test/mind-no-geometry.test.ts > nothing in the mind opens a place (W1-B4 verifier, the second fail) > the routes that compile are all caught, and the fixture really does compile
+ ✓ test/mind-no-geometry.test.ts > nothing in the mind opens a place (W1-B4 verifier, the second fail) > the routes the compiler refuses stay refused — including minting one from nothing
+ ✓ test/mind-no-geometry.test.ts > nothing in the mind opens a place (W1-B4 verifier, the second fail) > lets a mind ask the world, store a place, and check whether there is one
+ ✓ test/mind-no-geometry.test.ts > nothing in the mind opens a place (W1-B4 verifier, the second fail) > catches holding the codec and eval — the two routes a type is happy with
+ ✓ test/mind-no-geometry.test.ts > the label residual is open, and stays pinned until B5 closes it (W1-B4 round 4) > still renders a place as text a mind could parse back into a coordinate pair
+ ✓ test/mind-no-geometry.test.ts > the label residual is open, and stays pinned until B5 closes it (W1-B4 round 4) > is the only textual route: `label` is called from exactly three files, and one is the gate
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > declares every event the world has, in the same order, and no others
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > carries the same salience for each
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > carries the same relationship deltas — including the empty one
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > applies exactly the same witness allowlist, with the same deltas
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > keeps the context features in the order the miners iterated them
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > projects each feature out of a context exactly as the miners did
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > keeps every drive threshold, in the order the reflex policy scanned them
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > excludes the same events from succession mining, and the miner still reads it
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > carries the prestige rule the pipeline used to hard-code
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > names the one event that ends a life
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > gives the same cognition parameters the expressions gave
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > declares exactly the events its narrator can author a story from
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > declares this world’s verbs and stuff, in the numbers it had
+ ✓ test/world-tables-transcribed.test.ts > the forager tables, as they stood before the move > keeps the clock the runtime, the recorder and the founders read
+ ✓ test/world-tables-transcribed.test.ts > the perspective switch became data without changing > produces the identical memory for every event, every perspective, every payload
+ ✓ test/world-tables-transcribed.test.ts > the perspective switch became data without changing > is a comparison that can fail
+ ✓ test/world-tables-transcribed.test.ts > the relationship deltas reach a record the same way > moves the same scalars on the same events, participant and witness
+ ✓ test/world-tables-transcribed.test.ts > the prestige rule reaches a witness the same way > gives +5 for a slain predator and +3 for a raised shelter
+ ✓ test/world-tables-transcribed.test.ts > the prestige rule reaches a witness the same way > gives nothing for a build that is not a shelter, or for any other deed
+ ✓ test/world-tables-transcribed.test.ts > the prestige rule reaches a witness the same way > gives nothing at all when the run says respect does not grow
+ ✓ test/mind-type-graph.test.ts > the mind’s type graph does not reach the forager world > compiles the whole mind against a repository with no worlds/ in it 751ms
+ ✓ test/mind-type-graph.test.ts > the mind’s type graph does not reach the forager world > the stubbing is real — a file that DOES reach the world stops compiling
+ ✓ test/mind-type-graph.test.ts > the mind’s type graph does not reach the forager world > …and compiles perfectly well with the world present, so nothing else is wrong 1050ms
+ ✓ test/mind-type-graph.test.ts > the mind cannot reach a codec, structurally (W1-B4 round 4) > has nothing forbidden in its import closure, no dynamic import, no reachable type, no relay 811ms
+ ✓ test/mind-type-graph.test.ts > the mind cannot reach a codec, structurally (W1-B4 round 4) > goes RED when a mind directory imports the codec 811ms
+ ✓ test/mind-type-graph.test.ts > the mind cannot reach a codec, structurally (W1-B4 round 4) > goes RED when WorldAdapter grows a codec-typed member 772ms
+ ✓ test/mind-type-graph.test.ts > the mind cannot reach a codec, structurally (W1-B4 round 4) > goes RED at a relay in contract/, whether or not anything imports it 791ms
+ ✓ test/mind-type-graph.test.ts > the mind cannot reach a codec, structurally (W1-B4 round 4) > goes RED at a dynamic import in a mind directory 848ms
+ ✓ test/mind-type-graph.test.ts > the codec routes of round 3 have nothing left to call > refuses route 1 — the codec, widened past the type rule
+ ✓ test/mind-type-graph.test.ts > the codec routes of round 3 have nothing left to call > refuses route 2 — the same through `any`
+ ✓ test/mind-type-graph.test.ts > the codec routes of round 3 have nothing left to call > refuses route 3 — a Euclidean distance between two handles
+ ✓ test/mind-type-graph.test.ts > the codec routes of round 3 have nothing left to call > refuses route 5 — destructured, so the codec is never a whole value
+ ✓ test/mind-type-graph.test.ts > the codec routes of round 3 have nothing left to call > refuses route 6 — the field NAMES this world writes a place with
+ ✓ test/mind-type-graph.test.ts > the codec routes of round 3 have nothing left to call > refuses route 7 — MINTING, through `placeOf`
+ ✓ test/mind-type-graph.test.ts > the codec routes of round 3 have nothing left to call > refuses route 8 — the same through `decode`
+ ✓ test/mind-type-graph.test.ts > the codec routes of round 3 have nothing left to call > refuses route 22 — the relay in contract/, which needed no cast at all
+ ✓ test/world-adapter.test.ts > a mind in a toy world > remembers with the toy world’s salience, not the forager’s
+ ✓ test/world-adapter.test.ts > a mind in a toy world > takes its perspectives from the toy world’s roles
+ ✓ test/world-adapter.test.ts > a mind in a toy world > moves relationships by the toy world’s deltas
+ ✓ test/world-adapter.test.ts > a mind in a toy world > mines knowledge over the toy world’s one context feature
+ ✓ test/world-adapter.test.ts > two worlds in one process > never lets one world colour another
+ ✓ test/world-adapter.test.ts > two worlds in one process > hands out a world nothing can write back into
+ ✓ test/world-adapter.test.ts > two worlds in one process > indexes exactly the events it declares
+ ✓ test/world-adapter.test.ts > a world is sealed when it is defined > reads a trait curve as the world wrote it
+ ✓ test/world-adapter.test.ts > a world is sealed when it is defined > rejects nothing, but freezes everything it is given
+
+ Test Files  7 passed (7)
+      Tests  225 passed (225)
+   Start at  08:30:10
+   Duration  9.16s (transform 1.06s, setup 0ms, collect 4.91s, tests 9.45s, environment 1ms, prepare 807ms)
+
+----------------------------------------------------------------
+exit code: 0   finished: 2026-11-20T14:30:19Z

@@ -1,0 +1,23 @@
+Throughput, September commit vs today's code - same machine, same benchmark, back to back
+measured: 2026-11-20 (UTC), AMD Ryzen 9 9950X3D, node v24.13.1
+machine was NOT idle (about 45% CPU in use by other applications), so absolute numbers are low;
+the two runs were taken within one minute of each other, so the RATIO is the finding.
+command: pnpm --filter @yggdrasil/engine exec vitest run --config bench/vitest.config.ts bench/spatial.bench.ts
+
+lab repo commit 8f15a56 (2026-09-18, "W0-C hardening" - the commit the ~400 ticks/s figure was reported on)
+  100 beings |  1987 entities |   4295.9 ticks/s |       4.5k visits/tick | 1500 ticks in 0.3s
+  300 beings |  2307 entities |   1884.7 ticks/s |       6.4k visits/tick | 700 ticks in 0.4s
+ 1000 beings |  3427 entities |    343.2 ticks/s |      15.8k visits/tick | 250 ticks in 0.7s
+
+lab repo commit a8f8bcc (same engine source as capstone commit 072885f)
+  100 beings |  1987 entities |   4206.5 ticks/s |       0.8k visits/tick | 1500 ticks in 0.4s
+  300 beings |  2307 entities |   1408.2 ticks/s |       2.6k visits/tick | 700 ticks in 0.5s
+ 1000 beings |  3427 entities |    179.9 ticks/s |      11.7k visits/tick | 250 ticks in 1.4s
+
+other runs of today's code the same morning: 144.2 and 189.1 ticks/s at 1,000 beings
+
+reading: at 1,000 beings today's code runs at about half the speed of the September commit
+(179.9 / 343.2 = 0.52); at 300 beings about three quarters (0.75); at 100 beings no change (0.98).
+The earlier "about 400 steps per second at 1,000 beings" is therefore NOT reproduced on the current code.
+Cause not yet isolated. Entity visits per tick went DOWN over the same period, so the cost is per-visit work
+added since September (place handles, true-scale world, extra per-being stores are the candidates), not more scanning.

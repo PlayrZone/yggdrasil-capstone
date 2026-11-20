@@ -1,0 +1,5 @@
+run_id,speech_act,utterances,run_total,share_of_run
+1,share-knowledge,18337,18825,0.9741
+1,inform,488,18825,0.0259
+2,share-knowledge,23555,24037,0.9799
+2,inform,482,24037,0.0201

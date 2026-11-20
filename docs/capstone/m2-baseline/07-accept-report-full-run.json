@@ -1,0 +1,655 @@
+{
+  "item": "L3a/L4 — the world view",
+  "round": 7,
+  "started": "2026-11-20T14:36:20.964Z",
+  "finished": "2026-11-20T14:42:15.804Z",
+  "lab": "C:\\dev\\yggdrasil-capstone\\packages\\lab",
+  "bars": {
+    "pointPx": 0.5,
+    "pointsMin": 40,
+    "offersMin": 300,
+    "camerasMin": 30,
+    "rosterClicks": 30,
+    "rosterStillMs": 12000,
+    "scalePx": 0.05,
+    "namingFrames": 5,
+    "perfSeconds": 30,
+    "perfFps": 59.5,
+    "perfLongTasks": 0,
+    "perfBeings": 250,
+    "smallW": 900,
+    "smallH": 620,
+    "pennantOfFigure": 0.6,
+    "pennantFloorPx": 13
+  },
+  "pids": [
+    205244
+  ],
+  "shutdown": {
+    "killed": [
+      205244
+    ],
+    "alive": []
+  },
+  "pageErrors": [
+    "Error: accept: a deliberate window error\n    at <anonymous>:1:44"
+  ],
+  "bootHealth": {
+    "shaderErrors": 0,
+    "consoleErrors": 0,
+    "webglContextLost": 0,
+    "windowErrors": 0,
+    "cullRisks": 0,
+    "notes": []
+  },
+  "closeHealth": {
+    "shaderErrors": 0,
+    "consoleErrors": 1,
+    "webglContextLost": 0,
+    "windowErrors": 3,
+    "cullRisks": 0,
+    "notes": [
+      "console: accept: a deliberate console error",
+      "window: Uncaught Error: accept: a deliberate window error",
+      "window: ResizeObserver loop completed with undelivered notifications.",
+      "window: ResizeObserver loop completed with undelivered notifications."
+    ]
+  },
+  "checks": [
+    {
+      "check": "health",
+      "pass": true,
+      "advisory": false,
+      "seconds": 13.3,
+      "numbers": {
+        "boot": {
+          "shaderErrors": 0,
+          "consoleErrors": 0,
+          "webglContextLost": 0,
+          "windowErrors": 0,
+          "cullRisks": 0,
+          "notes": []
+        },
+        "mid": {
+          "shaderErrors": 0,
+          "consoleErrors": 0,
+          "webglContextLost": 0,
+          "windowErrors": 0,
+          "cullRisks": 0,
+          "notes": []
+        },
+        "cullRisks": [],
+        "tapConsole": true,
+        "tapWindow": true
+      }
+    },
+    {
+      "check": "far",
+      "pass": true,
+      "advisory": false,
+      "seconds": 8.4,
+      "numbers": {
+        "runs": [
+          {
+            "geometry": "default-window",
+            "notches": 25,
+            "band": "far",
+            "figurePx": 0.365,
+            "enterFarPx": 0.577,
+            "stopFigurePx": 0.333,
+            "atStop": false,
+            "farReachable": true,
+            "canvasH": 426,
+            "projectionH": 426,
+            "domDeltaSeenForPlus120": 120,
+            "wheelZoomsOutOnScrollDown": true,
+            "pass": true
+          },
+          {
+            "geometry": "short-window",
+            "notches": 25,
+            "band": "far",
+            "figurePx": 0.365,
+            "enterFarPx": 0.577,
+            "stopFigurePx": 0.301,
+            "atStop": false,
+            "farReachable": true,
+            "canvasH": 385,
+            "projectionH": 385,
+            "domDeltaSeenForPlus120": 120,
+            "wheelZoomsOutOnScrollDown": true,
+            "pass": true
+          },
+          {
+            "geometry": "after-live-resize",
+            "notches": 25,
+            "band": "far",
+            "figurePx": 0.339,
+            "enterFarPx": 0.577,
+            "stopFigurePx": 0.286,
+            "atStop": false,
+            "farReachable": true,
+            "canvasH": 365,
+            "projectionH": 365,
+            "domDeltaSeenForPlus120": 120,
+            "wheelZoomsOutOnScrollDown": true,
+            "pass": true
+          }
+        ]
+      }
+    },
+    {
+      "check": "points",
+      "pass": true,
+      "advisory": false,
+      "seconds": 9.2,
+      "numbers": {
+        "checked": 49,
+        "worstPx": 0,
+        "pickAgrees": 49,
+        "pickTried": 49
+      }
+    },
+    {
+      "check": "offers",
+      "pass": false,
+      "advisory": false,
+      "seconds": 156.8,
+      "numbers": {
+        "offers": 330,
+        "cameras": 200,
+        "mispicks": 0,
+        "lost": 2,
+        "runOffers": 9,
+        "runMispicks": 0,
+        "runLost": 0,
+        "misses": [
+          {
+            "id": 1847,
+            "kind": "lost",
+            "band": "default"
+          },
+          {
+            "id": 1847,
+            "kind": "lost",
+            "band": "default"
+          }
+        ]
+      }
+    },
+    {
+      "check": "roster",
+      "pass": false,
+      "advisory": false,
+      "seconds": 22.2,
+      "numbers": {
+        "clicks": 36,
+        "right": 35,
+        "wrong": [
+          {
+            "aimedAt": "Keliash",
+            "selected": "Eskaem",
+            "speed": "2400×"
+          }
+        ],
+        "stillMs": 12000,
+        "orderHeld": true
+      }
+    },
+    {
+      "check": "quadrants",
+      "pass": true,
+      "advisory": false,
+      "seconds": 1.4,
+      "numbers": {
+        "frames": [
+          {
+            "pins": 11,
+            "chips": 45,
+            "beings": 56,
+            "whole": true,
+            "quadrants": [
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "pins": 7,
+            "chips": 10,
+            "beings": 17,
+            "whole": true,
+            "quadrants": [
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "pins": 7,
+            "chips": 9,
+            "beings": 16,
+            "whole": true,
+            "quadrants": [
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "pins": 4,
+            "chips": 13,
+            "beings": 17,
+            "whole": true,
+            "quadrants": [
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "pins": 6,
+            "chips": 8,
+            "beings": 14,
+            "whole": true,
+            "quadrants": [
+              true,
+              true,
+              true,
+              true
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "check": "scale",
+      "pass": true,
+      "advisory": false,
+      "seconds": 1.1,
+      "numbers": {
+        "rows": [
+          {
+            "asked": "far",
+            "got": "far",
+            "metres": 500,
+            "px": 142.857,
+            "expectedPx": 142.857,
+            "errPx": 0,
+            "label": "500 m",
+            "domWidth": 143,
+            "domSpan": "500 m",
+            "inMetres": true
+          },
+          {
+            "asked": "default",
+            "got": "default",
+            "metres": 20,
+            "px": 160,
+            "expectedPx": 160,
+            "errPx": 0,
+            "label": "20 m",
+            "domWidth": 160,
+            "domSpan": "20 m",
+            "inMetres": true
+          },
+          {
+            "asked": "mid",
+            "got": "mid",
+            "metres": 5,
+            "px": 177.143,
+            "expectedPx": 177.143,
+            "errPx": 0,
+            "label": "5 m",
+            "domWidth": 177,
+            "domSpan": "5 m",
+            "inMetres": true
+          },
+          {
+            "asked": "near",
+            "got": "near",
+            "metres": 2,
+            "px": 165.064,
+            "expectedPx": 165.064,
+            "errPx": 0,
+            "label": "2 m",
+            "domWidth": 165,
+            "domSpan": "2 m",
+            "inMetres": true
+          }
+        ],
+        "scaleReport": {
+          "unit": "metre — 1 world unit = 1 m horizontally; the sim height index is drawn at 14 m per unit",
+          "adult": 1.75,
+          "child": 1.08,
+          "elder": 1.6,
+          "hut": 4.400000143051148,
+          "hutFootprint": 6.081118583679199,
+          "hutDoorway": 2,
+          "hutFrom": "mesh",
+          "tree": 20.25,
+          "treeShortest": 7.425000000000001,
+          "peak": 227.8209686279297,
+          "seaLevel": 11.9,
+          "worldSpan": 2000,
+          "annotationRing": 1.7399999999999998,
+          "adultOnScreenPx": 158.4081195524875
+        },
+        "trueScaleOrder": true
+      }
+    },
+    {
+      "check": "naming",
+      "pass": true,
+      "advisory": false,
+      "seconds": 1.4,
+      "numbers": {
+        "frames": [
+          {
+            "claim": "0 named · nearest first · 19 indoors, counted on their roofs · 1 of them unwell",
+            "violations": 0,
+            "expected": 0,
+            "shown": 0,
+            "within": 0,
+            "carried": 19,
+            "labelsShown": 0,
+            "domPills": 0,
+            "stripHasClaim": true
+          },
+          {
+            "claim": "1 named · nearest first · out to 22.18 m · 17 indoors, counted on their roofs · 3 of them unwell",
+            "violations": 0,
+            "expected": 1,
+            "shown": 1,
+            "within": 1,
+            "carried": 17,
+            "labelsShown": 1,
+            "domPills": 1,
+            "stripHasClaim": true
+          },
+          {
+            "claim": "2 named · nearest first · out to 1.05 m · 10 indoors, counted on their roofs",
+            "violations": 0,
+            "expected": 2,
+            "shown": 2,
+            "within": 2,
+            "carried": 10,
+            "labelsShown": 2,
+            "domPills": 2,
+            "stripHasClaim": true
+          },
+          {
+            "claim": "0 named · nearest first · 10 indoors, counted on their roofs",
+            "violations": 0,
+            "expected": 0,
+            "shown": 0,
+            "within": 0,
+            "carried": 10,
+            "labelsShown": 0,
+            "domPills": 0,
+            "stripHasClaim": true
+          },
+          {
+            "claim": "0 named · nearest first · 9 indoors, counted on their roofs · 4 of them unwell",
+            "violations": 0,
+            "expected": 0,
+            "shown": 0,
+            "within": 0,
+            "carried": 9,
+            "labelsShown": 0,
+            "domPills": 0,
+            "stripHasClaim": true
+          }
+        ],
+        "bad": []
+      }
+    },
+    {
+      "check": "perf",
+      "pass": false,
+      "advisory": false,
+      "seconds": 114.8,
+      "numbers": {
+        "runs": [
+          {
+            "rosterOpen": true,
+            "fps": 55.31,
+            "frames": 1660,
+            "seconds": 30,
+            "beingsInFrustum": 214,
+            "longTasks": 34,
+            "longestMs": 105,
+            "reproducedLoad": false,
+            "pass": false
+          },
+          {
+            "rosterOpen": false,
+            "fps": 57.89,
+            "frames": 1737,
+            "seconds": 30,
+            "beingsInFrustum": 273,
+            "longTasks": 6,
+            "longestMs": 64,
+            "reproducedLoad": true,
+            "pass": false
+          }
+        ],
+        "nearFps": 59.99,
+        "nearLongTasks": 0,
+        "idleDrawsPerSecond": 10,
+        "beingsBar": 250
+      }
+    },
+    {
+      "check": "small",
+      "pass": true,
+      "advisory": false,
+      "seconds": 2.9,
+      "numbers": {
+        "canvas": {
+          "w": 620,
+          "h": 402.8
+        },
+        "band": "near",
+        "shareOfWindow": 0.448,
+        "offered": 3,
+        "beingsInFrustum": 31,
+        "chips": 1,
+        "coordinateFrameHolds": true
+      }
+    },
+    {
+      "check": "shelter",
+      "pass": false,
+      "advisory": false,
+      "seconds": 5.9,
+      "numbers": {
+        "chips": [
+          {
+            "cluster": 0,
+            "count": 22,
+            "truth": 22,
+            "inside": true,
+            "mixW": 30,
+            "mixH": 4,
+            "illShown": "",
+            "unwellTruth": 0,
+            "numDrawn": "22",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          },
+          {
+            "cluster": 0,
+            "count": 22,
+            "truth": 22,
+            "inside": true,
+            "mixW": 41.15625,
+            "mixH": 4,
+            "illShown": "3",
+            "unwellTruth": 3,
+            "numDrawn": "22",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          },
+          {
+            "cluster": 1,
+            "count": 8,
+            "truth": 8,
+            "inside": true,
+            "mixW": 30,
+            "mixH": 4,
+            "illShown": "",
+            "unwellTruth": 0,
+            "numDrawn": "8",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          },
+          {
+            "cluster": 0,
+            "count": 10,
+            "truth": 10,
+            "inside": true,
+            "mixW": 30,
+            "mixH": 4,
+            "illShown": "",
+            "unwellTruth": 0,
+            "numDrawn": "10",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          },
+          {
+            "cluster": 1,
+            "count": 6,
+            "truth": 6,
+            "inside": true,
+            "mixW": 30,
+            "mixH": 4,
+            "illShown": "",
+            "unwellTruth": 0,
+            "numDrawn": "6",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          },
+          {
+            "cluster": 0,
+            "count": 9,
+            "truth": 9,
+            "inside": true,
+            "mixW": 30,
+            "mixH": 4,
+            "illShown": "",
+            "unwellTruth": 0,
+            "numDrawn": "9",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          },
+          {
+            "cluster": 1,
+            "count": 5,
+            "truth": 5,
+            "inside": true,
+            "mixW": 32.333335876464844,
+            "mixH": 4,
+            "illShown": "1",
+            "unwellTruth": 1,
+            "numDrawn": "5",
+            "countRight": true,
+            "domIsThisChip": true,
+            "mixDrawn": true,
+            "illRight": true
+          }
+        ],
+        "stripCarriedClause": true,
+        "carried": 13,
+        "nameButtons": 7,
+        "nameRight": 6,
+        "chipsFoundOnTheirOwnPoint": "7/7"
+      }
+    },
+    {
+      "check": "shots",
+      "pass": true,
+      "advisory": true,
+      "seconds": 12.3,
+      "numbers": {
+        "shots": [
+          "r7-day-default.png",
+          "r7-day-near-settlement.png",
+          "r7-night-mid.png",
+          "r7-night-near-hut.png",
+          "r7-night-default.png",
+          "r7-specimen.png"
+        ],
+        "daylightAtNight": 0.01041666666666552
+      }
+    }
+  ],
+  "passed": 8,
+  "failed": [
+    "offers",
+    "roster",
+    "perf",
+    "shelter"
+  ],
+  "verdict": "FAIL",
+  "log": [
+    "accept: health, far, points, offers, roster, quadrants, scale, naming, perf, small, shelter, shots",
+    "  lab C:\\dev\\yggdrasil-capstone\\packages\\lab",
+    "  home <local path>",
+    "  shots <local path>",
+    "electron pid 205244 port 9422",
+    "[main] ",
+    "[main!] \r\nDevTools listening on ws://127.0.0.1:9422/devtools/browser/29611cb7-d2ea-45b0-b2e5-b83f9b7822da",
+    "[main] Skip checkForUpdates because application is not packed and dev update config is not forced",
+    "  boot health {\"shaderErrors\":0,\"consoleErrors\":0,\"webglContextLost\":0,\"windowErrors\":0,\"cullRisks\":0,\"notes\":[]}",
+    "  drawing: 12 frames",
+    "▸ health",
+    "  world \"genesis-01\": Run | New world | SEED",
+    "  PASS health (13.3 s)",
+    "▸ far",
+    "  far/default-window: 25 notches → far, figurePx 0.365 vs enter 0.577, atStop false, farReachable true",
+    "  far/short-window: 25 notches → far, figurePx 0.365 vs enter 0.577, atStop false, farReachable true",
+    "  far/after-live-resize: 25 notches → far, figurePx 0.339 vs enter 0.577, atStop false, farReachable true",
+    "  PASS far (8.4 s)",
+    "▸ points",
+    "  PASS points (9.2 s)",
+    "▸ offers",
+    "  world \"genesis-02\": Run | New world | SEED",
+    "  FAIL offers (156.8 s)",
+    "▸ roster",
+    "  FAIL roster (22.2 s)",
+    "▸ quadrants",
+    "  PASS quadrants (1.4 s)",
+    "▸ scale",
+    "  PASS scale (1.1 s)",
+    "▸ naming",
+    "  PASS naming (1.4 s)",
+    "▸ perf",
+    "  world \"genesis-01\": Run | New world | SEED",
+    "  perf roster=true: 55.31 fps, 34 long tasks (max 105 ms), 214 in frustum",
+    "  perf roster=false: 57.89 fps, 6 long tasks (max 64 ms), 273 in frustum",
+    "  FAIL perf (114.8 s)",
+    "▸ small",
+    "  PASS small (2.9 s)",
+    "▸ shelter",
+    "  FAIL shelter (5.9 s)",
+    "▸ shots",
+    "  PASS shots (12.3 s)"
+  ]
+}

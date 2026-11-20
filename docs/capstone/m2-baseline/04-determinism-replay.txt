@@ -1,0 +1,65 @@
+commit:   072885f0bb2aeb4788350cb81cdd437bf2491528
+dirty:    no
+started:  2026-11-20T14:30:19Z
+node:     v24.13.1   pnpm: 10.33.2
+command:  vitest run (determinism, goldens, record/replay) --reporter=verbose
+----------------------------------------------------------------
+
+ RUN  v2.1.9 C:/dev/yggdrasil-capstone/packages/engine
+
+ ✓ test/record.test.ts > lossless cognition record — replay > reproduces the prompt byte-for-byte from a stored row
+ ✓ test/record.test.ts > lossless cognition record — replay > replays every row of a real run
+ ✓ test/record.test.ts > lossless cognition record — replay > stores what the model was shown, not what the world became while it thought
+ ✓ test/record.test.ts > lossless cognition record — replay > stamps the engine version it was actually built by
+ ✓ test/record.test.ts > lossless cognition record — provenance > carries run, world, seed, model, scaffold and the FULL intent arguments
+ ✓ test/record.test.ts > lossless cognition record — provenance > records an authored event onto every being that witnessed it
+ ✓ test/record.test.ts > outcomes > links an executed intent to what it yielded and to the need it moved
+ ✓ test/record.test.ts > outcomes > records the body REFUSING an intent, with the body’s own reason
+ ✓ test/record.test.ts > outcomes > records who heard an utterance and who took its testimony in
+ ✓ test/record.test.ts > outcomes > answers whether the goals an act set were still held at the next think 481ms
+ ✓ test/golden-state.test.ts > golden state (behaviour lock) > alpha-20 matches its recorded fingerprints 355ms
+ ✓ test/golden-state.test.ts > golden state (behaviour lock) > alpha-70 matches its recorded fingerprints 510ms
+ ✓ test/golden-state.test.ts > golden state (behaviour lock) > beta-20 matches its recorded fingerprints
+ ✓ test/golden-state.test.ts > golden state (behaviour lock) > beta-70 matches its recorded fingerprints 492ms
+ ✓ test/golden-state.test.ts > golden state (behaviour lock) > gamma-20 matches its recorded fingerprints
+ ✓ test/golden-state.test.ts > golden state (behaviour lock) > gamma-70 matches its recorded fingerprints 474ms
+ ✓ test/golden-state.test.ts > golden state (behaviour lock) > seeded-30 matches its recorded fingerprints 376ms
+ ✓ test/continent-determinism.test.ts > the continent is deterministic > produces an identical world and history from the same seed 1161ms
+ ✓ test/continent-determinism.test.ts > the continent is deterministic > produces a DIFFERENT world from a different seed (the test is not vacuous) 594ms
+ ✓ test/continent-determinism.test.ts > the continent is deterministic > reproduces each golden config twice over 3926ms
+ ✓ test/continent-determinism.test.ts > the continent is deterministic > gives the two worlds different ids, so a record says which it came from
+ ✓ test/continent-golden.test.ts > continent golden state (behaviour lock) > continent-40 matches its recorded fingerprints 931ms
+ ✓ test/continent-golden.test.ts > continent golden state (behaviour lock) > continent-120-seeded matches its recorded fingerprints 1317ms
+ ✓ test/continent-golden.test.ts > continent golden state (behaviour lock) > gives the same digest at half, at twice, and at no activation radius 3616ms
+ ✓ test/record.test.ts > outcome windows measure only themselves > reproduces every delta from independent per-tick snapshots 6655ms
+ ✓ test/record.test.ts > scaffold describes the moment of the prompt > never claims an intervention that had not happened yet
+ ✓ test/record.test.ts > nothing goes missing quietly > accounts for a prompt that never came back, and refuses to act after the close
+ ✓ test/record.test.ts > nothing goes missing quietly > a throwing sink stops the recorder loudly instead of inflating the manifest 325ms
+ ✓ test/record.test.ts > retried acts > stores the exact messages each attempt was sent
+ ✓ test/record.test.ts > retried acts > stores a retry as a suffix, not a second copy of the prompt
+ ✓ test/record.test.ts > zero perturbation > a mock-LLM run fingerprints identically with recording on and off 916ms
+ ✓ test/record.test.ts > a throwing closeRun is not silent > reports through onFailure and recordingFailure
+ ✓ test/record.test.ts > a non-finite number replays to the bytes that were sent > rebuilds the prompt byte-for-byte with NaN, ±Infinity in every field that renders one
+ ✓ test/record.test.ts > a non-finite number replays to the bytes that were sent > stores the placeholder 0 on disk and the token beside it
+ ✓ test/record.test.ts > a non-finite number replays to the bytes that were sent > restores -0 exactly and leaves a clean input unflagged
+ ✓ test/record.test.ts > a non-finite number replays to the bytes that were sent > leaves the stored row untouched, so the same row replays twice
+ ✓ test/record.test.ts > a non-finite number replays to the bytes that were sent > refuses a row whose number was LOST, naming the field, and accepts one that was restored
+ ✓ test/record.test.ts > a non-finite number replays to the bytes that were sent > refuses a side-channel that disagrees with the row rather than writing elsewhere
+ ✓ test/record.test.ts > a non-finite number replays to the bytes that were sent > refuses the same rows `c727af7` refused, and four more, with the world
+ ✓ test/record.test.ts > a non-finite number replays to the bytes that were sent > hands back a row that carries its places as stored, and that no prompt will take
+ ✓ test/record.test.ts > a non-finite number replays to the bytes that were sent > lifts a story’s site and the shunned places back through the world
+ ✓ test/record.test.ts > a row does not carry bookkeeping the prompt never read > strips provenance from every knowledge record, everywhere in the row
+ ✓ test/record.test.ts > a row does not carry bookkeeping the prompt never read > replays byte-for-byte from the stripped row
+ ✓ test/record.test.ts > a row does not carry bookkeeping the prompt never read > is most of a populated row
+ ✓ test/record.test.ts > a closed recorder counts nothing more > records the provenance level the run was made at, defaulting rather than leaving a hole
+ ✓ test/record.test.ts > a closed recorder counts nothing more > ignores a freeze, an attempt, a completion and an outcome after end() — visibly
+ ✓ test/record.test.ts > speech tracking says when it stopped > flags a window the body interrupted before the utterance resolved
+ ✓ test/record.test.ts > speech tracking says when it stopped > does not flag a window that simply never got there
+
+ Test Files  4 passed (4)
+      Tests  48 passed (48)
+   Start at  08:30:21
+   Duration  10.80s (transform 932ms, setup 0ms, collect 3.49s, tests 23.63s, environment 1ms, prepare 478ms)
+
+----------------------------------------------------------------
+exit code: 0   finished: 2026-11-20T14:30:32Z

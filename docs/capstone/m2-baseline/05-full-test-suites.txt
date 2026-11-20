@@ -1,0 +1,90 @@
+commit:   072885f0bb2aeb4788350cb81cdd437bf2491528
+dirty:    no
+started:  2026-11-20T14:30:32Z
+node:     v24.13.1   pnpm: 10.33.2
+command:  typecheck + full test suites (engine, db, mcp-server, lab)
+----------------------------------------------------------------
+
+### pnpm --filter @yggdrasil/engine typecheck
+
+> @yggdrasil/engine@0.1.0 typecheck C:\dev\yggdrasil-capstone\packages\engine
+> tsc -p tsconfig.json --noEmit
+
+### exit code: 0
+
+### pnpm --filter @yggdrasil/engine test
+  n=10 EXCHANGEABLE, lognormal magnitudes: permutation 0.0517 · sign 0.0220 · BOTH REQUIRED 0.0147
+  n=10 MEAN-ZERO SKEWED (NOT exchangeable): permutation 0.1503 · sign 0.1347 · BOTH REQUIRED 0.0933
+  the assumption is SIGN SYMMETRY, not a list of distributions.
+
+ ✓ test/eval-cluster.test.ts (13 tests) 212124ms
+   ✓ W1-E · S1 · the unit of analysis is the RUN, not the pair > reproduces the reviewer's pseudo-replication on the OLD pair-level rule, and holds alpha on the new one 1874ms
+   ✓ W1-E · S1 · the unit of analysis is the RUN, not the pair > prices what the cluster rule COSTS, so the pilot can size for it 210058ms
+ ✓ test/materials.test.ts (4 tests) 2ms
+
+ Test Files  64 passed (64)
+      Tests  931 passed (931)
+   Start at  08:30:35
+   Duration  229.28s (transform 1.47s, setup 0ms, collect 20.41s, tests 552.39s, environment 9ms, prepare 7.30s)
+
+### exit code: 0
+
+### pnpm --filter @yggdrasil/db test
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:211504) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ test/research-db.test.ts (16 tests) 37ms
+ ✓ test/bounded-query.test.ts (8 tests) 5259ms
+   ✓ time-bounded query (killable child) > kills the child on a runaway query and the PID is really gone 956ms
+   ✓ time-bounded query (killable child) > leaves zero extra processes after ten runaway queries in a row 3181ms
+   ✓ time-bounded query (killable child) > honours a per-call timeout and passes parameters through 492ms
+
+ Test Files  2 passed (2)
+      Tests  24 passed (24)
+   Start at  08:34:26
+   Duration  5.61s (transform 73ms, setup 0ms, collect 137ms, tests 5.30s, environment 0ms, prepare 216ms)
+
+### exit code: 0
+
+### pnpm --filter @yggdrasil/mcp-server test
+ ✓ test/evalTools.test.ts (12 tests) 7921ms
+   ✓ the eval tools are registered and free by default > runs an A/B on the free mocks and reports paired differences with a manifest 903ms
+   ✓ the eval tools are registered and free by default > runs the four-arm decomposition when asked for it 1399ms
+   ✓ the eval tools are registered and free by default > separates the mock populations through the probe tool 964ms
+   ✓ the eval tools are registered and free by default > judges blinded traces by the PAIR, and says what that many pairs could decide 1124ms
+   ✓ the paid path needs allowPaid AND a named budget > runs the real provider client over the stub and charges every call 797ms
+   ✓ the MCP surface cannot touch the human override file > never creates it, whatever is asked of any tool 1664ms
+ ✓ test/reports.test.ts (3 tests) 9ms
+
+ Test Files  5 passed (5)
+      Tests  37 passed (37)
+   Start at  08:34:32
+   Duration  8.58s (transform 912ms, setup 0ms, collect 3.36s, tests 13.05s, environment 1ms, prepare 568ms)
+
+### exit code: 0
+
+### pnpm --filter @yggdrasil/lab typecheck
+
+> @yggdrasil/lab@0.3.8 typecheck C:\dev\yggdrasil-capstone\packages\lab
+> tsc -p tsconfig.node.json && tsc -p tsconfig.web.json
+
+### exit code: 0
+
+### pnpm --filter @yggdrasil/lab test
+ ✓ test/llmBridge.test.ts (43 tests) 21ms
+ ✓ test/round7.test.ts (12 tests) 11ms
+ ✓ test/settings.test.ts (12 tests) 127ms
+ ✓ test/ipcGuards.test.ts (95 tests) 1086ms
+   ✓ validateThinkPrompt > refuses an object of a million strangers at the price of one enumeration 912ms
+ ✓ test/protocol.test.ts (14 tests) 4ms
+ ✓ test/simHost.test.ts (31 tests) 1459ms
+ ✓ test/reportsIpc.test.ts (3 tests) 8ms
+
+ Test Files  11 passed (11)
+      Tests  511 passed (511)
+   Start at  08:34:48
+   Duration  3.35s (transform 1.32s, setup 0ms, collect 3.88s, tests 3.29s, environment 2ms, prepare 1.19s)
+
+### exit code: 0
+----------------------------------------------------------------
+finished: 2026-11-20T14:34:51Z

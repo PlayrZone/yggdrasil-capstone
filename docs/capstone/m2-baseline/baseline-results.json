@@ -1,0 +1,377 @@
+{
+  "generatedAt": "2026-11-20T14:30:01.777Z",
+  "engineVersion": "0.1.0",
+  "node": "v24.13.1",
+  "platform": "win32-x64",
+  "cpuModel": "AMD Ryzen 9 9950X3D 16-Core Processor",
+  "logicalCpus": 32,
+  "gitCommit": "072885f0bb2aeb4788350cb81cdd437bf2491528",
+  "gitDirty": false,
+  "totalWallMs": 24269.2,
+  "runs": [
+    {
+      "name": "classic-100",
+      "scenario": "forager-classic",
+      "seed": "cos650-m2-classic",
+      "beings": 100,
+      "ticks": 4800,
+      "metrics": {
+        "ticks": 4800,
+        "simDays": 2,
+        "beingsAtStart": 100,
+        "aliveAtEnd": 121,
+        "births": 24,
+        "deathsByCause": {
+          "violence": 1,
+          "starvation": 2
+        },
+        "deathsTotal": 3,
+        "eventCount": 7664,
+        "utterances": 761,
+        "utterancesBySpeechAct": {
+          "share-knowledge": 561,
+          "share-episode": 0,
+          "inform": 200,
+          "request": 0
+        },
+        "shareKnowledgeFraction": 0.7372,
+        "shares": 561,
+        "builds": 39,
+        "exchanges": 0,
+        "conflicts": 0,
+        "totalKnowledge": 1123,
+        "backendLabel": "reflex",
+        "geographyId": "forager-classic"
+      },
+      "repeat": {
+        "ticks": 4800,
+        "fingerprintA": "922a417770768a31:1954073",
+        "fingerprintB": "922a417770768a31:1954073",
+        "pass": true,
+        "note": "run B advanced the same ticks as run A"
+      },
+      "fingerprintAtEnd": "922a417770768a31:1954073",
+      "otherSeed": {
+        "ticks": 400,
+        "seedFingerprint": "c163fbb148e4bed5:202316",
+        "otherSeed": "cos650-m2-classic-other",
+        "otherFingerprint": "d9f8db15ae34bbd3:215638",
+        "pass": true,
+        "metricsDiffer": true,
+        "seedMetrics": {
+          "events": 1,
+          "alive": 101,
+          "births": 1,
+          "utterances": 0,
+          "knowledge": 0
+        },
+        "otherMetrics": {
+          "events": 25,
+          "alive": 100,
+          "births": 0,
+          "utterances": 0,
+          "knowledge": 0
+        }
+      },
+      "splitAdvance": {
+        "advances": [
+          2400,
+          2400
+        ],
+        "singleFingerprint": "922a417770768a31:1954073",
+        "splitFingerprint": "922a417770768a31:1954073",
+        "pass": true
+      },
+      "wallClock": {
+        "constructMs": 15.1,
+        "advanceMs": 1135.1,
+        "stepsPerSecond": 4228.87
+      }
+    },
+    {
+      "name": "continent-60",
+      "scenario": "forager-continent",
+      "seed": "cos650-m2-continent",
+      "beings": 60,
+      "ticks": 4800,
+      "metrics": {
+        "ticks": 4800,
+        "simDays": 2,
+        "beingsAtStart": 60,
+        "aliveAtEnd": 60,
+        "births": 15,
+        "deathsByCause": {
+          "violence": 15
+        },
+        "deathsTotal": 15,
+        "eventCount": 2120,
+        "utterances": 501,
+        "utterancesBySpeechAct": {
+          "share-knowledge": 480,
+          "share-episode": 0,
+          "inform": 21,
+          "request": 0
+        },
+        "shareKnowledgeFraction": 0.9581,
+        "shares": 480,
+        "builds": 60,
+        "exchanges": 0,
+        "conflicts": 0,
+        "totalKnowledge": 514,
+        "backendLabel": "reflex",
+        "geographyId": "forager-continent"
+      },
+      "repeat": {
+        "ticks": 4800,
+        "fingerprintA": "156665ab88e25915:2820819",
+        "fingerprintB": "156665ab88e25915:2820819",
+        "pass": true,
+        "note": "run B advanced the same ticks as run A"
+      },
+      "fingerprintAtEnd": "156665ab88e25915:2820819",
+      "otherSeed": {
+        "ticks": 400,
+        "seedFingerprint": "aa81271ef1250ee6:1967564",
+        "otherSeed": "cos650-m2-continent-other",
+        "otherFingerprint": "e6931a6dfcb7b793:1946064",
+        "pass": true,
+        "metricsDiffer": true,
+        "seedMetrics": {
+          "events": 39,
+          "alive": 60,
+          "births": 0,
+          "utterances": 0,
+          "knowledge": 0
+        },
+        "otherMetrics": {
+          "events": 28,
+          "alive": 61,
+          "births": 1,
+          "utterances": 0,
+          "knowledge": 0
+        }
+      },
+      "wallClock": {
+        "constructMs": 175.5,
+        "advanceMs": 1450.8,
+        "stepsPerSecond": 3308.54
+      }
+    },
+    {
+      "name": "classic-300",
+      "scenario": "forager-classic",
+      "seed": "cos650-m2-classic-300",
+      "beings": 300,
+      "ticks": 2400,
+      "metrics": {
+        "ticks": 2400,
+        "simDays": 1,
+        "beingsAtStart": 300,
+        "aliveAtEnd": 319,
+        "births": 23,
+        "deathsByCause": {
+          "violence": 4
+        },
+        "deathsTotal": 4,
+        "eventCount": 12343,
+        "utterances": 332,
+        "utterancesBySpeechAct": {
+          "share-knowledge": 326,
+          "share-episode": 0,
+          "inform": 6,
+          "request": 0
+        },
+        "shareKnowledgeFraction": 0.9819,
+        "shares": 326,
+        "builds": 48,
+        "exchanges": 0,
+        "conflicts": 0,
+        "totalKnowledge": 1871,
+        "backendLabel": "reflex",
+        "geographyId": "forager-classic"
+      },
+      "repeat": {
+        "ticks": 2400,
+        "fingerprintA": "f4d7e97a06b6bae2:3357792",
+        "fingerprintB": "f4d7e97a06b6bae2:3357792",
+        "pass": true,
+        "note": "run B advanced the same ticks as run A"
+      },
+      "fingerprintAtEnd": "f4d7e97a06b6bae2:3357792",
+      "otherSeed": {
+        "ticks": 400,
+        "seedFingerprint": "b4722db62989000a:374523",
+        "otherSeed": "cos650-m2-classic-300-other",
+        "otherFingerprint": "c108526bf6db7185:416374",
+        "pass": true,
+        "metricsDiffer": true,
+        "seedMetrics": {
+          "events": 77,
+          "alive": 309,
+          "births": 9,
+          "utterances": 0,
+          "knowledge": 0
+        },
+        "otherMetrics": {
+          "events": 106,
+          "alive": 313,
+          "births": 13,
+          "utterances": 0,
+          "knowledge": 0
+        }
+      },
+      "wallClock": {
+        "constructMs": 8.3,
+        "advanceMs": 2860.2,
+        "stepsPerSecond": 839.1
+      }
+    },
+    {
+      "name": "classic-1000",
+      "scenario": "forager-classic",
+      "seed": "cos650-m2-scale",
+      "beings": 1000,
+      "ticks": 600,
+      "metrics": {
+        "ticks": 600,
+        "simDays": 0.25,
+        "beingsAtStart": 1000,
+        "aliveAtEnd": 1000,
+        "births": 0,
+        "deathsByCause": {},
+        "deathsTotal": 0,
+        "eventCount": 416,
+        "utterances": 8,
+        "utterancesBySpeechAct": {
+          "share-knowledge": 8,
+          "share-episode": 0,
+          "inform": 0,
+          "request": 0
+        },
+        "shareKnowledgeFraction": 1,
+        "shares": 8,
+        "builds": 17,
+        "exchanges": 0,
+        "conflicts": 0,
+        "totalKnowledge": 57,
+        "backendLabel": "reflex",
+        "geographyId": "forager-classic"
+      },
+      "repeat": {
+        "ticks": 600,
+        "fingerprintA": "8b8c3a71d8ead821:1980353",
+        "fingerprintB": "8b8c3a71d8ead821:1980353",
+        "pass": true,
+        "note": "run B advanced the same ticks as run A"
+      },
+      "fingerprintAtEnd": "8b8c3a71d8ead821:1980353",
+      "wallClock": {
+        "constructMs": 5.8,
+        "advanceMs": 4890.3,
+        "stepsPerSecond": 122.69
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "classic-100: same seed -> same fingerprint",
+      "pass": true,
+      "detail": "A=922a417770768a31:1954073 B=922a417770768a31:1954073 @4800 ticks; run B advanced the same ticks as run A"
+    },
+    {
+      "name": "classic-100: different seed -> different fingerprint",
+      "pass": true,
+      "detail": "@400 ticks: seed=c163fbb148e4bed5:202316 seed-other=d9f8db15ae34bbd3:215638; (the digest hashes the seed string itself; simulated metrics also differ: true)"
+    },
+    {
+      "name": "classic-100: 2400+2400 ticks == 4800 in one call",
+      "pass": true,
+      "detail": "single=922a417770768a31:1954073 split=922a417770768a31:1954073"
+    },
+    {
+      "name": "classic-100: backend is reflex (no model called)",
+      "pass": true,
+      "detail": "backendLabel=reflex"
+    },
+    {
+      "name": "classic-100: bus listener saw every counted event",
+      "pass": true,
+      "detail": "observed=7664 eventCount=7664"
+    },
+    {
+      "name": "classic-100: share-knowledge utterances == shareCount",
+      "pass": true,
+      "detail": "utterances=561 shareCount=561"
+    },
+    {
+      "name": "continent-60: same seed -> same fingerprint",
+      "pass": true,
+      "detail": "A=156665ab88e25915:2820819 B=156665ab88e25915:2820819 @4800 ticks; run B advanced the same ticks as run A"
+    },
+    {
+      "name": "continent-60: different seed -> different fingerprint",
+      "pass": true,
+      "detail": "@400 ticks: seed=aa81271ef1250ee6:1967564 seed-other=e6931a6dfcb7b793:1946064; (the digest hashes the seed string itself; simulated metrics also differ: true)"
+    },
+    {
+      "name": "continent-60: backend is reflex (no model called)",
+      "pass": true,
+      "detail": "backendLabel=reflex"
+    },
+    {
+      "name": "continent-60: bus listener saw every counted event",
+      "pass": true,
+      "detail": "observed=2120 eventCount=2120"
+    },
+    {
+      "name": "continent-60: share-knowledge utterances == shareCount",
+      "pass": true,
+      "detail": "utterances=480 shareCount=480"
+    },
+    {
+      "name": "classic-300: same seed -> same fingerprint",
+      "pass": true,
+      "detail": "A=f4d7e97a06b6bae2:3357792 B=f4d7e97a06b6bae2:3357792 @2400 ticks; run B advanced the same ticks as run A"
+    },
+    {
+      "name": "classic-300: different seed -> different fingerprint",
+      "pass": true,
+      "detail": "@400 ticks: seed=b4722db62989000a:374523 seed-other=c108526bf6db7185:416374; (the digest hashes the seed string itself; simulated metrics also differ: true)"
+    },
+    {
+      "name": "classic-300: backend is reflex (no model called)",
+      "pass": true,
+      "detail": "backendLabel=reflex"
+    },
+    {
+      "name": "classic-300: bus listener saw every counted event",
+      "pass": true,
+      "detail": "observed=12343 eventCount=12343"
+    },
+    {
+      "name": "classic-300: share-knowledge utterances == shareCount",
+      "pass": true,
+      "detail": "utterances=326 shareCount=326"
+    },
+    {
+      "name": "classic-1000: same seed -> same fingerprint",
+      "pass": true,
+      "detail": "A=8b8c3a71d8ead821:1980353 B=8b8c3a71d8ead821:1980353 @600 ticks; run B advanced the same ticks as run A"
+    },
+    {
+      "name": "classic-1000: backend is reflex (no model called)",
+      "pass": true,
+      "detail": "backendLabel=reflex"
+    },
+    {
+      "name": "classic-1000: bus listener saw every counted event",
+      "pass": true,
+      "detail": "observed=416 eventCount=416"
+    },
+    {
+      "name": "classic-1000: share-knowledge utterances == shareCount",
+      "pass": true,
+      "detail": "utterances=8 shareCount=8"
+    }
+  ]
+}
